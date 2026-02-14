@@ -3,6 +3,8 @@ import path from 'node:path';
 import { registerIpcHandlers } from './ipc';
 
 const isDev = !app.isPackaged;
+const appName = 'Dropper AI';
+const appIconPath = path.join(__dirname, '../../public/icons/dropper-icon.png');
 const devServerUrl = process.env.VITE_DEV_SERVER_URL;
 const devServerOrigin = (() => {
   if (!devServerUrl) {
@@ -34,6 +36,8 @@ const isAllowedAppNavigationUrl = (targetUrl: string): boolean => {
 
 const createMainWindow = (): BrowserWindow => {
   const window = new BrowserWindow({
+    title: appName,
+    icon: appIconPath,
     width: 1200,
     height: 840,
     minWidth: 960,
@@ -65,6 +69,11 @@ const createMainWindow = (): BrowserWindow => {
 };
 
 app.whenReady().then(() => {
+  app.setName(appName);
+  if (process.platform === 'darwin' && app.dock) {
+    app.dock.setIcon(appIconPath);
+  }
+
   registerIpcHandlers();
   createMainWindow();
 

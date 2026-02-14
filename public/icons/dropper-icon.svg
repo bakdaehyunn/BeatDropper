@@ -1,0 +1,32 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="56" y1="40" x2="460" y2="468" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2D86FF"/>
+      <stop offset="0.52" stop-color="#6D70FF"/>
+      <stop offset="1" stop-color="#A35DFF"/>
+    </linearGradient>
+    <linearGradient id="neon" x1="156" y1="126" x2="394" y2="386" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#CFE2FF"/>
+    </linearGradient>
+    <radialGradient id="backlight" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(256 256) rotate(90) scale(160)">
+      <stop stop-color="#FFFFFF" stop-opacity="0.52"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+    <clipPath id="dShapeClip">
+      <path d="M156 126H248C336 126 394 184 394 256C394 328 336 386 248 386H156V126Z"/>
+    </clipPath>
+  </defs>
+
+  <rect x="32" y="32" width="448" height="448" rx="112" fill="#0B1022"/>
+  <rect x="32" y="32" width="448" height="448" rx="112" fill="url(#bg)" fill-opacity="0.18"/>
+
+  <rect x="118" y="140" width="284" height="232" rx="84" fill="#1A1F35" clip-path="url(#dShapeClip)"/>
+  <rect x="128" y="150" width="264" height="212" rx="74" fill="#131A2E" clip-path="url(#dShapeClip)"/>
+  <ellipse cx="256" cy="256" rx="150" ry="122" fill="url(#backlight)" clip-path="url(#dShapeClip)"/>
+
+  <path d="M156 126H248C336 126 394 184 394 256C394 328 336 386 248 386H156V126Z" fill="#10172F"/>
+  <path d="M156 126H248C336 126 394 184 394 256C394 328 336 386 248 386H156V126Z" stroke="url(#neon)" stroke-opacity="0.28" stroke-width="32" stroke-linejoin="round" clip-path="url(#dShapeClip)"/>
+  <path d="M156 126H248C336 126 394 184 394 256C394 328 336 386 248 386H156V126Z" stroke="url(#neon)" stroke-width="14" stroke-linejoin="round"/>
+  <path d="M198 172H246C304 172 342 210 342 256C342 302 304 340 246 340H198V172Z" stroke="#D8E8FF" stroke-opacity="0.98" stroke-width="10" stroke-linejoin="round"/>
+</svg>
