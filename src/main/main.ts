@@ -3,7 +3,7 @@ import path from 'node:path';
 import { registerIpcHandlers } from './ipc';
 
 const isDev = !app.isPackaged;
-const appName = 'Dropper AI';
+const appName = 'BeatDropper';
 const appIconPath = path.join(__dirname, '../../public/icons/dropper-icon.png');
 const devServerUrl = process.env.VITE_DEV_SERVER_URL;
 const devServerOrigin = (() => {

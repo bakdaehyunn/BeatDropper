@@ -1,6 +1,6 @@
 {
   "name": "dropper-ai",
-  "productName": "Dropper AI",
+  "productName": "BeatDropper",
   "version": "0.1.0",
   "private": true,
   "description": "Automatic DJ-style crossfade player MVP",

@@ -1,6 +1,8 @@
-# Dropper AI
+# BeatDropper
 
-Dropper AI is a desktop MVP that automatically transitions local tracks with DJ-style crossfade near track end.
+BeatDropper is a desktop MVP that automatically transitions local tracks with DJ-style crossfade near track end.
+
+You pick tracks, BeatDropper drops the beat.
 
 ## MVP scope
 

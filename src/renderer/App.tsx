@@ -401,8 +401,8 @@ export const App = (): JSX.Element => {
       <header className="app-header">
         <div className="brand-block">
           <span className="brand-chip">DROP MODE</span>
-          <h1>Dropper AI</h1>
-          <p>끊김 없이 자연스럽게 이어지는 Auto DJ Player</p>
+          <h1>BeatDropper</h1>
+          <p>You pick tracks, BeatDropper drops the beat.</p>
         </div>
         <div className="header-actions">
           <div className={`state-pill ${isPlaying ? 'live' : ''}`}>
