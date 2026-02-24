@@ -59,8 +59,6 @@ npm run test:e2e
 
 ## Security checks
 
-Security checks are standard release hygiene for all projects, not a signal of individual capability.
-
 - Keep credentials out of git. Use `.env` locally and commit only `.env.example`.
 - Run local scan before push:
 
