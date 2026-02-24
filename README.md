@@ -32,6 +32,17 @@ npm install
 npm run dev
 ```
 
+
+## VS Code quick start
+
+Open this folder in VS Code and use preconfigured tasks:
+
+- `BeatDropper: dev`
+- `BeatDropper: test`
+- `BeatDropper: test:e2e`
+
+Project analysis notes are available in `docs/PROJECT_OVERVIEW.md`.
+
 ## Build
 
 ```bash
@@ -45,7 +56,10 @@ npm run test
 npm run test:e2e
 ```
 
+
 ## Security checks
+
+Security checks are standard release hygiene for all projects, not a signal of individual capability.
 
 - Keep credentials out of git. Use `.env` locally and commit only `.env.example`.
 - Run local scan before push:
