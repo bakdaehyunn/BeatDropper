@@ -1,0 +1,24 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "BeatDropper: dev",
+      "type": "npm",
+      "script": "dev",
+      "problemMatcher": [],
+      "group": "build"
+    },
+    {
+      "label": "BeatDropper: test",
+      "type": "npm",
+      "script": "test",
+      "problemMatcher": []
+    },
+    {
+      "label": "BeatDropper: test:e2e",
+      "type": "npm",
+      "script": "test:e2e",
+      "problemMatcher": []
+    }
+  ]
+}
