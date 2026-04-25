@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "currentTrack": {
+    "id": "fixture-current-b",
+    "title": "Sparse Cue Current",
+    "durationSec": 198,
+    "bpm": 100
+  },
+  "nextTrack": {
+    "id": "fixture-next-b",
+    "title": "Sparse Cue Next",
+    "durationSec": 214,
+    "bpm": 136
+  },
+  "currentPlayback": {
+    "elapsedSec": 183,
+    "remainingSec": 15
+  },
+  "analysis": {
+    "current": {
+      "schemaVersion": 1,
+      "trackId": "fixture-current-b",
+      "generatedAt": "2026-04-25T15:00:00.000Z",
+      "source": "derived",
+      "bpm": 100,
+      "beatGridSec": [],
+      "downbeatsSec": [],
+      "introCueSec": 0,
+      "outroCueSec": null,
+      "energyProfile": [0.65, 0.71, 0.68],
+      "analysisConfidence": 0.46
+    },
+    "next": {
+      "schemaVersion": 1,
+      "trackId": "fixture-next-b",
+      "generatedAt": "2026-04-25T15:00:00.000Z",
+      "source": "derived",
+      "bpm": 136,
+      "beatGridSec": [],
+      "downbeatsSec": [],
+      "introCueSec": null,
+      "outroCueSec": null,
+      "energyProfile": [0.74, 0.81, 0.78],
+      "analysisConfidence": 0.41
+    }
+  },
+  "settings": {
+    "fadeDurationSec": 8,
+    "aiDjMode": "balanced"
+  }
+}

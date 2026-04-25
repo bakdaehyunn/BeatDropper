@@ -6,6 +6,7 @@ const isDev = !app.isPackaged;
 const appName = 'BeatDropper';
 const appIconPath = path.join(__dirname, '../../public/icons/dropper-icon.png');
 const devServerUrl = process.env.VITE_DEV_SERVER_URL;
+const shouldOpenDevTools = process.env.BEATDROPPER_OPEN_DEVTOOLS !== '0';
 const devServerOrigin = (() => {
   if (!devServerUrl) {
     return null;
@@ -60,7 +61,9 @@ const createMainWindow = (): BrowserWindow => {
 
   if (isDev && devServerUrl) {
     void window.loadURL(devServerUrl);
-    window.webContents.openDevTools({ mode: 'detach' });
+    if (shouldOpenDevTools) {
+      window.webContents.openDevTools({ mode: 'detach' });
+    }
   } else {
     void window.loadFile(path.join(__dirname, '../../dist/index.html'));
   }

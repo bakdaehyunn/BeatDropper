@@ -1,6 +1,6 @@
 const MIN_BPM = 70;
 const MAX_BPM = 180;
-const MAX_ANALYSIS_SEC = 45;
+const MAX_ANALYSIS_SEC = 90;
 const MIN_CONFIDENCE = 0.3;
 const FRAME_SIZE = 1024;
 const HOP_SIZE = 512;

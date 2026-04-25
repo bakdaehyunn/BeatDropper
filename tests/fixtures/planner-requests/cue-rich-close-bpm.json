@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "currentTrack": {
+    "id": "fixture-current-a",
+    "title": "Cue Rich Current",
+    "durationSec": 210,
+    "bpm": 124
+  },
+  "nextTrack": {
+    "id": "fixture-next-a",
+    "title": "Cue Rich Next",
+    "durationSec": 200,
+    "bpm": 126
+  },
+  "currentPlayback": {
+    "elapsedSec": 176,
+    "remainingSec": 34
+  },
+  "analysis": {
+    "current": {
+      "schemaVersion": 1,
+      "trackId": "fixture-current-a",
+      "generatedAt": "2026-04-25T15:00:00.000Z",
+      "source": "derived",
+      "bpm": 124,
+      "beatGridSec": [171, 173, 175, 177, 179, 181, 183, 185, 187],
+      "downbeatsSec": [172, 176, 180, 184, 188],
+      "introCueSec": 0,
+      "outroCueSec": 188,
+      "energyProfile": [0.42, 0.58, 0.64],
+      "analysisConfidence": 0.83
+    },
+    "next": {
+      "schemaVersion": 1,
+      "trackId": "fixture-next-a",
+      "generatedAt": "2026-04-25T15:00:00.000Z",
+      "source": "derived",
+      "bpm": 126,
+      "beatGridSec": [0, 2, 4, 6, 8, 10, 12],
+      "downbeatsSec": [0, 4, 8, 12, 16],
+      "introCueSec": 12,
+      "outroCueSec": 188,
+      "energyProfile": [0.33, 0.51, 0.61],
+      "analysisConfidence": 0.79
+    }
+  },
+  "settings": {
+    "fadeDurationSec": 8,
+    "aiDjMode": "balanced"
+  }
+}

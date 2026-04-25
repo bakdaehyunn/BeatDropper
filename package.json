@@ -17,7 +17,9 @@
     "security:check": "npm run security:scan && npm run test",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:e2e:electron": "npm run build:main && xvfb-run -a playwright test -c playwright.electron.config.ts",
+    "test:e2e:all": "npm run test:e2e && npm run test:e2e:electron"
   },
   "dependencies": {
     "music-metadata": "^11.8.3",
@@ -33,11 +35,14 @@
     "@vitejs/plugin-react": "^4.3.4",
     "concurrently": "^9.1.2",
     "cross-env": "^7.0.3",
-    "electron": "^34.0.2",
+    "electron": "^35.7.5",
     "jsdom": "^26.0.0",
     "typescript": "^5.7.3",
     "vite": "^6.1.0",
     "vitest": "^3.0.5",
     "wait-on": "^8.0.3"
+  },
+  "overrides": {
+    "rollup": "^4.59.0"
   }
 }

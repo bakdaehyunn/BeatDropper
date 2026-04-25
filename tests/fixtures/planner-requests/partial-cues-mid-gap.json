@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "currentTrack": {
+    "id": "fixture-current-c",
+    "title": "Partial Cue Current",
+    "durationSec": 232,
+    "bpm": 118
+  },
+  "nextTrack": {
+    "id": "fixture-next-c",
+    "title": "Partial Cue Next",
+    "durationSec": 205,
+    "bpm": 123
+  },
+  "currentPlayback": {
+    "elapsedSec": 207,
+    "remainingSec": 25
+  },
+  "analysis": {
+    "current": {
+      "schemaVersion": 1,
+      "trackId": "fixture-current-c",
+      "generatedAt": "2026-04-25T15:00:00.000Z",
+      "source": "derived",
+      "bpm": 118,
+      "beatGridSec": [202, 204, 206, 208, 210, 212, 214, 216],
+      "downbeatsSec": [204, 208, 212, 216],
+      "introCueSec": 0,
+      "outroCueSec": 216,
+      "energyProfile": [0.38, 0.49, 0.56],
+      "analysisConfidence": 0.74
+    },
+    "next": {
+      "schemaVersion": 1,
+      "trackId": "fixture-next-c",
+      "generatedAt": "2026-04-25T15:00:00.000Z",
+      "source": "derived",
+      "bpm": 123,
+      "beatGridSec": [0, 2, 4, 6, 8],
+      "downbeatsSec": [0, 4, 8, 12],
+      "introCueSec": null,
+      "outroCueSec": null,
+      "energyProfile": [0.47, 0.57, 0.63],
+      "analysisConfidence": 0.62
+    }
+  },
+  "settings": {
+    "fadeDurationSec": 7,
+    "aiDjMode": "balanced"
+  }
+}

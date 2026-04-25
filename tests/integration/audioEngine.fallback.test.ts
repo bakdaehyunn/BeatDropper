@@ -27,13 +27,14 @@ class FakeBufferSourceNode {
   buffer: { duration: number } | null = null;
   onended: (() => void) | null = null;
   playbackRate = new FakeAudioParam();
+  readonly startCalls: Array<{ when: number; offset: number }> = [];
 
   connect(): void {
     return;
   }
 
-  start(): void {
-    return;
+  start(when: number, offset = 0): void {
+    this.startCalls.push({ when, offset });
   }
 
   stop(): void {
@@ -95,6 +96,8 @@ class FakeAudioContext {
 }
 
 const flushPromises = async (): Promise<void> => {
+  await Promise.resolve();
+  await Promise.resolve();
   await Promise.resolve();
   await Promise.resolve();
 };

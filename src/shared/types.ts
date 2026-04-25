@@ -1,4 +1,5 @@
 export type AudioFormat = 'mp3' | 'wav';
+export type AiDjMode = 'safe' | 'balanced' | 'adventurous';
 
 export interface Track {
   id: string;
@@ -13,6 +14,13 @@ export interface PlayerSettings {
   masterGain: number;
   predecodeLeadSec: number;
   repeatAll: boolean;
+  decodeTimeoutDurationWeightMs: number;
+  decodeTimeoutSizeWeightMs: number;
+  aiDjEnabled: boolean;
+  aiDjMode: AiDjMode;
+  plannerCommand: string;
+  plannerArgs: string[];
+  plannerTimeoutMs: number;
 }
 
 export interface TransitionContext {
@@ -34,12 +42,18 @@ export interface TransitionAdvisor {
 export interface TrackLoadResult {
   tracks: Track[];
   skipped: string[];
+  canceled: boolean;
+  mode: TrackLoadMode;
 }
+
+export type TrackLoadMode = 'replace' | 'append';
 
 export type PlayerEventType =
   | 'track_started'
   | 'predecode_started'
   | 'bpm_resolved'
+  | 'mix_plan_applied'
+  | 'mix_plan_fallback'
   | 'transition_started'
   | 'transition_completed'
   | 'tempo_sync_applied'
