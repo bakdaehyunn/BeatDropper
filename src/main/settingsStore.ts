@@ -25,7 +25,19 @@ export const writeSettings = async (
   candidate: Partial<PlayerSettings>
 ): Promise<PlayerSettings> => {
   const current = await readSettings();
-  const next = sanitizeSettings({ ...current, ...candidate });
+  const usesLegacyPlannerFields =
+    candidate.plannerCommand !== undefined ||
+    candidate.plannerArgs !== undefined ||
+    candidate.plannerTimeoutMs !== undefined;
+  const base =
+    usesLegacyPlannerFields && candidate.aiAgentProfiles === undefined
+      ? {
+          ...current,
+          aiAgentProfiles: undefined,
+          activeAiAgentProfileId: undefined
+        }
+      : current;
+  const next = sanitizeSettings({ ...base, ...candidate });
   const filePath = resolveSettingsPath();
   await mkdir(path.dirname(filePath), { recursive: true });
   await writeFile(filePath, JSON.stringify(next, null, 2), 'utf8');

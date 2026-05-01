@@ -3,8 +3,9 @@ import { readFile } from 'node:fs/promises';
 import { TrackAnalysisService } from './analysis/trackAnalysisService';
 import { TrackAnalysisStore } from './analysis/trackAnalysisStore';
 import { AiDjPlannerService } from './aiDj/aiDjPlannerService';
+import { AgentConnectionService } from './aiDj/agentConnectionService';
 import { RequestMixPlanInput } from '../shared/plannerContract';
-import { PlayerSettings, TrackLoadMode } from '../shared/types';
+import { AiAgentProfile, PlayerSettings, TrackLoadMode } from '../shared/types';
 import { readSettings, writeSettings } from './settingsStore';
 import { loadTracksFromPaths } from './trackLibrary';
 import { TrackRegistry } from './trackRegistry';
@@ -19,6 +20,7 @@ const aiDjPlannerService = new AiDjPlannerService({
   analysisService: trackAnalysisService,
   settingsProvider: readSettings
 });
+const agentConnectionService = new AgentConnectionService();
 const SETTINGS_KEYS: ReadonlySet<keyof PlayerSettings> = new Set([
   'fadeDurationSec',
   'masterGain',
@@ -28,6 +30,8 @@ const SETTINGS_KEYS: ReadonlySet<keyof PlayerSettings> = new Set([
   'decodeTimeoutSizeWeightMs',
   'aiDjEnabled',
   'aiDjMode',
+  'aiAgentProfiles',
+  'activeAiAgentProfileId',
   'plannerCommand',
   'plannerArgs',
   'plannerTimeoutMs'
@@ -43,6 +47,51 @@ const isFiniteNumber = (value: unknown): value is number => {
 
 const isStringArray = (value: unknown): value is string[] => {
   return Array.isArray(value) && value.every((item) => typeof item === 'string');
+};
+
+const parseAiAgentProfile = (item: unknown): AiAgentProfile => {
+  if (!isRecord(item)) {
+    throw new Error('Invalid aiAgentProfiles item');
+  }
+  if (typeof item.id !== 'string' || item.id.trim().length === 0) {
+    throw new Error('Invalid aiAgentProfiles id');
+  }
+  if (typeof item.name !== 'string' || item.name.trim().length === 0) {
+    throw new Error('Invalid aiAgentProfiles name');
+  }
+  if (item.kind !== 'cli') {
+    throw new Error('Invalid aiAgentProfiles kind');
+  }
+  if (typeof item.command !== 'string') {
+    throw new Error('Invalid aiAgentProfiles command');
+  }
+  if (!isStringArray(item.args)) {
+    throw new Error('Invalid aiAgentProfiles args');
+  }
+  if (!isFiniteNumber(item.timeoutMs)) {
+    throw new Error('Invalid aiAgentProfiles timeoutMs');
+  }
+  if (typeof item.enabled !== 'boolean') {
+    throw new Error('Invalid aiAgentProfiles enabled');
+  }
+
+  return {
+    id: item.id,
+    name: item.name,
+    kind: 'cli',
+    command: item.command,
+    args: item.args,
+    timeoutMs: item.timeoutMs,
+    enabled: item.enabled
+  };
+};
+
+const parseAiAgentProfiles = (input: unknown): AiAgentProfile[] => {
+  if (!Array.isArray(input)) {
+    throw new Error('Invalid aiAgentProfiles');
+  }
+
+  return input.map(parseAiAgentProfile);
 };
 
 const parseTrackIdList = (input: unknown): string[] => {
@@ -183,6 +232,17 @@ const parseSettingsCandidate = (input: unknown): Partial<PlayerSettings> => {
     candidate.aiDjMode = input.aiDjMode;
   }
 
+  if ('aiAgentProfiles' in input) {
+    candidate.aiAgentProfiles = parseAiAgentProfiles(input.aiAgentProfiles);
+  }
+
+  if ('activeAiAgentProfileId' in input) {
+    if (typeof input.activeAiAgentProfileId !== 'string') {
+      throw new Error('Invalid activeAiAgentProfileId');
+    }
+    candidate.activeAiAgentProfileId = input.activeAiAgentProfileId;
+  }
+
   if ('plannerCommand' in input) {
     if (typeof input.plannerCommand !== 'string') {
       throw new Error('Invalid plannerCommand');
@@ -297,6 +357,11 @@ export const registerIpcHandlers = (): void => {
   ipcMain.handle('planner:requestMixPlan', async (_event, candidateInput: unknown) => {
     const candidate = parseMixPlanRequestCandidate(candidateInput);
     return aiDjPlannerService.requestMixPlan(candidate);
+  });
+
+  ipcMain.handle('agent:checkConnection', async (_event, profileInput: unknown) => {
+    const profile = parseAiAgentProfile(profileInput);
+    return agentConnectionService.checkProfile(profile);
   });
 
   ipcMain.handle('settings:get', async () => {

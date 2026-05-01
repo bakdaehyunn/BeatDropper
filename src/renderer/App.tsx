@@ -40,9 +40,25 @@ import {
   parseMixPlanExportContextFromUnknown,
   parseMixPlanExportJson
 } from '../shared/mixPlanExport';
+import { RequestMixPlanResult } from '../shared/plannerContract';
 import { TrackAnalysis } from '../shared/analysis';
-import { DEFAULT_SETTINGS, sanitizeSettings } from '../shared/settings';
-import { PlayerEvent, PlayerSettings, Track, TrackLoadMode } from '../shared/types';
+import {
+  CODEX_AGENT_PROFILE_ID,
+  CUSTOM_AGENT_PROFILE_ID,
+  DEFAULT_SETTINGS,
+  HEURISTIC_AGENT_PROFILE_ID,
+  isAiAgentProfileConfigured,
+  resolveActiveAiAgentProfile,
+  sanitizeSettings
+} from '../shared/settings';
+import {
+  AiAgentConnectionResult,
+  AiAgentProfile,
+  PlayerEvent,
+  PlayerSettings,
+  Track,
+  TrackLoadMode
+} from '../shared/types';
 import { AudioEngine } from './player';
 import {
   applyTrackLoadResult,
@@ -105,6 +121,14 @@ interface DecodeTimeoutPreset {
   sizeWeightMs: number;
 }
 
+interface AgentHarnessResult {
+  profileId: string;
+  profileName: string;
+  status: 'running' | 'cli' | 'fallback' | 'error';
+  result: RequestMixPlanResult | null;
+  error: string | null;
+}
+
 const DECODE_TIMEOUT_PRESETS: DecodeTimeoutPreset[] = [
   {
     id: 'fast',
@@ -131,6 +155,37 @@ const formatDecodePreviewSec = (timeoutMs: number): string => {
 };
 
 const formatPlannerArgsDraft = (args: string[]): string => args.join('\n');
+const formatAgentConnectionStatus = (
+  result: AiAgentConnectionResult | null | undefined,
+  isChecking: boolean
+): string => {
+  if (isChecking) {
+    return 'Checking';
+  }
+  if (!result) {
+    return 'Not checked';
+  }
+  if (result.status === 'ready' || result.status === 'local_ready') {
+    return 'Ready';
+  }
+  if (result.status === 'cli_not_found') {
+    return 'CLI not found';
+  }
+  if (result.status === 'login_required') {
+    return 'Login required';
+  }
+  return 'Test failed';
+};
+
+const formatAgentConnectionCheckedAt = (
+  result: AiAgentConnectionResult | null | undefined
+): string => {
+  if (!result) {
+    return 'Connection has not been checked yet.';
+  }
+  return `Checked ${new Date(result.checkedAt).toLocaleTimeString()}`;
+};
+
 const prettyJson = (value: unknown): string => {
   if (value === null || value === undefined) {
     return 'null';
@@ -245,6 +300,16 @@ export const App = (): JSX.Element => {
   const [plannerTimeoutDraft, setPlannerTimeoutDraft] = useState(
     String(DEFAULT_SETTINGS.plannerTimeoutMs)
   );
+  const [harnessProfileIds, setHarnessProfileIds] = useState<string[]>([
+    DEFAULT_SETTINGS.activeAiAgentProfileId,
+    HEURISTIC_AGENT_PROFILE_ID
+  ]);
+  const [agentHarnessResults, setAgentHarnessResults] = useState<AgentHarnessResult[]>([]);
+  const [isAgentHarnessRunning, setIsAgentHarnessRunning] = useState(false);
+  const [agentConnectionResultsById, setAgentConnectionResultsById] = useState<
+    Record<string, AiAgentConnectionResult>
+  >({});
+  const [checkingAgentProfileId, setCheckingAgentProfileId] = useState<string | null>(null);
   const [plannerDebugCopyNotice, setPlannerDebugCopyNotice] = useState<string | null>(null);
   const [importedMixPlanArtifacts, setImportedMixPlanArtifacts] = useState<
     ImportedMixPlanArtifact[]
@@ -431,10 +496,13 @@ export const App = (): JSX.Element => {
   }, [audioEngine]);
 
   useEffect(() => {
-    setPlannerCommandDraft(settings.plannerCommand);
-    setPlannerArgsDraft(formatPlannerArgsDraft(settings.plannerArgs));
-    setPlannerTimeoutDraft(String(settings.plannerTimeoutMs));
+    const activeProfile = resolveActiveAiAgentProfile(settings);
+    setPlannerCommandDraft(activeProfile?.command ?? settings.plannerCommand);
+    setPlannerArgsDraft(formatPlannerArgsDraft(activeProfile?.args ?? settings.plannerArgs));
+    setPlannerTimeoutDraft(String(activeProfile?.timeoutMs ?? settings.plannerTimeoutMs));
   }, [
+    settings.activeAiAgentProfileId,
+    settings.aiAgentProfiles,
     settings.plannerArgs,
     settings.plannerCommand,
     settings.plannerTimeoutMs
@@ -940,8 +1008,38 @@ export const App = (): JSX.Element => {
     }
   };
 
+  const updateActiveAiAgentProfile = (patch: Partial<AiAgentProfile>): void => {
+    const activeProfile =
+      resolveActiveAiAgentProfile(settings) ??
+      settings.aiAgentProfiles.find((profile) => profile.id === CUSTOM_AGENT_PROFILE_ID) ??
+      settings.aiAgentProfiles[0];
+    if (!activeProfile) {
+      return;
+    }
+
+    const nextProfiles = settings.aiAgentProfiles.map((profile) =>
+      profile.id === activeProfile.id
+        ? {
+            ...profile,
+            ...patch,
+            id: profile.id,
+            kind: 'cli' as const
+          }
+        : profile
+    );
+
+    void persistSettings({
+      aiAgentProfiles: nextProfiles,
+      activeAiAgentProfileId: activeProfile.id
+    });
+  };
+
+  const onActiveAiAgentProfileChange = (event: ChangeEvent<HTMLSelectElement>): void => {
+    void persistSettings({ activeAiAgentProfileId: event.target.value });
+  };
+
   const commitPlannerCommandDraft = (): void => {
-    void persistSettings({ plannerCommand: plannerCommandDraft });
+    updateActiveAiAgentProfile({ command: plannerCommandDraft });
   };
 
   const commitPlannerArgsDraft = (): void => {
@@ -949,50 +1047,131 @@ export const App = (): JSX.Element => {
       .split('\n')
       .map((item) => item.trim())
       .filter((item) => item.length > 0);
-    void persistSettings({ plannerArgs });
+    updateActiveAiAgentProfile({ args: plannerArgs });
   };
 
   const commitPlannerTimeoutDraft = (): void => {
     const nextValue = Number(plannerTimeoutDraft);
     if (!Number.isFinite(nextValue)) {
-      setPlannerTimeoutDraft(String(settings.plannerTimeoutMs));
+      const activeProfile = resolveActiveAiAgentProfile(settings);
+      setPlannerTimeoutDraft(String(activeProfile?.timeoutMs ?? settings.plannerTimeoutMs));
       pushLocalErrorEvent('Planner timeout must be a valid number');
       return;
     }
 
-    void persistSettings({ plannerTimeoutMs: nextValue });
+    updateActiveAiAgentProfile({ timeoutMs: nextValue });
   };
 
-  const applyCodexPlannerPreset = (): void => {
-    const nextCommand = 'node';
-    const nextArgs = ['scripts/codex-mix-planner.cjs'];
-    const nextTimeoutMs = 20000;
-    setPlannerCommandDraft(nextCommand);
-    setPlannerArgsDraft(formatPlannerArgsDraft(nextArgs));
-    setPlannerTimeoutDraft(String(nextTimeoutMs));
-    void persistSettings({
-      aiDjEnabled: true,
-      aiDjMode: 'balanced',
-      plannerCommand: nextCommand,
-      plannerArgs: nextArgs,
-      plannerTimeoutMs: nextTimeoutMs
-    });
+  const toggleHarnessProfile = (profileId: string): void => {
+    setHarnessProfileIds((previous) =>
+      previous.includes(profileId)
+        ? previous.filter((id) => id !== profileId)
+        : [...previous, profileId]
+    );
   };
 
-  const applyHeuristicPlannerPreset = (): void => {
-    const nextCommand = 'node';
-    const nextArgs = ['scripts/heuristic-mix-planner.cjs'];
-    const nextTimeoutMs = 4000;
-    setPlannerCommandDraft(nextCommand);
-    setPlannerArgsDraft(formatPlannerArgsDraft(nextArgs));
-    setPlannerTimeoutDraft(String(nextTimeoutMs));
-    void persistSettings({
-      aiDjEnabled: true,
-      aiDjMode: 'safe',
-      plannerCommand: nextCommand,
-      plannerArgs: nextArgs,
-      plannerTimeoutMs: nextTimeoutMs
-    });
+  const checkActiveAiAgentConnection = async (): Promise<void> => {
+    const activeProfile = resolveActiveAiAgentProfile(settings);
+    if (!activeProfile) {
+      pushLocalErrorEvent('No active AI agent profile is available');
+      return;
+    }
+
+    setCheckingAgentProfileId(activeProfile.id);
+    try {
+      const result = await window.dropperApi.checkAiAgentConnection(activeProfile);
+      setAgentConnectionResultsById((previous) => ({
+        ...previous,
+        [activeProfile.id]: result
+      }));
+    } catch (error) {
+      setAgentConnectionResultsById((previous) => ({
+        ...previous,
+        [activeProfile.id]: {
+          profileId: activeProfile.id,
+          profileName: activeProfile.name,
+          status: 'test_failed',
+          message: error instanceof Error ? error.message : String(error),
+          checkedAt: new Date().toISOString(),
+          canRunPlanner: false,
+          details: {
+            reason: 'ipc_error'
+          }
+        }
+      }));
+    } finally {
+      setCheckingAgentProfileId(null);
+    }
+  };
+
+  const runAgentHarness = async (): Promise<void> => {
+    const currentCandidate = currentTrack ?? selectedTrack;
+    const nextCandidate = currentTrack
+      ? nextTrack
+      : tracks[selectedIndex + 1] ??
+        (settings.repeatAll && tracks.length > 1 ? tracks[0] : null);
+    const profiles = settings.aiAgentProfiles.filter(
+      (profile) => harnessProfileIds.includes(profile.id) && isAiAgentProfileConfigured(profile)
+    );
+
+    if (!currentCandidate || !nextCandidate || currentCandidate.id === nextCandidate.id) {
+      pushLocalErrorEvent('Agent compare needs two playlist tracks');
+      return;
+    }
+    if (profiles.length === 0) {
+      pushLocalErrorEvent('Select at least one configured AI agent');
+      return;
+    }
+
+    setIsAgentHarnessRunning(true);
+    setAgentHarnessResults(
+      profiles.map((profile) => ({
+        profileId: profile.id,
+        profileName: profile.name,
+        status: 'running',
+        result: null,
+        error: null
+      }))
+    );
+
+    const nextResults: AgentHarnessResult[] = [];
+    for (const profile of profiles) {
+      try {
+        const profileSettings: Partial<PlayerSettings> = {
+          aiDjEnabled: true,
+          activeAiAgentProfileId: profile.id,
+          aiAgentProfiles: settings.aiAgentProfiles.map((item) =>
+            item.id === profile.id ? profile : item
+          )
+        };
+        const result = await window.dropperApi.requestMixPlan({
+          currentTrack: currentCandidate,
+          nextTrack: nextCandidate,
+          currentPlayback: {
+            elapsedSec: currentTrack ? elapsedSec : 0
+          },
+          settingsOverride: profileSettings
+        });
+        nextResults.push({
+          profileId: profile.id,
+          profileName: profile.name,
+          status: result.source,
+          result,
+          error: result.reason
+        });
+      } catch (error) {
+        nextResults.push({
+          profileId: profile.id,
+          profileName: profile.name,
+          status: 'error',
+          result: null,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
+      setAgentHarnessResults([...nextResults]);
+    }
+
+    setIsAgentHarnessRunning(false);
   };
 
   const reorderTracks = (fromIndex: number, toIndex: number): void => {
@@ -1133,21 +1312,27 @@ export const App = (): JSX.Element => {
     PREVIEW_TRACK_DURATION_SEC,
     PREVIEW_TRACK_SIZE_BYTES
   );
+  const activeAiAgentProfile = resolveActiveAiAgentProfile(settings);
+  const activeAgentConnectionResult = activeAiAgentProfile
+    ? agentConnectionResultsById[activeAiAgentProfile.id]
+    : null;
+  const isCheckingActiveAgent =
+    activeAiAgentProfile !== null && checkingAgentProfileId === activeAiAgentProfile.id;
+  const activeAgentConnectionLabel = formatAgentConnectionStatus(
+    activeAgentConnectionResult,
+    isCheckingActiveAgent
+  );
   const plannerStatusLabel = !settings.aiDjEnabled
     ? 'Disabled'
-    : settings.plannerCommand
-      ? `Enabled · ${settings.aiDjMode}`
-      : 'Enabled · command missing';
+    : isAiAgentProfileConfigured(activeAiAgentProfile)
+      ? `Enabled · ${activeAiAgentProfile?.name ?? 'AI Agent'} · ${settings.aiDjMode}`
+      : 'Enabled · agent command missing';
   const plannerPresetLabel: MixPlanPlannerPreset =
-    settings.plannerCommand === 'node' &&
-    settings.plannerArgs.length === 1 &&
-    settings.plannerArgs[0] === 'scripts/codex-mix-planner.cjs'
+    activeAiAgentProfile?.id === CODEX_AGENT_PROFILE_ID
       ? 'codex'
-      : settings.plannerCommand === 'node' &&
-          settings.plannerArgs.length === 1 &&
-          settings.plannerArgs[0] === 'scripts/heuristic-mix-planner.cjs'
+      : activeAiAgentProfile?.id === HEURISTIC_AGENT_PROFILE_ID
         ? 'heuristic'
-        : settings.plannerCommand
+        : activeAiAgentProfile?.command
           ? 'custom'
           : 'none';
   const latestMixPlanApplied = events.find((event) => event.type === 'mix_plan_applied') ?? null;
@@ -1267,9 +1452,9 @@ export const App = (): JSX.Element => {
       asString(latestMixPlanApplied?.details?.source) ??
       asString(latestMixPlanFallback?.details?.source) ??
       null,
-    command: settings.plannerCommand || null,
-    args: settings.plannerArgs,
-    timeoutMs: settings.plannerTimeoutMs,
+    command: activeAiAgentProfile?.command || null,
+    args: activeAiAgentProfile?.args ?? [],
+    timeoutMs: activeAiAgentProfile?.timeoutMs ?? settings.plannerTimeoutMs,
     plannerResponseSchemaVersion: asPlannerResponseSchemaVersion(latestPlannerResponse)
   };
   const plannerExportMetadataEnvelope = buildMixPlanExportMetadata(plannerExportMetadata);
@@ -1371,10 +1556,22 @@ export const App = (): JSX.Element => {
         })
       : [];
   const plannerConfigSummary = [
-    settings.plannerCommand ? `command ${settings.plannerCommand}` : 'command missing',
-    settings.plannerArgs.length > 0 ? `args ${settings.plannerArgs.join(' ')}` : 'args none',
-    `timeout ${settings.plannerTimeoutMs}ms`
+    activeAiAgentProfile?.name ?? 'No active agent',
+    activeAiAgentProfile?.command ? `command ${activeAiAgentProfile.command}` : 'command missing',
+    activeAiAgentProfile && activeAiAgentProfile.args.length > 0
+      ? `args ${activeAiAgentProfile.args.join(' ')}`
+      : 'args none',
+    `timeout ${activeAiAgentProfile?.timeoutMs ?? settings.plannerTimeoutMs}ms`
   ].join(' · ');
+  const harnessCurrentTrack = currentTrack ?? selectedTrack;
+  const harnessNextTrack = currentTrack
+    ? nextTrack
+    : tracks[selectedIndex + 1] ??
+      (settings.repeatAll && tracks.length > 1 ? tracks[0] : null);
+  const harnessPairLabel =
+    harnessCurrentTrack && harnessNextTrack && harnessCurrentTrack.id !== harnessNextTrack.id
+      ? `${harnessCurrentTrack.title} -> ${harnessNextTrack.title}`
+      : 'Need two playlist tracks';
 
   return (
     <div className="app-shell">
@@ -1931,9 +2128,9 @@ export const App = (): JSX.Element => {
             </section>
 
             <section className="utility-section">
-              <h3>AI DJ Planner</h3>
+              <h3>AI Agent Mixer</h3>
               <div className="setting-row inline">
-                <label htmlFor="ai-dj-enabled">Enable AI DJ Planner</label>
+                <label htmlFor="ai-dj-enabled">Enable AI DJ</label>
                 <input
                   id="ai-dj-enabled"
                   type="checkbox"
@@ -1942,7 +2139,7 @@ export const App = (): JSX.Element => {
                 />
               </div>
               <div className="setting-row">
-                <label htmlFor="ai-dj-mode">Planner mode</label>
+                <label htmlFor="ai-dj-mode">Mix style</label>
                 <select
                   id="ai-dj-mode"
                   value={settings.aiDjMode}
@@ -1954,26 +2151,47 @@ export const App = (): JSX.Element => {
                 </select>
               </div>
               <div className="setting-row">
-                <label>Planner status: {plannerStatusLabel}</label>
-                <div className="planner-helper-row">
-                  <button
-                    type="button"
-                    className="secondary-button planner-preset-button"
-                    onClick={applyCodexPlannerPreset}
-                  >
-                    Use Sample Codex Wrapper
-                  </button>
-                  <button
-                    type="button"
-                    className="secondary-button planner-preset-button"
-                    onClick={applyHeuristicPlannerPreset}
-                  >
-                    Use Local Heuristic
-                  </button>
+                <label htmlFor="active-ai-agent-profile">Active agent</label>
+                <select
+                  id="active-ai-agent-profile"
+                  value={settings.activeAiAgentProfileId}
+                  onChange={onActiveAiAgentProfileChange}
+                >
+                  {settings.aiAgentProfiles.map((profile) => (
+                    <option key={profile.id} value={profile.id}>
+                      {profile.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="setting-row">
+                <label>Agent status: {plannerStatusLabel}</label>
+                <small className="setting-hint">
+                  Active agent is used during playback. Compare runs use the same current/next
+                  transition without changing playback.
+                </small>
+              </div>
+              <div className="agent-connection-panel">
+                <div>
+                  <span>Connection</span>
+                  <strong>{activeAgentConnectionLabel}</strong>
+                  <small>
+                    {activeAgentConnectionResult?.message ??
+                      'Choose an agent and check whether its CLI/auth setup can return a MixPlan.'}
+                  </small>
+                  <small>{formatAgentConnectionCheckedAt(activeAgentConnectionResult)}</small>
                 </div>
+                <button
+                  type="button"
+                  className="secondary-button planner-preset-button"
+                  disabled={isCheckingActiveAgent || !activeAiAgentProfile}
+                  onClick={() => void checkActiveAiAgentConnection()}
+                >
+                  {isCheckingActiveAgent ? 'Checking...' : 'Check connection'}
+                </button>
               </div>
               <details className="nested-details">
-                <summary>Planner CLI</summary>
+                <summary>Advanced CLI</summary>
                 <div className="setting-row">
                   <label htmlFor="planner-command">Command</label>
                   <input
@@ -2022,6 +2240,59 @@ export const App = (): JSX.Element => {
                   />
                 </div>
               </details>
+              <div className="setting-row">
+                <label>Agent compare</label>
+                <small className="setting-hint">{harnessPairLabel}</small>
+                <div className="planner-helper-row">
+                  {settings.aiAgentProfiles.map((profile) => (
+                    <label className="agent-compare-option" key={profile.id}>
+                      <input
+                        type="checkbox"
+                        checked={harnessProfileIds.includes(profile.id)}
+                        onChange={() => toggleHarnessProfile(profile.id)}
+                      />
+                      <span>{profile.name}</span>
+                    </label>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  className="secondary-button planner-preset-button"
+                  disabled={
+                    isAgentHarnessRunning ||
+                    !harnessCurrentTrack ||
+                    !harnessNextTrack ||
+                    harnessCurrentTrack.id === harnessNextTrack.id
+                  }
+                  onClick={() => void runAgentHarness()}
+                >
+                  {isAgentHarnessRunning ? 'Comparing agents...' : 'Run Agent Compare'}
+                </button>
+                {agentHarnessResults.length > 0 && (
+                  <div className="agent-harness-results">
+                    {agentHarnessResults.map((item) => {
+                      const plan = item.result?.plan ?? null;
+                      return (
+                        <div className="planner-debug-summary" key={item.profileId}>
+                          <strong>
+                            {item.profileName} · {item.status}
+                          </strong>
+                          <small>
+                            {plan
+                              ? [
+                                  `window ${formatDuration(plan.transitionStartSec)} -> ${formatDuration(plan.transitionEndSec)}`,
+                                  `offset ${formatDuration(plan.nextTrackStartOffsetSec)}`,
+                                  `style ${plan.style}`,
+                                  `confidence ${Math.round(plan.confidence * 100)}%`
+                                ].join(' · ')
+                              : item.error ?? 'Waiting for result'}
+                          </small>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             </section>
 
             <details className="utility-section utility-details">

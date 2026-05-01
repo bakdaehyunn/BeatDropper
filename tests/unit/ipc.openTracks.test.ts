@@ -7,6 +7,7 @@ const mockReadSettings = vi.fn();
 const mockWriteSettings = vi.fn();
 const mockGetTrackAnalysis = vi.fn();
 const mockRequestMixPlan = vi.fn();
+const mockCheckProfile = vi.fn();
 
 vi.mock('electron', () => {
   return {
@@ -72,6 +73,14 @@ vi.mock('../../src/main/aiDj/aiDjPlannerService', () => {
   };
 });
 
+vi.mock('../../src/main/aiDj/agentConnectionService', () => {
+  return {
+    AgentConnectionService: class {
+      checkProfile = mockCheckProfile;
+    }
+  };
+});
+
 const trackEntry = (id: string, title: string, filePath: string) => ({
   track: {
     id,
@@ -98,6 +107,7 @@ const setupIpcHandlers = async () => {
   const readHandler = handlerMap.get('track:readBufferById');
   const analysisHandler = handlerMap.get('analysis:getByTrackId');
   const plannerHandler = handlerMap.get('planner:requestMixPlan');
+  const agentCheckHandler = handlerMap.get('agent:checkConnection');
   const saveSettingsHandler = handlerMap.get('settings:save');
   if (
     !openHandler ||
@@ -105,6 +115,7 @@ const setupIpcHandlers = async () => {
     !readHandler ||
     !analysisHandler ||
     !plannerHandler ||
+    !agentCheckHandler ||
     !saveSettingsHandler
   ) {
     throw new Error('ipc handlers are not registered');
@@ -115,6 +126,7 @@ const setupIpcHandlers = async () => {
     readHandler,
     analysisHandler,
     plannerHandler,
+    agentCheckHandler,
     saveSettingsHandler
   };
 };
@@ -128,6 +140,7 @@ describe('IPC library:openTracks', () => {
     mockWriteSettings.mockReset();
     mockGetTrackAnalysis.mockReset();
     mockRequestMixPlan.mockReset();
+    mockCheckProfile.mockReset();
   });
 
   it('keeps existing registry entries when append mode is used', async () => {
@@ -280,6 +293,7 @@ describe('IPC analysis and planner handlers', () => {
   beforeEach(() => {
     mockGetTrackAnalysis.mockReset();
     mockRequestMixPlan.mockReset();
+    mockCheckProfile.mockReset();
   });
 
   it('validates track id before requesting analysis', async () => {
@@ -377,6 +391,42 @@ describe('IPC analysis and planner handlers', () => {
         plannerArgs: ['exec'],
         plannerTimeoutMs: 2000
       }
+    });
+  });
+
+  it('validates and forwards ai agent connection checks', async () => {
+    const { agentCheckHandler } = await setupIpcHandlers();
+    mockCheckProfile.mockResolvedValue({
+      profileId: 'custom-cli',
+      profileName: 'Custom CLI',
+      status: 'ready',
+      message: 'Ready',
+      checkedAt: '2026-01-01T00:00:00.000Z',
+      canRunPlanner: true
+    });
+
+    await expect(agentCheckHandler({}, { id: '' })).rejects.toThrow(
+      'Invalid aiAgentProfiles id'
+    );
+
+    await agentCheckHandler({}, {
+      id: 'custom-cli',
+      name: 'Custom CLI',
+      kind: 'cli',
+      command: 'node',
+      args: ['scripts/custom.cjs'],
+      timeoutMs: 2000,
+      enabled: true
+    });
+
+    expect(mockCheckProfile).toHaveBeenCalledWith({
+      id: 'custom-cli',
+      name: 'Custom CLI',
+      kind: 'cli',
+      command: 'node',
+      args: ['scripts/custom.cjs'],
+      timeoutMs: 2000,
+      enabled: true
     });
   });
 });

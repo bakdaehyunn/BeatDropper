@@ -804,6 +804,63 @@ button:disabled {
   width: fit-content;
 }
 
+.agent-connection-panel {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+  margin-bottom: 10px;
+  border: 1px solid rgba(96, 157, 151, 0.26);
+  border-radius: 8px;
+  background: rgba(8, 24, 29, 0.62);
+}
+
+.agent-connection-panel > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.agent-connection-panel span {
+  color: #97b7b1;
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.agent-connection-panel strong {
+  color: #f4f4f4;
+  font-size: 14px;
+}
+
+.agent-connection-panel small {
+  color: #a7a7a7;
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+.agent-compare-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 7px 10px;
+  border: 1px solid rgba(96, 157, 151, 0.26);
+  border-radius: 8px;
+  background: rgba(8, 24, 29, 0.62);
+  color: #dbe9e6;
+  font-size: 12px;
+}
+
+.agent-compare-option input {
+  margin: 0;
+}
+
+.agent-harness-results {
+  display: grid;
+  gap: 8px;
+}
+
 .planner-debug-summary {
   display: grid;
   gap: 4px;

@@ -1,6 +1,13 @@
 import { TrackAnalysis } from './analysis';
 import { RequestMixPlanInput, RequestMixPlanResult } from './plannerContract';
-import { PlayerSettings, Track, TrackLoadMode, TrackLoadResult } from './types';
+import {
+  AiAgentConnectionResult,
+  AiAgentProfile,
+  PlayerSettings,
+  Track,
+  TrackLoadMode,
+  TrackLoadResult
+} from './types';
 
 export interface DropperApi {
   openTracks(mode: TrackLoadMode): Promise<TrackLoadResult>;
@@ -10,6 +17,7 @@ export interface DropperApi {
   readTrackBufferById(trackId: string): Promise<ArrayBuffer>;
   getTrackAnalysis(trackId: string): Promise<TrackAnalysis | null>;
   requestMixPlan(candidate: RequestMixPlanInput): Promise<RequestMixPlanResult>;
+  checkAiAgentConnection(profile: AiAgentProfile): Promise<AiAgentConnectionResult>;
   getSettings(): Promise<PlayerSettings>;
   saveSettings(candidate: Partial<PlayerSettings>): Promise<PlayerSettings>;
   minimizeWindow(): Promise<void>;

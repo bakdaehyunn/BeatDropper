@@ -1,6 +1,7 @@
 import { TrackAnalysis } from './analysis';
 import { MixPlan } from './mixPlan';
 import { AiDjMode, PlayerSettings, Track } from './types';
+import { isAiAgentProfileConfigured, resolveActiveAiAgentProfile } from './settings';
 
 export const PLANNER_SCHEMA_VERSION = 1;
 
@@ -8,6 +9,8 @@ export interface PlannerCliConfig {
   command: string;
   args: string[];
   timeoutMs: number;
+  profileId?: string;
+  profileName?: string;
 }
 
 export interface PlannerTrackSnapshot {
@@ -75,8 +78,26 @@ const isFiniteNumber = (value: unknown): value is number => {
 };
 
 export const toPlannerCliConfig = (
-  settings: Pick<PlayerSettings, 'plannerCommand' | 'plannerArgs' | 'plannerTimeoutMs'>
+  settings: Pick<
+    PlayerSettings,
+    | 'plannerCommand'
+    | 'plannerArgs'
+    | 'plannerTimeoutMs'
+    | 'aiAgentProfiles'
+    | 'activeAiAgentProfileId'
+  >
 ): PlannerCliConfig => {
+  const activeProfile = resolveActiveAiAgentProfile(settings);
+  if (activeProfile) {
+    return {
+      command: activeProfile.command.trim(),
+      args: activeProfile.args,
+      timeoutMs: activeProfile.timeoutMs,
+      profileId: activeProfile.id,
+      profileName: activeProfile.name
+    };
+  }
+
   return {
     command: settings.plannerCommand.trim(),
     args: settings.plannerArgs,
@@ -162,8 +183,16 @@ export const parsePlannerResponseJson = (
 };
 
 export const isPlannerCommandConfigured = (
-  settings: Pick<PlayerSettings, 'plannerCommand'>
+  settings: Pick<
+    PlayerSettings,
+    'plannerCommand' | 'aiAgentProfiles' | 'activeAiAgentProfileId'
+  >
 ): boolean => {
+  const activeProfile = resolveActiveAiAgentProfile(settings);
+  if (activeProfile) {
+    return isAiAgentProfileConfigured(activeProfile);
+  }
+
   return settings.plannerCommand.trim().length > 0;
 };
 

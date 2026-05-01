@@ -60,6 +60,9 @@ const dropperApi: DropperApi = {
   requestMixPlan: async (candidate) => {
     return ipcRenderer.invoke('planner:requestMixPlan', candidate);
   },
+  checkAiAgentConnection: async (profile) => {
+    return ipcRenderer.invoke('agent:checkConnection', profile);
+  },
   getSettings: async (): Promise<PlayerSettings> => {
     return ipcRenderer.invoke('settings:get');
   },

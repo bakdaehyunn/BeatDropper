@@ -1,59 +1,64 @@
 # BeatDropper
 
-BeatDropper is a desktop DJ set player for local music files and AI-assisted transitions.
+BeatDropper is a desktop DJ player for DJs who prepare local tracks and want help keeping the next mix ready.
 
-It gives DJs a focused workspace to load prepared tracks, shape the running order, monitor the current mix, and keep the next transition ready.
+Load a set, arrange the running order, start playback, and let an AI agent suggest how the next transition should land. BeatDropper keeps the playlist, current track, mix plan, and next track visible in one performance-focused workspace.
 
-## DJ Set Workflow
+## What It Does
 
-BeatDropper is organized around the flow of running a set:
+BeatDropper is built around the way a DJ works with prepared music:
 
-1. Load prepared MP3/WAV tracks as a new set.
-2. Add more tracks to the current playlist when the set changes.
-3. Arrange the running order directly in the playlist.
-4. Review the current track, AI mix plan, and next track in the queue cockpit.
-5. Start playback and let BeatDropper prepare the next transition.
+- Load MP3/WAV tracks as a new set or add tracks to the current playlist.
+- Reorder the set directly from the playlist.
+- See BPM, length, cue information, and mix readiness while choosing the next track.
+- Monitor what is playing now, how the AI plans to mix it, and what track comes next.
+- Keep playback stable with validated mix plans and a built-in fallback transition path.
 
-The playlist remains the center of the workspace. The queue cockpit stays focused on the information needed during playback: what is playing now, how the transition is planned, and what comes next.
+The goal is not to replace a DJ's taste. The goal is to give the DJ a focused assistant for transition timing, cue alignment, playlist flow, and repeatable mix decisions.
 
-## Queue Cockpit
+## Performance Workspace
 
-The main performance view is built around three states:
+The main screen is organized around the set:
 
-- `Now Playing`: the active track, playback state, BPM, length, and outro cue.
-- `AI Mix Plan`: transition window, next-track offset, style, and confidence.
-- `Next Track`: the upcoming track, BPM, length, and intro cue.
+- `Playlist`: the active running order for the set.
+- `Now Playing`: current track, playback state, BPM, length, and outro cue.
+- `AI Mix Plan`: transition window, next-track offset, transition style, confidence, and reasoning.
+- `Next Track`: upcoming track, BPM, length, and intro cue.
+- `Transport`: compact playback controls designed to stay out of the playlist's way.
 
-This layout keeps the DJ workflow visible without turning the screen into a settings panel or debugging console.
+The layout is playlist-first because the set order matters more than a source browser once the music is loaded.
 
-## AI-Assisted Transitions
+## AI Agent Mixer
 
-BeatDropper can request a transition plan from an external AI planner. The planner can suggest:
+BeatDropper can ask an AI agent to plan the next transition. The agent receives the current track, next track, playback position, BPM/cue analysis, and mix style. It returns a structured MixPlan:
 
-- where the current track should begin fading
-- where the transition should end
+- when the current track should begin fading
+- when the transition should end
 - where the next track should start
-- which transition style fits the track pair
+- what transition style fits the pair
 - whether tempo sync should be applied
+- why that plan makes musical sense
 
-The player validates AI plans before applying them and keeps a built-in transition path available for stable playback.
+Supported agent profiles:
 
-## Playlist Control
+- `Codex CLI`: uses the user's local Codex CLI login. BeatDropper does not ask for or store a Codex API key.
+- `Local Heuristic`: runs a local deterministic planner for offline/fallback comparison.
+- `Custom CLI`: lets a user point BeatDropper at another agent command that speaks the MixPlan contract.
 
-The playlist is designed for set operation:
+The app includes connection checks so selecting an agent is not treated as enough. BeatDropper checks whether the CLI is available, whether it can return a valid MixPlan, and whether login/authentication is required.
 
-- load a new set
-- add tracks to the current set
-- select the starting track
-- reorder tracks
-- remove tracks from the set
-- clear the playlist
+## How The Technology Works
 
-Track rows surface practical DJ information such as title, BPM, length, format, cue points, and mix readiness.
+BeatDropper is an Electron desktop app with a React interface and a local audio engine.
 
-## Desktop App
+- The renderer provides the DJ workspace, playlist management, transport controls, and planner review UI.
+- The audio engine uses Web Audio for local playback, gain ramps, crossfades, and output metering.
+- The main process owns local file access, track loading, persistent settings, track analysis lookup, and AI agent connection checks.
+- AI planners are external CLI processes that exchange JSON through stdin/stdout.
+- MixPlan responses are validated before they can affect playback.
+- API keys are not stored by default. CLI agents use their own official authentication flow or environment configuration.
 
-BeatDropper runs as an Electron desktop app and uses local files as the source for playback. The interface is styled as a dark DJ workspace with icon-based controls, a compact transport area, and a playlist-first layout.
+This keeps BeatDropper focused on DJ workflow and agent harnessing instead of becoming a credential manager.
 
 ## Run Locally
 
@@ -62,7 +67,7 @@ npm install
 npm run dev
 ```
 
-For WSLg or GPU-sensitive environments:
+For WSLg or GPU-sensitive environments, launch with GPU acceleration disabled:
 
 ```bash
 BEATDROPPER_DISABLE_GPU=1 BEATDROPPER_OPEN_DEVTOOLS=0 ELECTRON_DISABLE_GPU=1 npm run dev

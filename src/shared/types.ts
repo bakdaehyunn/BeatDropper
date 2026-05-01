@@ -1,5 +1,34 @@
 export type AudioFormat = 'mp3' | 'wav';
 export type AiDjMode = 'safe' | 'balanced' | 'adventurous';
+export type AiAgentProfileKind = 'cli';
+
+export interface AiAgentProfile {
+  id: string;
+  name: string;
+  kind: AiAgentProfileKind;
+  command: string;
+  args: string[];
+  timeoutMs: number;
+  enabled: boolean;
+}
+
+export type AiAgentConnectionStatus =
+  | 'not_checked'
+  | 'ready'
+  | 'cli_not_found'
+  | 'login_required'
+  | 'test_failed'
+  | 'local_ready';
+
+export interface AiAgentConnectionResult {
+  profileId: string;
+  profileName: string;
+  status: AiAgentConnectionStatus;
+  message: string;
+  checkedAt: string;
+  canRunPlanner: boolean;
+  details?: Record<string, string | number | boolean | null>;
+}
 
 export interface Track {
   id: string;
@@ -18,6 +47,8 @@ export interface PlayerSettings {
   decodeTimeoutSizeWeightMs: number;
   aiDjEnabled: boolean;
   aiDjMode: AiDjMode;
+  aiAgentProfiles: AiAgentProfile[];
+  activeAiAgentProfileId: string;
   plannerCommand: string;
   plannerArgs: string[];
   plannerTimeoutMs: number;

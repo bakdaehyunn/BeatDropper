@@ -1,4 +1,8 @@
-import { DEFAULT_SETTINGS, sanitizeSettings } from '../../src/shared/settings';
+import {
+  CUSTOM_AGENT_PROFILE_ID,
+  DEFAULT_SETTINGS,
+  sanitizeSettings
+} from '../../src/shared/settings';
 
 describe('sanitizeSettings', () => {
   it('returns defaults when input is empty', () => {
@@ -38,7 +42,7 @@ describe('sanitizeSettings', () => {
       plannerTimeoutMs: 5500
     });
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       fadeDurationSec: 6,
       masterGain: 0.75,
       predecodeLeadSec: 18,
@@ -47,10 +51,42 @@ describe('sanitizeSettings', () => {
       decodeTimeoutSizeWeightMs: 320,
       aiDjEnabled: true,
       aiDjMode: 'balanced',
+      activeAiAgentProfileId: CUSTOM_AGENT_PROFILE_ID,
       plannerCommand: 'codex',
       plannerArgs: ['exec', '--json'],
       plannerTimeoutMs: 5500
     });
+    expect(result.aiAgentProfiles).toContainEqual({
+      id: CUSTOM_AGENT_PROFILE_ID,
+      name: 'Custom CLI',
+      kind: 'cli',
+      command: 'codex',
+      args: ['exec', '--json'],
+      timeoutMs: 5500,
+      enabled: true
+    });
+  });
+
+  it('keeps the selected ai agent profile in sync with legacy planner fields', () => {
+    const result = sanitizeSettings({
+      aiAgentProfiles: [
+        ...DEFAULT_SETTINGS.aiAgentProfiles,
+        {
+          id: 'test-agent',
+          name: 'Test Agent',
+          kind: 'cli',
+          command: 'node',
+          args: ['scripts/test-agent.cjs'],
+          timeoutMs: 1200,
+          enabled: true
+        }
+      ],
+      activeAiAgentProfileId: 'test-agent'
+    });
+
+    expect(result.plannerCommand).toBe('node');
+    expect(result.plannerArgs).toEqual(['scripts/test-agent.cjs']);
+    expect(result.plannerTimeoutMs).toBe(1200);
   });
 
   it('falls back to default repeatAll when payload type is invalid', () => {

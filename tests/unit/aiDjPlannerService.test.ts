@@ -86,4 +86,71 @@ describe('AiDjPlannerService', () => {
     expect(result.source).toBe('fallback');
     expect(result.reason).toBe('mix_plan_window_too_small');
   });
+
+  it('executes the active ai agent profile instead of stale legacy planner fields', async () => {
+    const execute = vi.fn().mockResolvedValue({
+      schemaVersion: 1,
+      mixPlan: {
+        transitionStartSec: 180,
+        transitionEndSec: 188,
+        nextTrackStartOffsetSec: 4,
+        style: 'smooth_blend',
+        confidence: 0.82,
+        reasoningSummary: 'test profile selected',
+        tempoSync: {
+          enabled: false,
+          targetRate: null
+        }
+      },
+      error: null
+    });
+    const service = new AiDjPlannerService({
+      analysisService: {
+        getTrackAnalysis: vi.fn().mockResolvedValue(null)
+      },
+      settingsProvider: async () => ({
+        ...DEFAULT_SETTINGS,
+        aiDjEnabled: true,
+        activeAiAgentProfileId: 'test-agent',
+        aiAgentProfiles: [
+          ...DEFAULT_SETTINGS.aiAgentProfiles,
+          {
+            id: 'test-agent',
+            name: 'Test Agent',
+            kind: 'cli',
+            command: 'node',
+            args: ['scripts/test-agent.cjs'],
+            timeoutMs: 1200,
+            enabled: true
+          }
+        ],
+        plannerCommand: 'stale',
+        plannerArgs: ['legacy'],
+        plannerTimeoutMs: 9999
+      }),
+      cliAdapter: {
+        execute
+      }
+    });
+
+    const result = await service.requestMixPlan({
+      currentTrack,
+      nextTrack,
+      currentPlayback: {
+        elapsedSec: 120
+      }
+    });
+
+    expect(result.source).toBe('cli');
+    expect(execute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        command: 'node',
+        args: ['scripts/test-agent.cjs'],
+        timeoutMs: 1200,
+        profileId: 'test-agent',
+        profileName: 'Test Agent'
+      }),
+      expect.any(Object)
+    );
+  });
 });
