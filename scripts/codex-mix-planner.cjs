@@ -62,6 +62,25 @@ const plannerSchema = {
                   anyOf: [{ type: 'number' }, { type: 'null' }]
                 }
               }
+            },
+            candidateId: {
+              anyOf: [{ type: 'string' }, { type: 'null' }]
+            },
+            currentBarIndex: {
+              anyOf: [{ type: 'number' }, { type: 'null' }]
+            },
+            nextBarIndex: {
+              anyOf: [{ type: 'number' }, { type: 'null' }]
+            },
+            phraseAlignment: {
+              anyOf: [{ type: 'string', enum: ['aligned', 'near', 'free'] }, { type: 'null' }]
+            },
+            energyStrategy: {
+              anyOf: [{ type: 'string', enum: ['lift', 'maintain', 'drop'] }, { type: 'null' }]
+            },
+            evidence: {
+              type: 'array',
+              items: { type: 'string' }
             }
           }
         }
@@ -131,6 +150,33 @@ const buildAnalysisHints = (request) => {
   ].join('\n');
 };
 
+const buildPairContextHints = (request) => {
+  const candidates = Array.isArray(request?.pairContext?.candidates)
+    ? request.pairContext.candidates
+    : [];
+  if (candidates.length === 0) {
+    return 'Mix candidates: none available; use cue and beat-grid evidence directly.';
+  }
+
+  return [
+    'Mix candidates:',
+    ...candidates.slice(0, 5).map((candidate, index) =>
+      [
+        `- ${index + 1}. id ${candidate.id}`,
+        `score ${typeof candidate.score === 'number' ? candidate.score.toFixed(2) : '--'}`,
+        `current out ${candidate.currentMixOutSec}s`,
+        `next in ${candidate.nextMixInSec}s`,
+        `bars ${candidate.currentBarIndex ?? '--'} -> ${candidate.nextBarIndex ?? '--'}`,
+        `phrase ${candidate.phraseAlignment ?? '--'}`,
+        `style ${candidate.style ?? '--'}`,
+        candidate.reason ? `reason ${candidate.reason}` : null
+      ]
+        .filter(Boolean)
+        .join('; ')
+    )
+  ].join('\n');
+};
+
 const buildPrompt = (request) => {
   const requestJson = JSON.stringify(request, null, 2);
   return [
@@ -151,12 +197,15 @@ const buildPrompt = (request) => {
     '- Prefer starting the next track from intro cue or an early stable downbeat instead of 0 when analysis supports it',
     '- Do not default to currentTrack.durationSec as transitionEndSec unless cue/downbeat data is missing or the tail is clearly the safest window',
     '- Use reasoningSummary to cite the main evidence: mode, cues, BPM relation, and why the selected style is appropriate',
+    '- Prefer choosing one pairContext candidate and include its candidateId, bar indices, phraseAlignment, energyStrategy, and evidence',
     '- Keep style choices operationally conservative unless the mode explicitly allows more aggressive transitions',
     '- Use tempoSync only when BPM values are present and the chosen rate still sounds plausible',
     '',
     buildModeGuidance(request?.settings?.aiDjMode),
     '',
     buildAnalysisHints(request),
+    '',
+    buildPairContextHints(request),
     '',
     'Planner request JSON:',
     requestJson
@@ -234,6 +283,7 @@ const main = async () => {
 module.exports = {
   buildModeGuidance,
   buildAnalysisHints,
+  buildPairContextHints,
   buildPrompt
 };
 

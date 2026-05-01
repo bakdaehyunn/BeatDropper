@@ -1,5 +1,6 @@
 import { TrackAnalysis } from './analysis';
 import { MixPlan } from './mixPlan';
+import { MixPairContext, buildMixPairContext } from './mixCandidate';
 import { AiDjMode, PlayerSettings, Track } from './types';
 import { isAiAgentProfileConfigured, resolveActiveAiAgentProfile } from './settings';
 
@@ -39,6 +40,7 @@ export interface PlannerRequest {
     current: TrackAnalysis | null;
     next: TrackAnalysis | null;
   };
+  pairContext?: MixPairContext | null;
   settings: PlannerSettingsSnapshot;
 }
 
@@ -135,6 +137,12 @@ export const buildPlannerRequest = (input: {
       current: input.currentAnalysis,
       next: input.nextAnalysis
     },
+    pairContext: buildMixPairContext({
+      currentTrack: input.currentTrack,
+      nextTrack: input.nextTrack,
+      currentAnalysis: input.currentAnalysis,
+      nextAnalysis: input.nextAnalysis
+    }),
     settings: {
       fadeDurationSec: input.settings.fadeDurationSec,
       aiDjMode: input.settings.aiDjMode

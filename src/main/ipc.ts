@@ -1,5 +1,6 @@
 import { BrowserWindow, dialog, ipcMain } from 'electron';
 import { readFile } from 'node:fs/promises';
+import { sanitizeTrackAnalysis } from '../shared/analysis';
 import { TrackAnalysisService } from './analysis/trackAnalysisService';
 import { TrackAnalysisStore } from './analysis/trackAnalysisStore';
 import { AiDjPlannerService } from './aiDj/aiDjPlannerService';
@@ -353,6 +354,23 @@ export const registerIpcHandlers = (): void => {
 
     return trackAnalysisService.getTrackAnalysis(trackId);
   });
+
+  ipcMain.handle(
+    'analysis:saveForTrackId',
+    async (_event, trackId: unknown, analysisInput: unknown) => {
+      if (typeof trackId !== 'string' || trackId.trim().length === 0) {
+        throw new Error('Invalid track id');
+      }
+      if (!isRecord(analysisInput)) {
+        throw new Error('Invalid track analysis payload');
+      }
+
+      return trackAnalysisService.saveTrackAnalysis(
+        trackId,
+        sanitizeTrackAnalysis(trackId, analysisInput)
+      );
+    }
+  );
 
   ipcMain.handle('planner:requestMixPlan', async (_event, candidateInput: unknown) => {
     const candidate = parseMixPlanRequestCandidate(candidateInput);

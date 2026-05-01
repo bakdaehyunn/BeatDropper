@@ -6,6 +6,7 @@ const mockLoadTracksFromPaths = vi.fn();
 const mockReadSettings = vi.fn();
 const mockWriteSettings = vi.fn();
 const mockGetTrackAnalysis = vi.fn();
+const mockSaveTrackAnalysis = vi.fn();
 const mockRequestMixPlan = vi.fn();
 const mockCheckProfile = vi.fn();
 
@@ -61,6 +62,7 @@ vi.mock('../../src/main/analysis/trackAnalysisService', () => {
   return {
     TrackAnalysisService: class {
       getTrackAnalysis = mockGetTrackAnalysis;
+      saveTrackAnalysis = mockSaveTrackAnalysis;
     }
   };
 });
@@ -106,6 +108,7 @@ const setupIpcHandlers = async () => {
   const getTracksHandler = handlerMap.get('library:getTracks');
   const readHandler = handlerMap.get('track:readBufferById');
   const analysisHandler = handlerMap.get('analysis:getByTrackId');
+  const saveAnalysisHandler = handlerMap.get('analysis:saveForTrackId');
   const plannerHandler = handlerMap.get('planner:requestMixPlan');
   const agentCheckHandler = handlerMap.get('agent:checkConnection');
   const saveSettingsHandler = handlerMap.get('settings:save');
@@ -114,6 +117,7 @@ const setupIpcHandlers = async () => {
     !getTracksHandler ||
     !readHandler ||
     !analysisHandler ||
+    !saveAnalysisHandler ||
     !plannerHandler ||
     !agentCheckHandler ||
     !saveSettingsHandler
@@ -125,6 +129,7 @@ const setupIpcHandlers = async () => {
     getTracksHandler,
     readHandler,
     analysisHandler,
+    saveAnalysisHandler,
     plannerHandler,
     agentCheckHandler,
     saveSettingsHandler
@@ -139,6 +144,7 @@ describe('IPC library:openTracks', () => {
     mockReadSettings.mockReset();
     mockWriteSettings.mockReset();
     mockGetTrackAnalysis.mockReset();
+    mockSaveTrackAnalysis.mockReset();
     mockRequestMixPlan.mockReset();
     mockCheckProfile.mockReset();
   });
@@ -292,6 +298,7 @@ describe('IPC settings:save', () => {
 describe('IPC analysis and planner handlers', () => {
   beforeEach(() => {
     mockGetTrackAnalysis.mockReset();
+    mockSaveTrackAnalysis.mockReset();
     mockRequestMixPlan.mockReset();
     mockCheckProfile.mockReset();
   });
@@ -299,6 +306,36 @@ describe('IPC analysis and planner handlers', () => {
   it('validates track id before requesting analysis', async () => {
     const { analysisHandler } = await setupIpcHandlers();
     await expect(analysisHandler({}, '')).rejects.toThrow('Invalid track id');
+  });
+
+  it('validates and saves renderer-generated track analysis', async () => {
+    const { saveAnalysisHandler } = await setupIpcHandlers();
+    mockSaveTrackAnalysis.mockResolvedValue({
+      trackId: 'a',
+      schemaVersion: 2
+    });
+
+    await expect(saveAnalysisHandler({}, '', {})).rejects.toThrow('Invalid track id');
+    await expect(saveAnalysisHandler({}, 'a', null)).rejects.toThrow(
+      'Invalid track analysis payload'
+    );
+
+    await saveAnalysisHandler({}, 'a', {
+      trackId: 'a',
+      bpm: 124,
+      beatGridSec: [0, 0.48],
+      downbeatsSec: [0],
+      analysisConfidence: 0.8
+    });
+
+    expect(mockSaveTrackAnalysis).toHaveBeenCalledWith(
+      'a',
+      expect.objectContaining({
+        trackId: 'a',
+        bpm: 124,
+        analysisConfidence: 0.8
+      })
+    );
   });
 
   it('validates planner payload before calling service', async () => {

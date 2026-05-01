@@ -35,6 +35,7 @@ test('exposes preload API and executes IPC settings flow in Electron', async () 
         'clearTracks',
         'readTrackBufferById',
         'getTrackAnalysis',
+        'saveTrackAnalysis',
         'requestMixPlan',
         'getSettings',
         'saveSettings',

@@ -29,6 +29,24 @@ const pickPointAtOrAfter = (points, target, ceiling) => {
   return candidates[0] ?? null;
 };
 
+const resolveRecommendedCandidate = (request) => {
+  const candidates = Array.isArray(request?.pairContext?.candidates)
+    ? request.pairContext.candidates
+    : [];
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  const recommendedId = request?.pairContext?.recommendedCandidateId;
+  return (
+    candidates.find((candidate) => candidate?.id === recommendedId) ??
+    candidates
+      .filter((candidate) => typeof candidate?.score === 'number')
+      .sort((left, right) => right.score - left.score)[0] ??
+    candidates[0]
+  );
+};
+
 const buildModePolicy = (mode, fadeDurationSec) => {
   if (mode === 'safe') {
     return {
@@ -130,11 +148,14 @@ const buildHeuristicResponse = (request) => {
     ...asNumberList(request?.analysis?.next?.beatGridSec)
   ].sort((left, right) => left - right);
   const policy = buildModePolicy(mode, fadeDurationSec);
+  const candidate = resolveRecommendedCandidate(request);
 
   const preferredEndSec =
-    currentOutroCueSec !== null && currentOutroCueSec > elapsedSec + 0.25
-      ? currentOutroCueSec
-      : currentDurationSec;
+    candidate && asNumber(candidate.currentMixOutSec) !== null
+      ? asNumber(candidate.currentMixOutSec)
+      : currentOutroCueSec !== null && currentOutroCueSec > elapsedSec + 0.25
+        ? currentOutroCueSec
+        : currentDurationSec;
   const alignedEndSec =
     pickPointAtOrBefore(currentPoints, preferredEndSec, elapsedSec + 0.1) ??
     clamp(preferredEndSec, elapsedSec + 0.1, currentDurationSec);
@@ -156,19 +177,29 @@ const buildHeuristicResponse = (request) => {
   }
 
   const inferredNextOffsetSec =
-    nextIntroCueSec ??
-    pickPointAtOrAfter(nextPoints, 0, asNumber(request?.nextTrack?.durationSec) ?? 0) ??
-    0;
+    candidate && asNumber(candidate.nextMixInSec) !== null
+      ? asNumber(candidate.nextMixInSec)
+      : nextIntroCueSec ??
+        pickPointAtOrAfter(nextPoints, 0, asNumber(request?.nextTrack?.durationSec) ?? 0) ??
+        0;
   const tempoSync = resolveTempoSync(currentBpm, nextBpm, policy.tempoRange);
   const bpmGap =
     Number.isFinite(currentBpm) && Number.isFinite(nextBpm) ? Math.abs(currentBpm - nextBpm) : 999;
-  const style = chooseStyle({
-    mode,
-    bpmGap,
-    nextIntroCueSec,
-    currentOutroCueSec,
-    transitionWindowSec: transitionEndSec - transitionStartSec
-  });
+  const candidateStyle =
+    candidate?.style === 'smooth_blend' ||
+    candidate?.style === 'energy_swap' ||
+    candidate?.style === 'hard_cut'
+      ? candidate.style
+      : null;
+  const style =
+    candidateStyle ??
+    chooseStyle({
+      mode,
+      bpmGap,
+      nextIntroCueSec,
+      currentOutroCueSec,
+      transitionWindowSec: transitionEndSec - transitionStartSec
+    });
   const confidence = clamp(
     0.46 +
       (currentOutroCueSec !== null ? 0.12 : 0) +
@@ -191,6 +222,7 @@ const buildHeuristicResponse = (request) => {
       confidence,
       reasoningSummary: [
         `Mode ${mode}`,
+        candidate ? `selected candidate ${candidate.id}` : null,
         currentOutroCueSec !== null
           ? `aligned to current outro cue near ${currentOutroCueSec.toFixed(2)}s`
           : 'used current track tail',
@@ -200,8 +232,31 @@ const buildHeuristicResponse = (request) => {
         tempoSync.enabled
           ? `tempo sync ${tempoSync.targetRate.toFixed(3)}x`
           : 'tempo sync disabled'
-      ].join('; '),
-      tempoSync
+      ]
+        .filter(Boolean)
+        .join('; '),
+      tempoSync,
+      candidateId: typeof candidate?.id === 'string' ? candidate.id : null,
+      currentBarIndex: asNumber(candidate?.currentBarIndex),
+      nextBarIndex: asNumber(candidate?.nextBarIndex),
+      phraseAlignment:
+        candidate?.phraseAlignment === 'aligned' ||
+        candidate?.phraseAlignment === 'near' ||
+        candidate?.phraseAlignment === 'free'
+          ? candidate.phraseAlignment
+          : null,
+      energyStrategy:
+        typeof candidate?.energyDelta === 'number'
+          ? candidate.energyDelta > 0.08
+            ? 'lift'
+            : candidate.energyDelta < -0.08
+              ? 'drop'
+              : 'maintain'
+          : null,
+      evidence: [
+        candidate?.reason,
+        typeof candidate?.score === 'number' ? `candidate score ${candidate.score.toFixed(2)}` : null
+      ].filter(Boolean)
     }
   };
 };
@@ -225,6 +280,7 @@ const main = async () => {
 module.exports = {
   buildModePolicy,
   resolveTempoSync,
+  resolveRecommendedCandidate,
   buildHeuristicResponse
 };
 

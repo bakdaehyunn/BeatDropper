@@ -57,6 +57,9 @@ const dropperApi: DropperApi = {
   getTrackAnalysis: async (trackId: string) => {
     return ipcRenderer.invoke('analysis:getByTrackId', trackId);
   },
+  saveTrackAnalysis: async (trackId, analysis) => {
+    return ipcRenderer.invoke('analysis:saveForTrackId', trackId, analysis);
+  },
   requestMixPlan: async (candidate) => {
     return ipcRenderer.invoke('planner:requestMixPlan', candidate);
   },

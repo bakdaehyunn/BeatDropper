@@ -13,6 +13,12 @@ export interface MixPlan {
   confidence: number;
   reasoningSummary: string | null;
   tempoSync: MixTempoSyncPlan;
+  candidateId?: string | null;
+  currentBarIndex?: number | null;
+  nextBarIndex?: number | null;
+  phraseAlignment?: 'aligned' | 'near' | 'free' | null;
+  energyStrategy?: 'lift' | 'maintain' | 'drop' | null;
+  evidence?: string[];
 }
 
 export interface MixPlanValidationContext {
@@ -127,7 +133,29 @@ export const validateAndClampMixPlan = (
       style,
       confidence,
       reasoningSummary,
-      tempoSync
+      tempoSync,
+      candidateId: typeof candidate.candidateId === 'string' ? candidate.candidateId : null,
+      currentBarIndex: isFiniteNumber(candidate.currentBarIndex)
+        ? Math.max(0, Math.floor(candidate.currentBarIndex))
+        : null,
+      nextBarIndex: isFiniteNumber(candidate.nextBarIndex)
+        ? Math.max(0, Math.floor(candidate.nextBarIndex))
+        : null,
+      phraseAlignment:
+        candidate.phraseAlignment === 'aligned' ||
+        candidate.phraseAlignment === 'near' ||
+        candidate.phraseAlignment === 'free'
+          ? candidate.phraseAlignment
+          : null,
+      energyStrategy:
+        candidate.energyStrategy === 'lift' ||
+        candidate.energyStrategy === 'maintain' ||
+        candidate.energyStrategy === 'drop'
+          ? candidate.energyStrategy
+          : null,
+      evidence: Array.isArray(candidate.evidence)
+        ? candidate.evidence.filter((item): item is string => typeof item === 'string').slice(0, 8)
+        : []
     },
     reason: null
   };

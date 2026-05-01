@@ -40,6 +40,7 @@ import {
   parseMixPlanExportContextFromUnknown,
   parseMixPlanExportJson
 } from '../shared/mixPlanExport';
+import { MixCandidate, buildMixPairContext } from '../shared/mixCandidate';
 import { RequestMixPlanResult } from '../shared/plannerContract';
 import { TrackAnalysis } from '../shared/analysis';
 import {
@@ -60,6 +61,7 @@ import {
   TrackLoadMode
 } from '../shared/types';
 import { AudioEngine } from './player';
+import { buildTrackAnalysisFromAudioBuffer } from './player/trackAnalysisBuilder';
 import {
   applyTrackLoadResult,
   formatTrackLoadError,
@@ -81,6 +83,27 @@ const formatOptionalDuration = (sec: number | null | undefined): string => {
 
 const formatOptionalBpm = (bpm: number | null | undefined): string => {
   return typeof bpm === 'number' && Number.isFinite(bpm) ? String(Math.round(bpm)) : '--';
+};
+
+const formatOptionalSigned = (value: number | null | undefined): string => {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return '--';
+  }
+  return `${value >= 0 ? '+' : ''}${value.toFixed(2)}`;
+};
+
+const clampPercent = (value: number): number => {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+  return Math.min(100, Math.max(0, value));
+};
+
+const durationPercent = (timeSec: number | null | undefined, durationSec: number): number => {
+  if (typeof timeSec !== 'number' || !Number.isFinite(timeSec) || durationSec <= 0) {
+    return 0;
+  }
+  return clampPercent((timeSec / durationSec) * 100);
 };
 
 const formatEventTime = (value: number): string => value.toFixed(2);
@@ -291,6 +314,7 @@ export const App = (): JSX.Element => {
   const [rmsLevel, setRmsLevel] = useState(0);
   const [resolvedBpmByTrack, setResolvedBpmByTrack] = useState<Record<string, number>>({});
   const [analysisByTrackId, setAnalysisByTrackId] = useState<Record<string, TrackAnalysis>>({});
+  const [analyzingTrackIds, setAnalyzingTrackIds] = useState<string[]>([]);
   const [lastImportMode, setLastImportMode] = useState<TrackLoadMode | null>(null);
   const [lastImportAt, setLastImportAt] = useState<number | null>(null);
   const [isTrackLoadPending, setIsTrackLoadPending] = useState(false);
@@ -383,6 +407,63 @@ export const App = (): JSX.Element => {
       canceled = true;
     };
   }, [analysisByTrackId, tracks]);
+
+  useEffect(() => {
+    let canceled = false;
+    const pendingTrack = tracks.find((track) => {
+      const analysis = analysisByTrackId[track.id];
+      return analysis && analysis.waveformPeaks.length === 0 && !analyzingTrackIds.includes(track.id);
+    });
+
+    if (!pendingTrack) {
+      return () => {
+        canceled = true;
+      };
+    }
+
+    setAnalyzingTrackIds((previous) => [...previous, pendingTrack.id]);
+    void (async () => {
+      const AudioContextCtor =
+        window.AudioContext ??
+        (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (!AudioContextCtor) {
+        return;
+      }
+
+      const context = new AudioContextCtor();
+      try {
+        const raw = await window.dropperApi.readTrackBufferById(pendingTrack.id);
+        const decoded = await context.decodeAudioData(raw.slice(0));
+        if (canceled) {
+          return;
+        }
+
+        const analysis = buildTrackAnalysisFromAudioBuffer(pendingTrack, decoded);
+        const saved = await window.dropperApi.saveTrackAnalysis(pendingTrack.id, analysis);
+        if (canceled) {
+          return;
+        }
+
+        setAnalysisByTrackId((previous) => ({
+          ...previous,
+          [pendingTrack.id]: saved
+        }));
+      } catch {
+        return;
+      } finally {
+        await context.close().catch(() => undefined);
+        if (!canceled) {
+          setAnalyzingTrackIds((previous) =>
+            previous.filter((trackId) => trackId !== pendingTrack.id)
+          );
+        }
+      }
+    })();
+
+    return () => {
+      canceled = true;
+    };
+  }, [analysisByTrackId, analyzingTrackIds, tracks]);
 
   useEffect(() => {
     let mounted = true;
@@ -1280,12 +1361,29 @@ export const App = (): JSX.Element => {
   const selectedTrackAnalysis = selectedTrack
     ? analysisByTrackId[selectedTrack.id] ?? null
     : null;
+  const selectedPairNextTrack =
+    selectedTrack && tracks.length > 1
+      ? tracks[selectedIndex + 1] ?? (settings.repeatAll ? tracks[0] : null)
+      : null;
+  const selectedPairNextAnalysis = selectedPairNextTrack
+    ? analysisByTrackId[selectedPairNextTrack.id] ?? null
+    : null;
   const resolveTrackBpm = (track: Track | null, analysis?: TrackAnalysis | null): number | null => {
     if (!track) {
       return null;
     }
     return resolvedBpmByTrack[track.id] ?? analysis?.bpm ?? track.bpm ?? null;
   };
+  const selectedPairContext =
+    selectedTrack && selectedPairNextTrack && selectedTrack.id !== selectedPairNextTrack.id
+      ? buildMixPairContext({
+          currentTrack: selectedTrack,
+          nextTrack: selectedPairNextTrack,
+          currentAnalysis: selectedTrackAnalysis,
+          nextAnalysis: selectedPairNextAnalysis
+        })
+      : null;
+  const selectedPairCandidates: MixCandidate[] = selectedPairContext?.candidates ?? [];
   const selectedTrackBpm = resolveTrackBpm(selectedTrack, selectedTrackAnalysis);
   const nextTrackBpm = resolveTrackBpm(nextTrack, nextTrackAnalysis);
   const activeDecodePreset =
@@ -1572,6 +1670,119 @@ export const App = (): JSX.Element => {
     harnessCurrentTrack && harnessNextTrack && harnessCurrentTrack.id !== harnessNextTrack.id
       ? `${harnessCurrentTrack.title} -> ${harnessNextTrack.title}`
       : 'Need two playlist tracks';
+  const supervisorCurrentTrack = currentTrack ?? selectedTrack;
+  const supervisorNextTrack = currentTrack
+    ? nextTrack
+    : selectedPairNextTrack;
+  const supervisorCurrentAnalysis = supervisorCurrentTrack
+    ? analysisByTrackId[supervisorCurrentTrack.id] ?? null
+    : null;
+  const supervisorNextAnalysis = supervisorNextTrack
+    ? analysisByTrackId[supervisorNextTrack.id] ?? null
+    : null;
+  const supervisorCurrentBpm = resolveTrackBpm(supervisorCurrentTrack, supervisorCurrentAnalysis);
+  const supervisorNextBpm = resolveTrackBpm(supervisorNextTrack, supervisorNextAnalysis);
+  const supervisorPairContext =
+    supervisorCurrentTrack &&
+    supervisorNextTrack &&
+    supervisorCurrentTrack.id !== supervisorNextTrack.id
+      ? buildMixPairContext({
+          currentTrack: supervisorCurrentTrack,
+          nextTrack: supervisorNextTrack,
+          currentAnalysis: supervisorCurrentAnalysis,
+          nextAnalysis: supervisorNextAnalysis
+        })
+      : null;
+  const supervisorCandidates = supervisorPairContext?.candidates ?? [];
+  const supervisorCandidate =
+    supervisorCandidates.find((candidate) => candidate.id === latestSuccessfulMixPlan?.candidateId) ??
+    supervisorCandidates[0] ??
+    null;
+  const supervisorCurrentDurationSec = supervisorCurrentTrack?.durationSec ?? 0;
+  const supervisorNextDurationSec = supervisorNextTrack?.durationSec ?? 0;
+  const supervisorMixOutSec =
+    latestSuccessfulMixPlan?.transitionStartSec ??
+    supervisorCandidate?.currentMixOutSec ??
+    supervisorCurrentAnalysis?.outroCueSec ??
+    (supervisorCurrentDurationSec > 0
+      ? Math.max(0, supervisorCurrentDurationSec - settings.fadeDurationSec)
+      : null);
+  const supervisorMixEndSec =
+    latestSuccessfulMixPlan?.transitionEndSec ??
+    (typeof supervisorMixOutSec === 'number'
+      ? Math.min(supervisorCurrentDurationSec, supervisorMixOutSec + settings.fadeDurationSec)
+      : null);
+  const supervisorNextInSec =
+    latestSuccessfulMixPlan?.nextTrackStartOffsetSec ??
+    supervisorCandidate?.nextMixInSec ??
+    supervisorNextAnalysis?.introCueSec ??
+    0;
+  const supervisorWindowLeft = durationPercent(supervisorMixOutSec, supervisorCurrentDurationSec);
+  const supervisorWindowRight = durationPercent(supervisorMixEndSec, supervisorCurrentDurationSec);
+  const supervisorWindowWidth = Math.max(0, supervisorWindowRight - supervisorWindowLeft);
+  const supervisorPlayheadPercent = currentTrack
+    ? durationPercent(elapsedSec, supervisorCurrentDurationSec)
+    : durationPercent(supervisorMixOutSec, supervisorCurrentDurationSec);
+  const supervisorNextInPercent = durationPercent(supervisorNextInSec, supervisorNextDurationSec);
+  const supervisorTimeToMix =
+    isPlaying && typeof supervisorMixOutSec === 'number'
+      ? Math.max(0, supervisorMixOutSec - elapsedSec)
+      : null;
+  const supervisorPlanLabel = latestSuccessfulMixPlan
+    ? 'AI plan locked'
+    : supervisorCandidate
+      ? 'AI candidate preview'
+      : 'Waiting for analysis';
+  const supervisorConfidenceLabel =
+    latestSuccessfulMixPlan?.confidence !== undefined
+      ? `${Math.round(latestSuccessfulMixPlan.confidence * 100)}%`
+      : supervisorCandidate
+        ? `${Math.round(supervisorCandidate.confidence * 100)}%`
+        : '--';
+  const supervisorStyleLabel =
+    latestSuccessfulMixPlan?.style.replace('_', ' ') ??
+    supervisorCandidate?.style.replace('_', ' ') ??
+    '--';
+  const supervisorReasonLabel =
+    latestSuccessfulMixPlan?.reasoningSummary ??
+    supervisorCandidate?.reason ??
+    'Load at least two analyzed tracks to preview the next transition.';
+  const supervisorBarLabel =
+    latestSuccessfulMixPlan?.currentBarIndex !== undefined &&
+    latestSuccessfulMixPlan?.nextBarIndex !== undefined
+      ? `Bar ${
+          latestSuccessfulMixPlan.currentBarIndex !== null
+            ? latestSuccessfulMixPlan.currentBarIndex + 1
+            : '--'
+        } -> ${
+          latestSuccessfulMixPlan.nextBarIndex !== null
+            ? latestSuccessfulMixPlan.nextBarIndex + 1
+            : '--'
+        }`
+      : supervisorCandidate
+        ? `Bar ${
+            supervisorCandidate.currentBarIndex !== null
+              ? supervisorCandidate.currentBarIndex + 1
+              : '--'
+          } -> ${
+            supervisorCandidate.nextBarIndex !== null
+              ? supervisorCandidate.nextBarIndex + 1
+              : '--'
+          }`
+        : 'Bar --';
+  const renderSupervisorPeaks = (analysis: TrackAnalysis | null, label: string) => {
+    const peaks = analysis?.waveformPeaks ?? [];
+    if (peaks.length === 0) {
+      return <em>{label}</em>;
+    }
+    return peaks.slice(0, 128).map((point, index) => (
+      <span
+        key={`${point.timeSec}-${index}`}
+        className="supervisor-peak"
+        style={{ height: `${Math.max(8, point.peak * 100)}%` }}
+      />
+    ));
+  };
 
   return (
     <div className="app-shell">
@@ -1648,7 +1859,7 @@ export const App = (): JSX.Element => {
         </div>
       </section>
 
-      <main className="main-layout">
+      <main className={`main-layout ${tracks.length > 1 ? 'has-analysis' : ''}`}>
         <section className="source-strip" aria-busy={isTrackLoadPending}>
           <div className="source-summary">
             <span className="panel-tag">Audio Files</span>
@@ -1794,7 +2005,13 @@ export const App = (): JSX.Element => {
                     analysis?.introCueSec != null || analysis?.outroCueSec != null
                       ? `${formatOptionalDuration(analysis?.introCueSec)} / ${formatOptionalDuration(analysis?.outroCueSec)}`
                       : '--';
-                  const mixReady = bpm !== null || analysis !== null ? 'Ready' : 'Pending';
+                  const mixReady = analyzingTrackIds.includes(track.id)
+                    ? 'Analyzing'
+                    : analysis?.waveformPeaks.length
+                      ? `Mix ready · ${analysis.barGrid.length} bars`
+                      : bpm !== null || analysis !== null
+                        ? 'Cue ready'
+                        : 'Pending';
 
                   return (
                     <li
@@ -1844,186 +2061,278 @@ export const App = (): JSX.Element => {
           )}
         </section>
 
-        <section className="panel queue-panel">
+        {tracks.length > 1 && (
+        <section className="panel analysis-panel">
           <div className="panel-head">
-            <h2>Auto DJ Queue</h2>
-            <span className="panel-tag">Now / Next</span>
+            <h2>Mix Pair Inspector</h2>
+            <span className="panel-tag">Analysis / Match</span>
+          </div>
+          {selectedTrack && selectedPairNextTrack ? (
+            <div className="analysis-grid">
+              <article className="track-analysis-card pair-analysis-card">
+                <div className="pair-track-line">
+                  <div className="analysis-card-head">
+                    <div>
+                      <p>Selected Track</p>
+                      <strong>{selectedTrack.title}</strong>
+                    </div>
+                    <span>{selectedTrackAnalysis?.analysisConfidence != null ? `${Math.round(selectedTrackAnalysis.analysisConfidence * 100)}%` : '--'}</span>
+                  </div>
+                  <div className="waveform-strip compact" aria-label="Selected track waveform overview">
+                    {(selectedTrackAnalysis?.waveformPeaks ?? []).length > 0 ? (
+                      selectedTrackAnalysis.waveformPeaks.slice(0, 36).map((point, index) => (
+                        <span
+                          key={`${point.timeSec}-${index}`}
+                          style={{ height: `${Math.max(8, point.peak * 100)}%` }}
+                        />
+                      ))
+                    ) : (
+                      <em>Waveform pending</em>
+                    )}
+                  </div>
+                  <div className="analysis-stats">
+                    <span>BPM {formatOptionalBpm(selectedTrackBpm)}</span>
+                    <span>Bars {selectedTrackAnalysis?.barGrid.length ?? 0}</span>
+                    <span>Out {formatOptionalDuration(selectedTrackAnalysis?.outroCueSec)}</span>
+                  </div>
+                </div>
+
+                <div className="pair-track-line">
+                  <div className="analysis-card-head">
+                    <div>
+                      <p>Next Candidate</p>
+                      <strong>{selectedPairNextTrack.title}</strong>
+                    </div>
+                    <span>{selectedPairNextAnalysis?.analysisConfidence != null ? `${Math.round(selectedPairNextAnalysis.analysisConfidence * 100)}%` : '--'}</span>
+                  </div>
+                  <div className="waveform-strip compact" aria-label="Next track waveform overview">
+                    {(selectedPairNextAnalysis?.waveformPeaks ?? []).length > 0 ? (
+                      selectedPairNextAnalysis.waveformPeaks.slice(0, 36).map((point, index) => (
+                        <span
+                          key={`${point.timeSec}-${index}`}
+                          style={{ height: `${Math.max(8, point.peak * 100)}%` }}
+                        />
+                      ))
+                    ) : (
+                      <em>Waveform pending</em>
+                    )}
+                  </div>
+                  <div className="analysis-stats">
+                    <span>BPM {formatOptionalBpm(resolveTrackBpm(selectedPairNextTrack, selectedPairNextAnalysis))}</span>
+                    <span>Bars {selectedPairNextAnalysis?.barGrid.length ?? 0}</span>
+                    <span>In {formatOptionalDuration(selectedPairNextAnalysis?.introCueSec)}</span>
+                  </div>
+                </div>
+              </article>
+
+              <article className="mix-candidate-card">
+                <div className="analysis-card-head">
+                  <div>
+                    <p>Connection Candidates</p>
+                    <strong>
+                      {selectedPairCandidates.length > 0
+                        ? `${selectedPairCandidates.length} possible links`
+                        : 'Waiting for analysis'}
+                    </strong>
+                  </div>
+                  <span>{selectedPairCandidates[0] ? `${Math.round(selectedPairCandidates[0].score * 100)}%` : '--'}</span>
+                </div>
+                <ul className="candidate-list">
+                  {selectedPairCandidates.length > 0 ? (
+                    selectedPairCandidates.slice(0, 1).map((candidate) => (
+                      <li key={candidate.id}>
+                        <strong>
+                          {formatDuration(candidate.currentMixOutSec)} {'->'} {formatDuration(candidate.nextMixInSec)}
+                        </strong>
+                        <small>
+                          Bar {candidate.currentBarIndex !== null ? candidate.currentBarIndex + 1 : '--'} {'->'}{' '}
+                          {candidate.nextBarIndex !== null ? candidate.nextBarIndex + 1 : '--'} ·{' '}
+                          {candidate.phraseAlignment} · energy {formatOptionalSigned(candidate.energyDelta)}
+                        </small>
+                        <span>{candidate.reason}</span>
+                      </li>
+                    ))
+                  ) : (
+                    <li>
+                      <strong>No pair context yet</strong>
+                      <small>Analyze at least two tracks to show BPM, bars, phrase, and energy links.</small>
+                    </li>
+                  )}
+                </ul>
+              </article>
+            </div>
+          ) : (
+            <p className="muted">Select a track with another track after it to inspect mix links.</p>
+          )}
+        </section>
+        )}
+
+        <section className="panel live-mix-panel">
+          <div className="live-mix-head">
+            <div>
+              <h2>Live Mix Monitor</h2>
+              <small className="panel-subtitle">AI transition supervision</small>
+            </div>
+            <div className="live-plan-pill">
+              <span>{supervisorPlanLabel}</span>
+              <strong>{supervisorConfidenceLabel}</strong>
+            </div>
           </div>
 
-          <section className="set-cockpit">
-            <article className="deck-card now">
-              <div className={`cover-disc ${isPlaying ? 'spinning' : ''}`}>
-                <span>NOW</span>
-              </div>
-              <div className="deck-copy">
-                <p>Now Playing</p>
-                <strong>{currentTrackLabel}</strong>
-                <small>
-                  {playbackNotice
-                    ? playbackNotice
-                    : isPlaying
-                    ? 'Playing from working set'
-                    : isPaused
-                      ? 'Paused'
-                      : 'Select a track and press play'}
-                </small>
-                <div className="deck-stats">
-                  <span>BPM {formatOptionalBpm(currentTrackBpm)}</span>
-                  <span>Length {formatOptionalDuration(currentTrack?.durationSec)}</span>
-                  <span>Outro {formatOptionalDuration(currentTrackAnalysis?.outroCueSec)}</span>
-                </div>
-              </div>
+          <section className="live-deck-strip" aria-label="Current and next deck summary">
+            <article>
+              <span>Now</span>
+              <strong title={supervisorCurrentTrack?.title ?? 'No current track'}>
+                {supervisorCurrentTrack?.title ?? 'No current track'}
+              </strong>
+              <small>
+                BPM {formatOptionalBpm(supervisorCurrentBpm)} · Length{' '}
+                {formatOptionalDuration(supervisorCurrentTrack?.durationSec)} · Out{' '}
+                {formatOptionalDuration(supervisorCurrentAnalysis?.outroCueSec)}
+              </small>
             </article>
-
-            <article className="mix-card">
-              <p>AI Mix Plan</p>
-              <strong>{mixStatusLabel}</strong>
-              <div className="mix-metrics">
-                <span>
-                  <b>Window</b>
-                  {mixWindowLabel}
-                </span>
-                <span>
-                  <b>Offset</b>
-                  {mixOffsetLabel}
-                </span>
-                <span>
-                  <b>Style</b>
-                  {mixStyleLabel}
-                </span>
-                <span>
-                  <b>Confidence</b>
-                  {mixConfidenceLabel}
-                </span>
-              </div>
-              <small>{mixReasoningLabel}</small>
+            <article className="mix-supervisor-card">
+              <span>AI Mix Point</span>
+              <strong>
+                {formatOptionalDuration(supervisorMixOutSec)} {'->'}{' '}
+                {formatOptionalDuration(supervisorNextInSec)}
+              </strong>
+              <small>
+                {supervisorBarLabel} · {supervisorStyleLabel} ·{' '}
+                {supervisorTimeToMix !== null
+                  ? `${formatDuration(supervisorTimeToMix)} to mix`
+                  : 'standby preview'}
+              </small>
             </article>
-
-            <article className="deck-card next">
-              <div className="cover-disc next-disc">
-                <span>NEXT</span>
-              </div>
-              <div className="deck-copy">
-                <p>Next Track</p>
-                <strong>{nextTrack?.title ?? 'No next track'}</strong>
-                <small>
-                  {nextTrack
-                    ? `Ready from playlist position ${nextTrackIndex !== null ? nextTrackIndex + 1 : '--'}`
-                    : 'Load or select a playlist item'}
-                </small>
-                <div className="deck-stats">
-                  <span>BPM {formatOptionalBpm(nextTrackBpm)}</span>
-                  <span>Length {formatOptionalDuration(nextTrack?.durationSec)}</span>
-                  <span>Intro {formatOptionalDuration(nextTrackAnalysis?.introCueSec)}</span>
-                </div>
-              </div>
+            <article>
+              <span>Next</span>
+              <strong title={supervisorNextTrack?.title ?? 'No next track'}>
+                {supervisorNextTrack?.title ?? 'No next track'}
+              </strong>
+              <small>
+                BPM {formatOptionalBpm(supervisorNextBpm)} · Length{' '}
+                {formatOptionalDuration(supervisorNextTrack?.durationSec)} · In{' '}
+                {formatOptionalDuration(supervisorNextAnalysis?.introCueSec)}
+              </small>
             </article>
           </section>
 
-          <div className="progress-wrap">
-            <progress
-              className="progress-track"
-              value={safeProgressValue}
-              max={safeProgressMax}
-            />
-            <div className="time-row">
-              <span>{formatDuration(elapsedSec)}</span>
-              <span>{formatDuration(currentTrackDurationSec)}</span>
-            </div>
-          </div>
-
-          <section className="planner-observability-card">
-            <div className="planner-observability-head">
-              <h3>Planner Watch</h3>
-              <span className="panel-tag">{plannerStatusLabel}</span>
-            </div>
-            <div className="planner-observability-grid">
-              <div className="planner-observability-item">
-                <span>Last plan</span>
-                <strong>{latestMixPlanApplied ? 'Applied' : 'None yet'}</strong>
-                <small>
-                  {latestPlannerWindow
-                    ? `window ${latestPlannerWindow}`
-                    : 'No applied plan during this session.'}
-                </small>
+          <section className="supervisor-wave-stack" aria-label="AI mix waveform overview">
+            <div className="supervisor-wave-row">
+              <div className="supervisor-wave-label">
+                <span>Current</span>
+                <strong>{formatOptionalDuration(supervisorMixOutSec)}</strong>
               </div>
-              <div className="planner-observability-item">
-                <span>Next offset</span>
-                <strong>
-                  {latestPlannerOffset !== null ? formatDuration(latestPlannerOffset) : '--'}
-                </strong>
-                <small>
-                  {latestTempoRate ? `tempo ${latestTempoRate}` : 'Tempo sync not fixed by planner.'}
-                </small>
-              </div>
-              <div className="planner-observability-item wide">
-                <span>Reasoning</span>
-                <strong>{latestPlannerReasoning ?? 'No planner reasoning yet'}</strong>
-                <small>
-                  {latestMixPlanFallback
-                    ? `Latest fallback: ${asString(latestMixPlanFallback.details?.reason) ?? 'unknown'}`
-                    : 'No planner fallback recorded in this session.'}
-                </small>
-              </div>
-            </div>
-          </section>
-
-          <div className="transport-shell main-buttons">
-            <div className="transport-row">
-              <button
-                type="button"
-                className="transport-btn prev"
-                onClick={() => void handlePrevious()}
-                disabled={!isPlaying && !isPaused}
-                aria-label="Previous"
-                title="Previous"
-              >
-                <span className="transport-icon">
-                  <SkipBack aria-hidden="true" />
-                </span>
-              </button>
-              <button
-                type="button"
-                className={`transport-btn toggle ${isPlaying ? 'pause' : 'play'}`}
-                onClick={() => void handlePlayPause()}
-                disabled={!isPaused && !isPlaying && tracks.length === 0}
-                aria-label={isPlaying ? 'Pause' : 'Play'}
-                title={isPlaying ? 'Pause' : 'Play'}
-              >
-                <span className="transport-icon">
-                  {isPlaying ? <Pause aria-hidden="true" /> : <Play aria-hidden="true" />}
-                </span>
-              </button>
-              <button
-                type="button"
-                className="transport-btn next"
-                onClick={() => void handleNext()}
-                disabled={!isPlaying && !isPaused}
-                aria-label="Next"
-                title="Next"
-              >
-                <span className="transport-icon">
-                  <SkipForward aria-hidden="true" />
-                </span>
-              </button>
-            </div>
-          </div>
-
-          <div className="queue-list-wrap">
-            <h3>Up Next</h3>
-            {queueTracks.length === 0 ? (
-              <p className="muted">Queue is empty.</p>
-            ) : (
-              <ul className="queue-list">
-                {queueTracks.map((track, index) => (
-                  <li key={`${track.id}-${index}`}>
-                    <span className="queue-order">{queueStartIndex + index + 1}</span>
-                    <span className="queue-title">{track.title}</span>
-                    <span className="queue-duration">{formatDuration(track.durationSec)}</span>
-                  </li>
+              <div className="supervisor-waveform current">
+                <div
+                  className="supervisor-mix-window"
+                  style={{
+                    left: `${supervisorWindowLeft}%`,
+                    width: `${supervisorWindowWidth}%`
+                  }}
+                />
+                {supervisorCurrentAnalysis?.barGrid.slice(0, 96).map((bar) => (
+                  <i
+                    key={`current-bar-${bar.index}`}
+                    className={`supervisor-tick ${bar.index % 8 === 0 ? 'phrase' : 'bar'}`}
+                    style={{
+                      left: `${durationPercent(bar.startSec, supervisorCurrentDurationSec)}%`
+                    }}
+                  />
                 ))}
-              </ul>
-            )}
+                {renderSupervisorPeaks(supervisorCurrentAnalysis, 'Current waveform pending')}
+                {supervisorCurrentTrack && (
+                  <i
+                    className="supervisor-cursor playhead"
+                    style={{ left: `${supervisorPlayheadPercent}%` }}
+                  >
+                    <b>{currentTrack ? 'PLAY' : 'PREVIEW'}</b>
+                  </i>
+                )}
+                {supervisorCurrentTrack && supervisorMixOutSec !== null && (
+                  <i
+                    className="supervisor-cursor mix-out"
+                    style={{ left: `${durationPercent(supervisorMixOutSec, supervisorCurrentDurationSec)}%` }}
+                  >
+                    <b>OUT</b>
+                  </i>
+                )}
+              </div>
+            </div>
+
+            <div className="supervisor-wave-row next">
+              <div className="supervisor-wave-label">
+                <span>Next</span>
+                <strong>{formatOptionalDuration(supervisorNextInSec)}</strong>
+              </div>
+              <div className="supervisor-waveform next">
+                {supervisorNextAnalysis?.barGrid.slice(0, 96).map((bar) => (
+                  <i
+                    key={`next-bar-${bar.index}`}
+                    className={`supervisor-tick ${bar.index % 8 === 0 ? 'phrase' : 'bar'}`}
+                    style={{
+                      left: `${durationPercent(bar.startSec, supervisorNextDurationSec)}%`
+                    }}
+                  />
+                ))}
+                {renderSupervisorPeaks(supervisorNextAnalysis, 'Next waveform pending')}
+                {supervisorNextTrack && (
+                  <i
+                    className="supervisor-cursor mix-in"
+                    style={{ left: `${supervisorNextInPercent}%` }}
+                  >
+                    <b>IN</b>
+                  </i>
+                )}
+              </div>
+            </div>
+          </section>
+
+          <div className="live-mix-footer">
+            <div className="live-mix-reason" title={supervisorReasonLabel}>
+              <span>Reasoning</span>
+              <strong>{supervisorReasonLabel}</strong>
+            </div>
+            <div className="transport-shell main-buttons">
+              <div className="transport-row">
+                <button
+                  type="button"
+                  className="transport-btn prev"
+                  onClick={() => void handlePrevious()}
+                  disabled={!isPlaying && !isPaused}
+                  aria-label="Previous"
+                  title="Previous"
+                >
+                  <span className="transport-icon">
+                    <SkipBack aria-hidden="true" />
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  className={`transport-btn toggle ${isPlaying ? 'pause' : 'play'}`}
+                  onClick={() => void handlePlayPause()}
+                  disabled={!isPaused && !isPlaying && tracks.length === 0}
+                  aria-label={isPlaying ? 'Pause' : 'Play'}
+                  title={isPlaying ? 'Pause' : 'Play'}
+                >
+                  <span className="transport-icon">
+                    {isPlaying ? <Pause aria-hidden="true" /> : <Play aria-hidden="true" />}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  className="transport-btn next"
+                  onClick={() => void handleNext()}
+                  disabled={!isPlaying && !isPaused}
+                  aria-label="Next"
+                  title="Next"
+                >
+                  <span className="transport-icon">
+                    <SkipForward aria-hidden="true" />
+                  </span>
+                </button>
+              </div>
+            </div>
           </div>
         </section>
       </main>

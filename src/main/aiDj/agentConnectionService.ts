@@ -2,6 +2,7 @@ import { ChildProcessWithoutNullStreams, spawn } from 'node:child_process';
 import { CODEX_AGENT_PROFILE_ID, HEURISTIC_AGENT_PROFILE_ID } from '../../shared/settings';
 import { AiAgentConnectionResult, AiAgentProfile } from '../../shared/types';
 import { PLANNER_SCHEMA_VERSION, PlannerRequest } from '../../shared/plannerContract';
+import { TRACK_ANALYSIS_SCHEMA_VERSION } from '../../shared/analysis';
 import { CliPlannerAdapter } from './cliPlannerAdapter';
 
 type SpawnProcess = (
@@ -31,32 +32,51 @@ const samplePlannerRequest: PlannerRequest = {
   },
   analysis: {
     current: {
-      schemaVersion: 1,
+      schemaVersion: TRACK_ANALYSIS_SCHEMA_VERSION,
       trackId: 'connection-current',
       generatedAt: '2026-01-01T00:00:00.000Z',
       source: 'derived',
       bpm: 124,
+      bpmConfidence: 0.72,
       beatGridSec: [120, 121.94, 123.87, 125.81, 127.74],
       downbeatsSec: [120, 127.74, 135.48, 143.23],
+      barGrid: [
+        { index: 0, startSec: 120, beatIndex: 0 },
+        { index: 1, startSec: 127.74, beatIndex: 4 }
+      ],
+      phraseMarkers: [{ index: 0, startSec: 120, bars: 8, confidence: 0.72 }],
       introCueSec: 0,
       outroCueSec: 168,
       energyProfile: [0.4, 0.5, 0.48, 0.42],
-      analysisConfidence: 0.72
+      waveformPeaks: [],
+      cueCandidates: [],
+      analysisConfidence: 0.72,
+      analysisWarnings: []
     },
     next: {
-      schemaVersion: 1,
+      schemaVersion: TRACK_ANALYSIS_SCHEMA_VERSION,
       trackId: 'connection-next',
       generatedAt: '2026-01-01T00:00:00.000Z',
       source: 'derived',
       bpm: 126,
+      bpmConfidence: 0.72,
       beatGridSec: [0, 1.9, 3.81, 5.71, 7.62],
       downbeatsSec: [0, 7.62, 15.24, 22.86],
+      barGrid: [
+        { index: 0, startSec: 0, beatIndex: 0 },
+        { index: 1, startSec: 7.62, beatIndex: 4 }
+      ],
+      phraseMarkers: [{ index: 0, startSec: 0, bars: 8, confidence: 0.72 }],
       introCueSec: 8,
       outroCueSec: 176,
       energyProfile: [0.34, 0.44, 0.58, 0.66],
-      analysisConfidence: 0.72
+      waveformPeaks: [],
+      cueCandidates: [],
+      analysisConfidence: 0.72,
+      analysisWarnings: []
     }
   },
+  pairContext: null,
   settings: {
     fadeDurationSec: 8,
     aiDjMode: 'balanced'

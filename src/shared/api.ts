@@ -16,6 +16,7 @@ export interface DropperApi {
   clearTracks(): Promise<void>;
   readTrackBufferById(trackId: string): Promise<ArrayBuffer>;
   getTrackAnalysis(trackId: string): Promise<TrackAnalysis | null>;
+  saveTrackAnalysis(trackId: string, analysis: TrackAnalysis): Promise<TrackAnalysis>;
   requestMixPlan(candidate: RequestMixPlanInput): Promise<RequestMixPlanResult>;
   checkAiAgentConnection(profile: AiAgentProfile): Promise<AiAgentConnectionResult>;
   getSettings(): Promise<PlayerSettings>;
