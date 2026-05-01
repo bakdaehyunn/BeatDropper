@@ -412,7 +412,11 @@ export const App = (): JSX.Element => {
     let canceled = false;
     const pendingTrack = tracks.find((track) => {
       const analysis = analysisByTrackId[track.id];
-      return analysis && analysis.waveformPeaks.length === 0 && !analyzingTrackIds.includes(track.id);
+      return (
+        analysis &&
+        (analysis.waveformPeaks.length === 0 || analysis.waveformDetail.length === 0) &&
+        !analyzingTrackIds.includes(track.id)
+      );
     });
 
     if (!pendingTrack) {
@@ -1771,17 +1775,32 @@ export const App = (): JSX.Element => {
           }`
         : 'Bar --';
   const renderSupervisorPeaks = (analysis: TrackAnalysis | null, label: string) => {
-    const peaks = analysis?.waveformPeaks ?? [];
+    const detail = analysis?.waveformDetail ?? [];
+    const spectralBands = analysis?.spectralBands ?? [];
+    const peaks = detail.length > 0 ? detail : (analysis?.waveformPeaks ?? []);
     if (peaks.length === 0) {
       return <em>{label}</em>;
     }
-    return peaks.slice(0, 128).map((point, index) => (
-      <span
-        key={`${point.timeSec}-${index}`}
-        className="supervisor-peak"
-        style={{ height: `${Math.max(8, point.peak * 100)}%` }}
-      />
-    ));
+    const stride = Math.max(1, Math.ceil(peaks.length / 180));
+    return peaks
+      .filter((_point, index) => index % stride === 0)
+      .slice(0, 180)
+      .map((point, index) => {
+        const band = spectralBands[Math.min(spectralBands.length - 1, index * stride)] ?? null;
+        const low = band?.low ?? point.rms;
+        const mid = band?.mid ?? point.peak;
+        const high = band?.high ?? Math.max(0, point.peak - point.rms);
+        return (
+          <span
+            key={`${point.timeSec}-${index}`}
+            className="supervisor-peak"
+            style={{
+              height: `${Math.max(8, point.peak * 100)}%`,
+              background: `linear-gradient(180deg, rgba(239,68,68,${Math.max(0.34, high)}) 0%, rgba(245,158,11,${Math.max(0.32, mid)}) 44%, rgba(45,212,191,${Math.max(0.34, low)}) 55%, rgba(37,99,235,${Math.max(0.28, low * 0.85)}) 100%)`
+            }}
+          />
+        );
+      });
   };
 
   return (
@@ -2007,7 +2026,7 @@ export const App = (): JSX.Element => {
                       : '--';
                   const mixReady = analyzingTrackIds.includes(track.id)
                     ? 'Analyzing'
-                    : analysis?.waveformPeaks.length
+                    : analysis?.waveformDetail.length || analysis?.waveformPeaks.length
                       ? `Mix ready · ${analysis.barGrid.length} bars`
                       : bpm !== null || analysis !== null
                         ? 'Cue ready'
@@ -2079,8 +2098,12 @@ export const App = (): JSX.Element => {
                     <span>{selectedTrackAnalysis?.analysisConfidence != null ? `${Math.round(selectedTrackAnalysis.analysisConfidence * 100)}%` : '--'}</span>
                   </div>
                   <div className="waveform-strip compact" aria-label="Selected track waveform overview">
-                    {(selectedTrackAnalysis?.waveformPeaks ?? []).length > 0 ? (
-                      selectedTrackAnalysis.waveformPeaks.slice(0, 36).map((point, index) => (
+                    {((selectedTrackAnalysis?.waveformDetail ?? []).length > 0 ||
+                      (selectedTrackAnalysis?.waveformPeaks ?? []).length > 0) ? (
+                      (selectedTrackAnalysis?.waveformDetail.length
+                        ? selectedTrackAnalysis.waveformDetail
+                        : selectedTrackAnalysis?.waveformPeaks ?? []
+                      ).slice(0, 36).map((point, index) => (
                         <span
                           key={`${point.timeSec}-${index}`}
                           style={{ height: `${Math.max(8, point.peak * 100)}%` }}
@@ -2106,8 +2129,12 @@ export const App = (): JSX.Element => {
                     <span>{selectedPairNextAnalysis?.analysisConfidence != null ? `${Math.round(selectedPairNextAnalysis.analysisConfidence * 100)}%` : '--'}</span>
                   </div>
                   <div className="waveform-strip compact" aria-label="Next track waveform overview">
-                    {(selectedPairNextAnalysis?.waveformPeaks ?? []).length > 0 ? (
-                      selectedPairNextAnalysis.waveformPeaks.slice(0, 36).map((point, index) => (
+                    {((selectedPairNextAnalysis?.waveformDetail ?? []).length > 0 ||
+                      (selectedPairNextAnalysis?.waveformPeaks ?? []).length > 0) ? (
+                      (selectedPairNextAnalysis?.waveformDetail.length
+                        ? selectedPairNextAnalysis.waveformDetail
+                        : selectedPairNextAnalysis?.waveformPeaks ?? []
+                      ).slice(0, 36).map((point, index) => (
                         <span
                           key={`${point.timeSec}-${index}`}
                           style={{ height: `${Math.max(8, point.peak * 100)}%` }}
@@ -2188,7 +2215,10 @@ export const App = (): JSX.Element => {
               <small>
                 BPM {formatOptionalBpm(supervisorCurrentBpm)} · Length{' '}
                 {formatOptionalDuration(supervisorCurrentTrack?.durationSec)} · Out{' '}
-                {formatOptionalDuration(supervisorCurrentAnalysis?.outroCueSec)}
+                {formatOptionalDuration(supervisorCurrentAnalysis?.outroCueSec)} · Quality{' '}
+                {supervisorCurrentAnalysis
+                  ? `${Math.round(supervisorCurrentAnalysis.analysisQuality.waveformDetail * 100)}%`
+                  : '--'}
               </small>
             </article>
             <article className="mix-supervisor-card">
@@ -2212,7 +2242,10 @@ export const App = (): JSX.Element => {
               <small>
                 BPM {formatOptionalBpm(supervisorNextBpm)} · Length{' '}
                 {formatOptionalDuration(supervisorNextTrack?.durationSec)} · In{' '}
-                {formatOptionalDuration(supervisorNextAnalysis?.introCueSec)}
+                {formatOptionalDuration(supervisorNextAnalysis?.introCueSec)} · Quality{' '}
+                {supervisorNextAnalysis
+                  ? `${Math.round(supervisorNextAnalysis.analysisQuality.waveformDetail * 100)}%`
+                  : '--'}
               </small>
             </article>
           </section>
@@ -2231,12 +2264,34 @@ export const App = (): JSX.Element => {
                     width: `${supervisorWindowWidth}%`
                   }}
                 />
-                {supervisorCurrentAnalysis?.barGrid.slice(0, 96).map((bar) => (
+                {supervisorCurrentAnalysis?.barGrid
+                  .filter((bar) => bar.index % 4 === 0)
+                  .slice(0, 96)
+                  .map((bar) => (
                   <i
                     key={`current-bar-${bar.index}`}
                     className={`supervisor-tick ${bar.index % 8 === 0 ? 'phrase' : 'bar'}`}
                     style={{
                       left: `${durationPercent(bar.startSec, supervisorCurrentDurationSec)}%`
+                    }}
+                  />
+                ))}
+                {supervisorCurrentAnalysis?.phraseMarkers.slice(0, 64).map((phrase) => (
+                  <i
+                    key={`current-phrase-${phrase.index}`}
+                    className="supervisor-phrase-marker"
+                    style={{
+                      left: `${durationPercent(phrase.startSec, supervisorCurrentDurationSec)}%`
+                    }}
+                  />
+                ))}
+                {supervisorCurrentAnalysis?.transientMarkers.slice(0, 80).map((marker) => (
+                  <i
+                    key={`current-transient-${marker.index}`}
+                    className="supervisor-transient"
+                    style={{
+                      left: `${durationPercent(marker.timeSec, supervisorCurrentDurationSec)}%`,
+                      opacity: Math.max(0.18, marker.strength)
                     }}
                   />
                 ))}
@@ -2266,12 +2321,34 @@ export const App = (): JSX.Element => {
                 <strong>{formatOptionalDuration(supervisorNextInSec)}</strong>
               </div>
               <div className="supervisor-waveform next">
-                {supervisorNextAnalysis?.barGrid.slice(0, 96).map((bar) => (
+                {supervisorNextAnalysis?.barGrid
+                  .filter((bar) => bar.index % 4 === 0)
+                  .slice(0, 96)
+                  .map((bar) => (
                   <i
                     key={`next-bar-${bar.index}`}
                     className={`supervisor-tick ${bar.index % 8 === 0 ? 'phrase' : 'bar'}`}
                     style={{
                       left: `${durationPercent(bar.startSec, supervisorNextDurationSec)}%`
+                    }}
+                  />
+                ))}
+                {supervisorNextAnalysis?.phraseMarkers.slice(0, 64).map((phrase) => (
+                  <i
+                    key={`next-phrase-${phrase.index}`}
+                    className="supervisor-phrase-marker"
+                    style={{
+                      left: `${durationPercent(phrase.startSec, supervisorNextDurationSec)}%`
+                    }}
+                  />
+                ))}
+                {supervisorNextAnalysis?.transientMarkers.slice(0, 80).map((marker) => (
+                  <i
+                    key={`next-transient-${marker.index}`}
+                    className="supervisor-transient"
+                    style={{
+                      left: `${durationPercent(marker.timeSec, supervisorNextDurationSec)}%`,
+                      opacity: Math.max(0.18, marker.strength)
                     }}
                   />
                 ))}

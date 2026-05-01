@@ -49,8 +49,17 @@ const samplePlannerRequest: PlannerRequest = {
       outroCueSec: 168,
       energyProfile: [0.4, 0.5, 0.48, 0.42],
       waveformPeaks: [],
+      waveformDetail: [],
+      spectralBands: [],
+      transientMarkers: [],
       cueCandidates: [],
       analysisConfidence: 0.72,
+      analysisQuality: {
+        waveformDetail: 0,
+        spectralBands: 0,
+        transientMarkers: 0,
+        beatGrid: 0.72
+      },
       analysisWarnings: []
     },
     next: {
@@ -71,8 +80,17 @@ const samplePlannerRequest: PlannerRequest = {
       outroCueSec: 176,
       energyProfile: [0.34, 0.44, 0.58, 0.66],
       waveformPeaks: [],
+      waveformDetail: [],
+      spectralBands: [],
+      transientMarkers: [],
       cueCandidates: [],
       analysisConfidence: 0.72,
+      analysisQuality: {
+        waveformDetail: 0,
+        spectralBands: 0,
+        transientMarkers: 0,
+        beatGrid: 0.72
+      },
       analysisWarnings: []
     }
   },

@@ -33,6 +33,9 @@ describe('buildTrackAnalysisFromAudioBuffer', () => {
     expect(analysis.trackId).toBe(track.id);
     expect(analysis.bpm).toBe(120);
     expect(analysis.waveformPeaks.length).toBeGreaterThan(0);
+    expect(analysis.waveformDetail.length).toBeGreaterThan(analysis.waveformPeaks.length);
+    expect(analysis.spectralBands.length).toBe(analysis.waveformDetail.length);
+    expect(analysis.transientMarkers.length).toBeGreaterThan(0);
     expect(analysis.energyProfile.length).toBeGreaterThan(0);
     expect(analysis.beatGridSec.length).toBeGreaterThan(0);
     expect(analysis.barGrid.length).toBeGreaterThan(0);
@@ -40,5 +43,7 @@ describe('buildTrackAnalysisFromAudioBuffer', () => {
     expect(analysis.cueCandidates.map((cue) => cue.type)).toEqual(
       expect.arrayContaining(['intro', 'outro'])
     );
+    expect(analysis.analysisQuality.waveformDetail).toBeGreaterThan(0);
+    expect(analysis.analysisQuality.spectralBands).toBeGreaterThan(0);
   });
 });

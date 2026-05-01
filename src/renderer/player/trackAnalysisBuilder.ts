@@ -1,8 +1,16 @@
-import { sanitizeTrackAnalysis, TrackAnalysis } from '../../shared/analysis';
+import {
+  sanitizeTrackAnalysis,
+  SpectralBandPoint,
+  TrackAnalysis,
+  TransientMarker,
+  WaveformDetailPoint
+} from '../../shared/analysis';
 import { Track } from '../../shared/types';
 import { AudioBufferForBpm, estimateTrackBpm } from './bpmEstimator';
 
 const WAVEFORM_BUCKETS = 160;
+const WAVEFORM_DETAIL_MAX_BUCKETS = 1200;
+const WAVEFORM_DETAIL_BUCKETS_PER_SEC = 4;
 const ENERGY_BUCKETS = 64;
 
 const clamp = (value: number, min: number, max: number): number => {
@@ -63,6 +71,126 @@ const buildEnergyProfile = (buffer: AudioBufferForBpm): number[] => {
   return values.map((value) => clamp(value / max, 0, 1));
 };
 
+const buildWaveformDetail = (buffer: AudioBufferForBpm): WaveformDetailPoint[] => {
+  const totalSamples = Math.max(0, Math.floor(buffer.duration * buffer.sampleRate));
+  const bucketCount = Math.min(
+    WAVEFORM_DETAIL_MAX_BUCKETS,
+    Math.max(WAVEFORM_BUCKETS, Math.floor(buffer.duration * WAVEFORM_DETAIL_BUCKETS_PER_SEC))
+  );
+  const samplesPerBucket = Math.max(1, Math.floor(totalSamples / bucketCount));
+
+  return Array.from({ length: bucketCount }, (_, bucketIndex) => {
+    const start = bucketIndex * samplesPerBucket;
+    const end = Math.min(totalSamples, start + samplesPerBucket);
+    let min = 0;
+    let max = 0;
+    let peak = 0;
+    let sumSquares = 0;
+    let count = 0;
+    for (let sampleIndex = start; sampleIndex < end; sampleIndex += 1) {
+      const sample = readMonoSample(buffer, sampleIndex);
+      min = Math.min(min, sample);
+      max = Math.max(max, sample);
+      peak = Math.max(peak, Math.abs(sample));
+      sumSquares += sample * sample;
+      count += 1;
+    }
+
+    return {
+      timeSec: (start / Math.max(1, totalSamples)) * buffer.duration,
+      peak: clamp(peak, 0, 1),
+      rms: count > 0 ? clamp(Math.sqrt(sumSquares / count), 0, 1) : 0,
+      min: clamp(min, -1, 1),
+      max: clamp(max, -1, 1)
+    };
+  });
+};
+
+const normalizeBandPoints = (points: SpectralBandPoint[]): SpectralBandPoint[] => {
+  const maxLow = Math.max(1e-6, ...points.map((point) => point.low));
+  const maxMid = Math.max(1e-6, ...points.map((point) => point.mid));
+  const maxHigh = Math.max(1e-6, ...points.map((point) => point.high));
+
+  return points.map((point) => ({
+    timeSec: point.timeSec,
+    low: clamp(point.low / maxLow, 0, 1),
+    mid: clamp(point.mid / maxMid, 0, 1),
+    high: clamp(point.high / maxHigh, 0, 1)
+  }));
+};
+
+const buildSpectralBands = (buffer: AudioBufferForBpm): SpectralBandPoint[] => {
+  const totalSamples = Math.max(0, Math.floor(buffer.duration * buffer.sampleRate));
+  const bucketCount = Math.min(
+    WAVEFORM_DETAIL_MAX_BUCKETS,
+    Math.max(WAVEFORM_BUCKETS, Math.floor(buffer.duration * WAVEFORM_DETAIL_BUCKETS_PER_SEC))
+  );
+  const samplesPerBucket = Math.max(1, Math.floor(totalSamples / bucketCount));
+  const points = Array.from({ length: bucketCount }, (_, bucketIndex) => {
+    const start = bucketIndex * samplesPerBucket;
+    const end = Math.min(totalSamples, start + samplesPerBucket);
+    let low = 0;
+    let mid = 0;
+    let high = 0;
+    let previous = readMonoSample(buffer, start);
+    let count = 0;
+
+    for (let sampleIndex = start; sampleIndex < end; sampleIndex += 1) {
+      const sample = readMonoSample(buffer, sampleIndex);
+      const delta = sample - previous;
+      const abs = Math.abs(sample);
+      const highComponent = Math.abs(delta);
+      low += abs * abs;
+      mid += Math.abs(sample - delta * 0.5);
+      high += highComponent * highComponent;
+      previous = sample;
+      count += 1;
+    }
+
+    return {
+      timeSec: (start / Math.max(1, totalSamples)) * buffer.duration,
+      low: count > 0 ? Math.sqrt(low / count) : 0,
+      mid: count > 0 ? mid / count : 0,
+      high: count > 0 ? Math.sqrt(high / count) : 0
+    };
+  });
+
+  return normalizeBandPoints(points);
+};
+
+const buildTransientMarkers = (
+  waveformDetail: WaveformDetailPoint[],
+  durationSec: number
+): TransientMarker[] => {
+  if (waveformDetail.length < 4 || durationSec <= 0) {
+    return [];
+  }
+
+  const strengths = waveformDetail.map((point, index) => {
+    const previous = waveformDetail[Math.max(0, index - 1)]?.rms ?? 0;
+    return Math.max(0, point.rms - previous);
+  });
+  const maxStrength = Math.max(1e-6, ...strengths);
+  const normalized = strengths.map((value) => clamp(value / maxStrength, 0, 1));
+  const markers: TransientMarker[] = [];
+  let lastTimeSec = -Infinity;
+
+  normalized.forEach((strength, index) => {
+    const point = waveformDetail[index];
+    if (!point || strength < 0.58 || point.timeSec - lastTimeSec < 0.18) {
+      return;
+    }
+    markers.push({
+      index: markers.length,
+      timeSec: point.timeSec,
+      strength
+    });
+    lastTimeSec = point.timeSec;
+  });
+
+  return markers.slice(0, 256);
+};
+
 const findEnergyTime = (
   energyProfile: number[],
   durationSec: number,
@@ -96,6 +224,9 @@ export const buildTrackAnalysisFromAudioBuffer = (
   const durationSec = Math.max(0, buffer.duration || track.durationSec);
   const energyProfile = buildEnergyProfile(buffer);
   const waveformPeaks = buildWaveformPeaks(buffer);
+  const waveformDetail = buildWaveformDetail(buffer);
+  const spectralBands = buildSpectralBands(buffer);
+  const transientMarkers = buildTransientMarkers(waveformDetail, durationSec);
   const beatIntervalSec = bpm && bpm > 0 ? 60 / bpm : null;
   const beatGridSec =
     beatIntervalSec !== null
@@ -133,10 +264,17 @@ export const buildTrackAnalysisFromAudioBuffer = (
       (bpm ? 0.25 : 0) +
       (beatGridSec.length > 0 ? 0.2 : 0) +
       (energyProfile.length > 8 ? 0.15 : 0) +
-      (waveformPeaks.length > 8 ? 0.15 : 0),
+      (waveformPeaks.length > 8 ? 0.1 : 0) +
+      (waveformDetail.length > WAVEFORM_BUCKETS ? 0.05 : 0),
     0,
     1
   );
+  const analysisQuality = {
+    waveformDetail: clamp(waveformDetail.length / WAVEFORM_DETAIL_MAX_BUCKETS, 0, 1),
+    spectralBands: clamp(spectralBands.length / WAVEFORM_DETAIL_MAX_BUCKETS, 0, 1),
+    transientMarkers: clamp(transientMarkers.length / Math.max(16, durationSec / 2), 0, 1),
+    beatGrid: beatGridSec.length > 0 ? bpmConfidence : 0
+  };
 
   return sanitizeTrackAnalysis(track.id, {
     generatedAt: new Date().toISOString(),
@@ -151,6 +289,9 @@ export const buildTrackAnalysisFromAudioBuffer = (
     outroCueSec,
     energyProfile,
     waveformPeaks,
+    waveformDetail,
+    spectralBands,
+    transientMarkers,
     cueCandidates: [
       {
         id: 'intro',
@@ -202,6 +343,7 @@ export const buildTrackAnalysisFromAudioBuffer = (
         : [])
     ],
     analysisConfidence,
+    analysisQuality,
     analysisWarnings: [
       ...(bpm ? [] : ['bpm_unavailable' as const]),
       ...(bpmEstimate.bpm && bpmEstimate.confidence < 0.45

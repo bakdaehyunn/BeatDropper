@@ -83,8 +83,16 @@ test('keeps playlist and mix inspector visible without internal scrollbars', asy
         bpm: 132
       }
     ];
-    const makeAnalysis = (trackId: string, bpm: number, durationSec: number) => ({
-      schemaVersion: 2,
+    const makeAnalysis = (trackId: string, bpm: number, durationSec: number) => {
+      const waveformDetail = Array.from({ length: 180 }, (_, index) => ({
+        timeSec: index * (durationSec / 180),
+        peak: 0.25 + (index % 8) * 0.08,
+        rms: 0.18 + (index % 6) * 0.06,
+        min: -0.2 - (index % 5) * 0.05,
+        max: 0.2 + (index % 7) * 0.06
+      }));
+      return {
+      schemaVersion: 3,
       trackId,
       generatedAt: new Date().toISOString(),
       source: 'derived',
@@ -109,6 +117,18 @@ test('keeps playlist and mix inspector visible without internal scrollbars', asy
         peak: 0.25 + (index % 8) * 0.08,
         rms: 0.18 + (index % 6) * 0.06
       })),
+      waveformDetail,
+      spectralBands: waveformDetail.map((point, index) => ({
+        timeSec: point.timeSec,
+        low: 0.3 + (index % 6) * 0.08,
+        mid: 0.25 + (index % 5) * 0.1,
+        high: 0.2 + (index % 4) * 0.12
+      })),
+      transientMarkers: Array.from({ length: 12 }, (_, index) => ({
+        index,
+        timeSec: index * 8,
+        strength: 0.55 + (index % 3) * 0.12
+      })),
       cueCandidates: [
         { id: 'intro-0', type: 'intro', startSec: 0, endSec: 8, confidence: 0.7, label: 'Intro' },
         {
@@ -121,8 +141,15 @@ test('keeps playlist and mix inspector visible without internal scrollbars', asy
         }
       ],
       analysisConfidence: 0.86,
+      analysisQuality: {
+        waveformDetail: 0.85,
+        spectralBands: 0.85,
+        transientMarkers: 0.64,
+        beatGrid: 0.8
+      },
       analysisWarnings: []
-    });
+    };
+    };
     const analyses = Object.fromEntries(
       tracks.map((track) => [track.id, makeAnalysis(track.id, track.bpm, track.durationSec)])
     );
@@ -166,6 +193,8 @@ test('keeps playlist and mix inspector visible without internal scrollbars', asy
   await expect(page.locator('.supervisor-waveform.next')).toBeVisible();
   await expect(page.locator('.supervisor-cursor.mix-out')).toBeVisible();
   await expect(page.locator('.supervisor-cursor.mix-in')).toBeVisible();
+  await expect(page.locator('.supervisor-phrase-marker').first()).toBeVisible();
+  await expect(page.locator('.supervisor-transient').first()).toBeVisible();
 
   const overflow = await page.evaluate(() => {
     const selectors = [

@@ -1,4 +1,4 @@
-export const TRACK_ANALYSIS_SCHEMA_VERSION = 2;
+export const TRACK_ANALYSIS_SCHEMA_VERSION = 3;
 
 export type TrackAnalysisSource = 'metadata' | 'derived' | 'external';
 export type CueCandidateType =
@@ -12,12 +12,38 @@ export type AnalysisWarning =
   | 'bpm_low_confidence'
   | 'beat_grid_estimated'
   | 'short_track'
-  | 'flat_energy';
+  | 'flat_energy'
+  | 'analysis_upgrade_available';
 
 export interface WaveformPeak {
   timeSec: number;
   peak: number;
   rms: number;
+}
+
+export interface WaveformDetailPoint extends WaveformPeak {
+  min: number;
+  max: number;
+}
+
+export interface SpectralBandPoint {
+  timeSec: number;
+  low: number;
+  mid: number;
+  high: number;
+}
+
+export interface TransientMarker {
+  index: number;
+  timeSec: number;
+  strength: number;
+}
+
+export interface AnalysisQuality {
+  waveformDetail: number;
+  spectralBands: number;
+  transientMarkers: number;
+  beatGrid: number;
 }
 
 export interface BarMarker {
@@ -57,8 +83,12 @@ export interface TrackAnalysis {
   outroCueSec: number | null;
   energyProfile: number[];
   waveformPeaks: WaveformPeak[];
+  waveformDetail: WaveformDetailPoint[];
+  spectralBands: SpectralBandPoint[];
+  transientMarkers: TransientMarker[];
   cueCandidates: CueCandidate[];
   analysisConfidence: number;
+  analysisQuality: AnalysisQuality;
   analysisWarnings: AnalysisWarning[];
 }
 
@@ -95,6 +125,61 @@ const asWaveformPeaks = (value: unknown): WaveformPeak[] => {
       rms: isFiniteNumber(item.rms) ? clamp(item.rms, 0, 1) : 0
     }))
     .filter((item) => item.timeSec >= 0);
+};
+
+const asWaveformDetail = (value: unknown): WaveformDetailPoint[] => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .filter(isRecord)
+    .map((item) => {
+      const min = isFiniteNumber(item.min) ? clamp(item.min, -1, 1) : 0;
+      const max = isFiniteNumber(item.max) ? clamp(item.max, -1, 1) : 0;
+      return {
+        timeSec: isFiniteNumber(item.timeSec) ? Math.max(0, item.timeSec) : 0,
+        peak: isFiniteNumber(item.peak) ? clamp(item.peak, 0, 1) : Math.max(Math.abs(min), Math.abs(max)),
+        rms: isFiniteNumber(item.rms) ? clamp(item.rms, 0, 1) : 0,
+        min,
+        max
+      };
+    })
+    .filter((item) => item.timeSec >= 0)
+    .slice(0, 2000);
+};
+
+const asSpectralBands = (value: unknown): SpectralBandPoint[] => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .filter(isRecord)
+    .map((item) => ({
+      timeSec: isFiniteNumber(item.timeSec) ? Math.max(0, item.timeSec) : 0,
+      low: isFiniteNumber(item.low) ? clamp(item.low, 0, 1) : 0,
+      mid: isFiniteNumber(item.mid) ? clamp(item.mid, 0, 1) : 0,
+      high: isFiniteNumber(item.high) ? clamp(item.high, 0, 1) : 0
+    }))
+    .filter((item) => item.timeSec >= 0)
+    .slice(0, 2000);
+};
+
+const asTransientMarkers = (value: unknown): TransientMarker[] => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .filter(isRecord)
+    .map((item, index) => ({
+      index: isFiniteNumber(item.index) ? Math.max(0, Math.floor(item.index)) : index,
+      timeSec: isFiniteNumber(item.timeSec) ? Math.max(0, item.timeSec) : 0,
+      strength: isFiniteNumber(item.strength) ? clamp(item.strength, 0, 1) : 0
+    }))
+    .filter((item) => item.timeSec >= 0 && item.strength > 0)
+    .slice(0, 512);
 };
 
 const asBarMarkers = (value: unknown): BarMarker[] => {
@@ -167,8 +252,27 @@ const asAnalysisWarnings = (value: unknown): AnalysisWarning[] => {
     item === 'bpm_low_confidence' ||
     item === 'beat_grid_estimated' ||
     item === 'short_track' ||
-    item === 'flat_energy'
+    item === 'flat_energy' ||
+    item === 'analysis_upgrade_available'
   );
+};
+
+const asAnalysisQuality = (value: unknown): AnalysisQuality => {
+  if (!isRecord(value)) {
+    return {
+      waveformDetail: 0,
+      spectralBands: 0,
+      transientMarkers: 0,
+      beatGrid: 0
+    };
+  }
+
+  return {
+    waveformDetail: isFiniteNumber(value.waveformDetail) ? clamp(value.waveformDetail, 0, 1) : 0,
+    spectralBands: isFiniteNumber(value.spectralBands) ? clamp(value.spectralBands, 0, 1) : 0,
+    transientMarkers: isFiniteNumber(value.transientMarkers) ? clamp(value.transientMarkers, 0, 1) : 0,
+    beatGrid: isFiniteNumber(value.beatGrid) ? clamp(value.beatGrid, 0, 1) : 0
+  };
 };
 
 export const sanitizeTrackAnalysis = (
@@ -178,6 +282,17 @@ export const sanitizeTrackAnalysis = (
   const confidence = isFiniteNumber(candidate?.analysisConfidence)
     ? candidate.analysisConfidence
     : 0;
+  const waveformDetail = asWaveformDetail(candidate?.waveformDetail);
+  const spectralBands = asSpectralBands(candidate?.spectralBands);
+  const transientMarkers = asTransientMarkers(candidate?.transientMarkers);
+  const sourceSchemaVersion = isFiniteNumber(candidate?.schemaVersion)
+    ? Math.floor(candidate.schemaVersion)
+    : 1;
+  const analysisWarnings = asAnalysisWarnings(candidate?.analysisWarnings);
+  const upgradeWarnings =
+    sourceSchemaVersion < TRACK_ANALYSIS_SCHEMA_VERSION && waveformDetail.length === 0
+      ? Array.from(new Set([...analysisWarnings, 'analysis_upgrade_available' as const]))
+      : analysisWarnings;
 
   return {
     schemaVersion: TRACK_ANALYSIS_SCHEMA_VERSION,
@@ -204,8 +319,12 @@ export const sanitizeTrackAnalysis = (
     outroCueSec: isFiniteNumber(candidate?.outroCueSec) ? candidate.outroCueSec : null,
     energyProfile: asNumberList(candidate?.energyProfile),
     waveformPeaks: asWaveformPeaks(candidate?.waveformPeaks),
+    waveformDetail,
+    spectralBands,
+    transientMarkers,
     cueCandidates: asCueCandidates(candidate?.cueCandidates),
     analysisConfidence: clamp(confidence, 0, 1),
-    analysisWarnings: asAnalysisWarnings(candidate?.analysisWarnings)
+    analysisQuality: asAnalysisQuality(candidate?.analysisQuality),
+    analysisWarnings: upgradeWarnings
   };
 };

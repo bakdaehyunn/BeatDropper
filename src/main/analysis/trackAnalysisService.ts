@@ -73,6 +73,9 @@ export class TrackAnalysisService {
       phraseMarkers,
       energyProfile: [],
       waveformPeaks: [],
+      waveformDetail: [],
+      spectralBands: [],
+      transientMarkers: [],
       cueCandidates: [
         {
           id: 'intro',
@@ -95,6 +98,12 @@ export class TrackAnalysisService {
             ]
           : [])
       ],
+      analysisQuality: {
+        waveformDetail: 0,
+        spectralBands: 0,
+        transientMarkers: 0,
+        beatGrid: metadataBpm !== null ? 0.55 : 0
+      },
       analysisWarnings: [
         ...(metadataBpm === null ? ['bpm_unavailable' as const] : []),
         ...(metadataBpm !== null ? ['beat_grid_estimated' as const] : []),
