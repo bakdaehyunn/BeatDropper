@@ -6,6 +6,23 @@ import {
   useRef,
   useState
 } from 'react';
+import {
+  ArrowDown,
+  ArrowUp,
+  CirclePlus,
+  FolderOpen,
+  GripVertical,
+  ListX,
+  Minus,
+  Pause,
+  Play,
+  Settings,
+  SkipBack,
+  SkipForward,
+  Square as SquareIcon,
+  Trash2,
+  X
+} from 'lucide-react';
 import { estimateAdaptiveDecodeTimeoutMs } from '../shared/decodeTimeout';
 import {
   buildMixPlanComparisonExportEnvelope,
@@ -23,6 +40,7 @@ import {
   parseMixPlanExportContextFromUnknown,
   parseMixPlanExportJson
 } from '../shared/mixPlanExport';
+import { TrackAnalysis } from '../shared/analysis';
 import { DEFAULT_SETTINGS, sanitizeSettings } from '../shared/settings';
 import { PlayerEvent, PlayerSettings, Track, TrackLoadMode } from '../shared/types';
 import { AudioEngine } from './player';
@@ -41,6 +59,14 @@ const formatDuration = (sec: number): string => {
   return `${min}:${String(rem).padStart(2, '0')}`;
 };
 
+const formatOptionalDuration = (sec: number | null | undefined): string => {
+  return typeof sec === 'number' && Number.isFinite(sec) ? formatDuration(sec) : '--';
+};
+
+const formatOptionalBpm = (bpm: number | null | undefined): string => {
+  return typeof bpm === 'number' && Number.isFinite(bpm) ? String(Math.round(bpm)) : '--';
+};
+
 const formatEventTime = (value: number): string => value.toFixed(2);
 const METER_BAR_COUNT = 18;
 const PREVIEW_TRACK_DURATION_SEC = 10;
@@ -50,7 +76,6 @@ const PREDECODE_BASE_TIMEOUT_MS = 3000;
 const TRANSITION_DECODE_BASE_TIMEOUT_MS = 1200;
 const MAX_IMPORTED_MIX_PLAN_ARTIFACTS = 5;
 const LOCAL_COMPARE_TARGET_ID = '__latest_local__';
-type TransportIconName = 'play' | 'pause' | 'previous' | 'next';
 
 interface ImportedMixPlanArtifact {
   id: string;
@@ -191,49 +216,6 @@ const formatPlannerEventDetails = (event: PlayerEvent): string | null => {
   return null;
 };
 
-const TransportIcon = ({ name }: { name: TransportIconName }): JSX.Element => {
-  if (name === 'play') {
-    return (
-      <svg viewBox="0 0 24 24" aria-hidden="true">
-        <path d="M8 5.5v13l10-6.5-10-6.5Z" />
-      </svg>
-    );
-  }
-
-  if (name === 'pause') {
-    return (
-      <svg viewBox="0 0 24 24" aria-hidden="true">
-        <rect x="6.5" y="5.5" width="4" height="13" rx="1.2" />
-        <rect x="13.5" y="5.5" width="4" height="13" rx="1.2" />
-      </svg>
-    );
-  }
-
-  if (name === 'previous') {
-    return (
-      <svg viewBox="0 0 24 24" aria-hidden="true">
-        <rect x="5.5" y="6" width="2.8" height="12" rx="0.8" />
-        <path d="M18.2 6.2v11.6l-8.6-5.8 8.6-5.8Z" />
-      </svg>
-    );
-  }
-
-  if (name === 'next') {
-    return (
-      <svg viewBox="0 0 24 24" aria-hidden="true">
-        <rect x="15.7" y="6" width="2.8" height="12" rx="0.8" />
-        <path d="M5.8 6.2v11.6l8.6-5.8-8.6-5.8Z" />
-      </svg>
-    );
-  }
-
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M8 5.5v13l10-6.5-10-6.5Z" />
-    </svg>
-  );
-};
-
 export const App = (): JSX.Element => {
   const [tracks, setTracks] = useState<Track[]>([]);
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -243,6 +225,7 @@ export const App = (): JSX.Element => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [currentTitle, setCurrentTitle] = useState('Idle');
+  const [playbackNotice, setPlaybackNotice] = useState<string | null>(null);
   const [currentTrackIndex, setCurrentTrackIndex] = useState<number | null>(null);
   const [currentTrackDurationSec, setCurrentTrackDurationSec] = useState(0);
   const [elapsedSec, setElapsedSec] = useState(0);
@@ -252,6 +235,7 @@ export const App = (): JSX.Element => {
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
   const [rmsLevel, setRmsLevel] = useState(0);
   const [resolvedBpmByTrack, setResolvedBpmByTrack] = useState<Record<string, number>>({});
+  const [analysisByTrackId, setAnalysisByTrackId] = useState<Record<string, TrackAnalysis>>({});
   const [lastImportMode, setLastImportMode] = useState<TrackLoadMode | null>(null);
   const [lastImportAt, setLastImportAt] = useState<number | null>(null);
   const [isTrackLoadPending, setIsTrackLoadPending] = useState(false);
@@ -294,10 +278,71 @@ export const App = (): JSX.Element => {
   }, [audioEngine, tracks]);
 
   useEffect(() => {
+    let canceled = false;
+    const missingTracks = tracks.filter((track) => !analysisByTrackId[track.id]);
+
+    if (missingTracks.length === 0) {
+      return () => {
+        canceled = true;
+      };
+    }
+
+    void Promise.all(
+      missingTracks.map(async (track) => {
+        try {
+          const analysis = await window.dropperApi.getTrackAnalysis(track.id);
+          return analysis ? [track.id, analysis] as const : null;
+        } catch {
+          return null;
+        }
+      })
+    ).then((entries) => {
+      if (canceled) {
+        return;
+      }
+
+      const nextEntries = entries.filter(
+        (entry): entry is readonly [string, TrackAnalysis] => entry !== null
+      );
+      if (nextEntries.length === 0) {
+        return;
+      }
+
+      setAnalysisByTrackId((previous) => ({
+        ...previous,
+        ...Object.fromEntries(nextEntries)
+      }));
+    });
+
+    return () => {
+      canceled = true;
+    };
+  }, [analysisByTrackId, tracks]);
+
+  useEffect(() => {
+    let mounted = true;
+    void window.dropperApi
+      .getTracks()
+      .then((restoredTracks) => {
+        if (!mounted || restoredTracks.length === 0) {
+          return;
+        }
+
+        setTracks((previous) => (previous.length > 0 ? previous : restoredTracks));
+      })
+      .catch(() => undefined);
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
     const unsubscribe = audioEngine.onEvent((event) => {
       setEvents((previous) => [event, ...previous].slice(0, MAX_LOG_ITEMS));
 
       if (event.type === 'track_started') {
+        setPlaybackNotice(null);
         const trackId = event.details?.trackId;
         const trackIndex = event.details?.index;
 
@@ -330,6 +375,12 @@ export const App = (): JSX.Element => {
         setCurrentTrackDurationSec(0);
         setElapsedSec(0);
         setPlaybackStartedAtMs(null);
+      }
+
+      if (event.type === 'error') {
+        setIsPlaying(false);
+        setIsPaused(false);
+        setPlaybackNotice(event.message);
       }
 
       if (event.type === 'bpm_resolved') {
@@ -713,6 +764,7 @@ export const App = (): JSX.Element => {
       setLastImportMode(result.mode);
       setLastImportAt(Date.now());
       setSkippedItems(result.skipped);
+      setPlaybackNotice(null);
 
       const actionLabel = result.mode === 'append' ? 'Added' : 'Loaded';
       const skippedSuffix =
@@ -745,10 +797,26 @@ export const App = (): JSX.Element => {
       return;
     }
 
-    audioEngine.loadTracks(tracks);
-    await audioEngine.start(selectedIndex);
-    setIsPlaying(audioEngine.isPlaying());
-    setIsPaused(audioEngine.isPaused());
+    try {
+      setPlaybackNotice(null);
+      audioEngine.loadTracks(tracks);
+      await audioEngine.start(selectedIndex);
+      setIsPlaying(audioEngine.isPlaying());
+      setIsPaused(audioEngine.isPaused());
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setPlaybackNotice(message);
+      setEvents((previous) =>
+        [
+          {
+            type: 'error',
+            at: 0,
+            message
+          },
+          ...previous
+        ].slice(0, MAX_LOG_ITEMS)
+      );
+    }
   };
 
   const handlePlayPause = async (): Promise<void> => {
@@ -780,6 +848,57 @@ export const App = (): JSX.Element => {
     await audioEngine.skipToPrevious();
     setIsPlaying(audioEngine.isPlaying());
     setIsPaused(audioEngine.isPaused());
+  };
+
+  const moveSelectedTrack = (direction: -1 | 1): void => {
+    const targetIndex = selectedIndex + direction;
+    reorderTracks(selectedIndex, targetIndex);
+  };
+
+  const removeSelectedTrack = (): void => {
+    if (tracks.length === 0) {
+      return;
+    }
+
+    const removingCurrent = currentTrackIndex === selectedIndex;
+    if (removingCurrent) {
+      audioEngine.stop();
+    }
+
+    setTracks((previous) => {
+      const next = previous.filter((_track, index) => index !== selectedIndex);
+      void window.dropperApi.setTrackOrder(next.map((track) => track.id));
+      const nextSelectedIndex = Math.max(0, Math.min(selectedIndex, next.length - 1));
+      setSelectedIndex(nextSelectedIndex);
+
+      if (removingCurrent) {
+        setCurrentTitle('Idle');
+        setCurrentTrackIndex(null);
+        setCurrentTrackDurationSec(0);
+        setElapsedSec(0);
+        setPlaybackStartedAtMs(null);
+      } else if (currentTrackIndex !== null) {
+        setCurrentTrackIndex(
+          currentTrackIndex > selectedIndex ? currentTrackIndex - 1 : currentTrackIndex
+        );
+      }
+
+      return next;
+    });
+  };
+
+  const clearPlaylist = (): void => {
+    audioEngine.stop();
+    void window.dropperApi.clearTracks();
+    setTracks([]);
+    setSelectedIndex(0);
+    setCurrentTitle('Idle');
+    setCurrentTrackIndex(null);
+    setCurrentTrackDurationSec(0);
+    setElapsedSec(0);
+    setPlaybackStartedAtMs(null);
+    setPlaybackNotice(null);
+    setTrackLoadNotice('Playlist cleared.');
   };
 
   const onFadeChange = (event: ChangeEvent<HTMLInputElement>): void => {
@@ -897,6 +1016,7 @@ export const App = (): JSX.Element => {
       const next = [...previous];
       const [moved] = next.splice(fromIndex, 1);
       next.splice(toIndex, 0, moved);
+      void window.dropperApi.setTrackOrder(next.map((track) => track.id));
 
       if (selectedTrackId) {
         const nextSelectedIndex = next.findIndex((track) => track.id === selectedTrackId);
@@ -963,6 +1083,32 @@ export const App = (): JSX.Element => {
       ? Math.min(currentTrackIndex + 1, tracks.length)
       : Math.min(selectedIndex, tracks.length);
   const queueTracks = tracks.slice(queueStartIndex);
+  const selectedTrack = tracks[selectedIndex] ?? null;
+  const nextTrackIndex =
+    currentTrackIndex !== null
+      ? currentTrackIndex + 1 < tracks.length
+        ? currentTrackIndex + 1
+        : settings.repeatAll && tracks.length > 0
+          ? 0
+          : null
+      : selectedTrack
+        ? selectedIndex
+        : null;
+  const nextTrack = nextTrackIndex !== null ? tracks[nextTrackIndex] ?? null : null;
+  const totalSetDurationSec = tracks.reduce((sum, track) => sum + track.durationSec, 0);
+  const currentTrackAnalysis = currentTrack ? analysisByTrackId[currentTrack.id] ?? null : null;
+  const nextTrackAnalysis = nextTrack ? analysisByTrackId[nextTrack.id] ?? null : null;
+  const selectedTrackAnalysis = selectedTrack
+    ? analysisByTrackId[selectedTrack.id] ?? null
+    : null;
+  const resolveTrackBpm = (track: Track | null, analysis?: TrackAnalysis | null): number | null => {
+    if (!track) {
+      return null;
+    }
+    return resolvedBpmByTrack[track.id] ?? analysis?.bpm ?? track.bpm ?? null;
+  };
+  const selectedTrackBpm = resolveTrackBpm(selectedTrack, selectedTrackAnalysis);
+  const nextTrackBpm = resolveTrackBpm(nextTrack, nextTrackAnalysis);
   const activeDecodePreset =
     DECODE_TIMEOUT_PRESETS.find(
       (preset) =>
@@ -1030,6 +1176,25 @@ export const App = (): JSX.Element => {
     latestMixPlanApplied?.details?.nextTrackStartOffsetSec
   );
   const latestTempoRate = formatTempoSyncRate(latestTempoApplied?.details?.targetRate);
+  const mixStatusLabel = latestMixPlanApplied
+    ? 'AI plan applied'
+    : latestMixPlanFallback
+      ? 'Rule-based fallback'
+      : settings.aiDjEnabled
+        ? 'Waiting for AI plan'
+        : 'Rule-based mix ready';
+  const mixWindowLabel = latestPlannerWindow ?? 'End-of-track crossfade';
+  const mixOffsetLabel =
+    latestPlannerOffset !== null ? formatDuration(latestPlannerOffset) : '--';
+  const mixStyleLabel = latestSuccessfulMixPlan?.style.replace('_', ' ') ?? 'smooth blend';
+  const mixConfidenceLabel =
+    latestSuccessfulMixPlan?.confidence !== undefined
+      ? `${Math.round(latestSuccessfulMixPlan.confidence * 100)}%`
+      : '--';
+  const mixReasoningLabel =
+    latestPlannerReasoning ??
+    asString(latestMixPlanFallback?.details?.reason) ??
+    'AI mix details appear after the next transition plan is requested.';
   const latestPlannerRequestJson = prettyJson(
     latestPlannerDebugEvent?.details?.plannerRequest ?? null
   );
@@ -1213,6 +1378,41 @@ export const App = (): JSX.Element => {
 
   return (
     <div className="app-shell">
+      <div className="window-titlebar">
+        <div className="window-titlebar-brand">
+          <span className="window-dot" />
+          <strong>BeatDropper</strong>
+        </div>
+        <div className="window-controls">
+          <button
+            type="button"
+            className="window-control"
+            aria-label="Minimize"
+            title="Minimize"
+            onClick={() => void window.dropperApi.minimizeWindow()}
+          >
+            <Minus aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            className="window-control"
+            aria-label="Maximize"
+            title="Maximize"
+            onClick={() => void window.dropperApi.toggleMaximizeWindow()}
+          >
+            <SquareIcon aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            className="window-control close"
+            aria-label="Close"
+            title="Close"
+            onClick={() => void window.dropperApi.closeWindow()}
+          >
+            <X aria-hidden="true" />
+          </button>
+        </div>
+      </div>
       <header className="app-header">
         <div className="brand-block">
           <span className="brand-chip">AUTO DJ / USB FLOW</span>
@@ -1228,9 +1428,10 @@ export const App = (): JSX.Element => {
             type="button"
             className="icon-button"
             aria-label="Open settings"
+            title="Open settings"
             onClick={() => setIsUtilityOpen(true)}
           >
-            ⚙
+            <Settings aria-hidden="true" />
           </button>
         </div>
       </header>
@@ -1251,44 +1452,46 @@ export const App = (): JSX.Element => {
       </section>
 
       <main className="main-layout">
-        <section className="panel devices-panel">
-          <div className="panel-head">
-            <h2>Devices</h2>
-            <span className="panel-tag">USB</span>
+        <section className="source-strip" aria-busy={isTrackLoadPending}>
+          <div className="source-summary">
+            <span className="panel-tag">Audio Files</span>
+            <strong>Local Library</strong>
+            <small>{tracks.length} track(s) loaded</small>
           </div>
-
-          <article className="device-card active" aria-busy={isTrackLoadPending}>
-            <p className="device-name">USB-1 / Playlists</p>
-            <p className="device-path">/Volumes/USB/PLAYLISTS</p>
-            <div className="device-actions">
+          <div className="device-actions">
               <button
                 type="button"
-                className="load-button"
+                className="load-button action-button primary-action"
                 onClick={() => void handleLoadTracks('replace')}
                 disabled={isTrackLoadPending}
+                aria-label="New Set"
+                title={
+                  isTrackLoadPending
+                    ? 'Tracks are loading'
+                    : 'Load audio files as a new playlist'
+                }
               >
-                {isTrackLoadPending ? 'Loading...' : 'Load as New'}
+                <FolderOpen aria-hidden="true" />
+                <span>{isTrackLoadPending ? 'Loading...' : 'New Set'}</span>
               </button>
               <button
                 type="button"
-                className="secondary-button"
+                className="secondary-button action-button"
                 onClick={() => void handleLoadTracks('append')}
                 disabled={tracks.length === 0 || isTrackLoadPending}
+                aria-label="Add Tracks"
+                title={
+                  isTrackLoadPending
+                    ? 'Tracks are loading'
+                    : tracks.length === 0
+                      ? 'Load a new set before appending tracks'
+                      : 'Add tracks to the current playlist'
+                }
               >
-                Add to Current
+                <CirclePlus aria-hidden="true" />
+                <span>Add Tracks</span>
               </button>
-            </div>
-            <small>Canceling the browser keeps your current playlist unchanged.</small>
-          </article>
-
-          <div className="device-tree">
-            <strong>Folder View</strong>
-            <span>USB-1 / House</span>
-            <span>USB-1 / Peak Time</span>
-            <span>USB-1 / Warmup</span>
-            <span>Local / Downloads</span>
           </div>
-
           <div className="import-note">
             {isTrackLoadPending ? (
               <p>Importing tracks. Please wait...</p>
@@ -1307,43 +1510,140 @@ export const App = (): JSX.Element => {
 
         <section className="panel playlist-panel">
           <div className="playlist-head">
-            <h2>Library</h2>
+            <div>
+              <h2>Playlist</h2>
+              <small className="panel-subtitle">
+                {tracks.length} tracks · {formatDuration(totalSetDurationSec)} total
+              </small>
+            </div>
             <span className="track-count">{tracks.length} tracks</span>
           </div>
+          <div className="playlist-toolbar">
+            <button
+              type="button"
+              className="secondary-button icon-action-button"
+              onClick={() => moveSelectedTrack(-1)}
+              disabled={tracks.length === 0 || selectedIndex <= 0}
+              aria-label="Move selected track up"
+              title={
+                tracks.length === 0
+                  ? 'Load tracks before reordering'
+                  : selectedIndex <= 0
+                    ? 'Selected track is already first'
+                    : 'Move selected track up'
+              }
+            >
+              <ArrowUp aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              className="secondary-button icon-action-button"
+              onClick={() => moveSelectedTrack(1)}
+              disabled={tracks.length === 0 || selectedIndex >= tracks.length - 1}
+              aria-label="Move selected track down"
+              title={
+                tracks.length === 0
+                  ? 'Load tracks before reordering'
+                  : selectedIndex >= tracks.length - 1
+                    ? 'Selected track is already last'
+                    : 'Move selected track down'
+              }
+            >
+              <ArrowDown aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              className="secondary-button icon-action-button"
+              onClick={removeSelectedTrack}
+              disabled={tracks.length === 0}
+              aria-label="Remove selected track"
+              title={tracks.length === 0 ? 'Load tracks before removing' : 'Remove selected track'}
+            >
+              <Trash2 aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              className="secondary-button icon-action-button danger"
+              onClick={clearPlaylist}
+              disabled={tracks.length === 0}
+              aria-label="Clear playlist"
+              title={tracks.length === 0 ? 'Playlist is already empty' : 'Clear playlist'}
+            >
+              <ListX aria-hidden="true" />
+            </button>
+          </div>
           {tracks.length === 0 ? (
-            <p className="muted">Load MP3/WAV tracks from your USB playlist.</p>
+            <p className="muted">Load MP3/WAV tracks to build a playlist.</p>
           ) : (
-            <ul className="track-list">
-              {tracks.map((track, index) => (
-                <li
-                  key={track.id}
-                  draggable
-                  className={[
-                    selectedIndex === index ? 'selected' : '',
-                    currentTrackIndex === index ? 'playing' : '',
-                    dragIndex === index ? 'dragging' : '',
-                    dragOverIndex === index && dragIndex !== index ? 'drag-over' : ''
-                  ]
-                    .filter(Boolean)
-                    .join(' ')}
-                  onDragStart={() => onTrackDragStart(index)}
-                  onDragOver={(event) => onTrackDragOver(event, index)}
-                  onDrop={() => onTrackDrop(index)}
-                  onDragEnd={onTrackDragEnd}
-                >
-                  <label>
-                    <input
-                      type="radio"
-                      name="track-select"
-                      checked={selectedIndex === index}
-                      onChange={() => setSelectedIndex(index)}
-                    />
-                    <span className="title">{track.title}</span>
-                    <span className="duration">{formatDuration(track.durationSec)}</span>
-                  </label>
-                </li>
-              ))}
-            </ul>
+            <div className="playlist-table-wrap">
+              <div className="playlist-table playlist-table-head" aria-hidden="true">
+                <span>#</span>
+                <span>Status</span>
+                <span>Track</span>
+                <span>BPM</span>
+                <span>Length</span>
+                <span>Format</span>
+                <span>Cue</span>
+                <span>Mix</span>
+              </div>
+              <ul className="track-list playlist-table-body">
+                {tracks.map((track, index) => {
+                  const analysis = analysisByTrackId[track.id] ?? null;
+                  const bpm = resolveTrackBpm(track, analysis);
+                  const isNow = currentTrackIndex === index;
+                  const isNext = nextTrackIndex === index && !isNow;
+                  const status = isNow ? 'Now' : isNext ? 'Next' : 'Queued';
+                  const cueLabel =
+                    analysis?.introCueSec != null || analysis?.outroCueSec != null
+                      ? `${formatOptionalDuration(analysis?.introCueSec)} / ${formatOptionalDuration(analysis?.outroCueSec)}`
+                      : '--';
+                  const mixReady = bpm !== null || analysis !== null ? 'Ready' : 'Pending';
+
+                  return (
+                    <li
+                      key={track.id}
+                      draggable
+                      className={[
+                        selectedIndex === index ? 'selected' : '',
+                        isNow ? 'playing' : '',
+                        isNext ? 'next' : '',
+                        dragIndex === index ? 'dragging' : '',
+                        dragOverIndex === index && dragIndex !== index ? 'drag-over' : ''
+                      ]
+                        .filter(Boolean)
+                        .join(' ')}
+                      onDragStart={() => onTrackDragStart(index)}
+                      onDragOver={(event) => onTrackDragOver(event, index)}
+                      onDrop={() => onTrackDrop(index)}
+                      onDragEnd={onTrackDragEnd}
+                    >
+                      <label className="playlist-row">
+                        <span className="playlist-index-cell">
+                          <GripVertical
+                            className="drag-handle"
+                            aria-hidden="true"
+                          />
+                          <input
+                            type="radio"
+                            name="track-select"
+                            checked={selectedIndex === index}
+                            onChange={() => setSelectedIndex(index)}
+                          />
+                          <span className="playlist-index">{index + 1}</span>
+                        </span>
+                        <span className={`playlist-status ${status.toLowerCase()}`}>{status}</span>
+                        <span className="title" title={track.title}>{track.title}</span>
+                        <span>{formatOptionalBpm(bpm)}</span>
+                        <span>{formatDuration(track.durationSec)}</span>
+                        <span>{track.format.toUpperCase()}</span>
+                        <span>{cueLabel}</span>
+                        <span>{mixReady}</span>
+                      </label>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
           )}
         </section>
 
@@ -1353,22 +1653,75 @@ export const App = (): JSX.Element => {
             <span className="panel-tag">Now / Next</span>
           </div>
 
-          <div className="player-hero">
-            <div className={`cover-disc ${isPlaying ? 'spinning' : ''}`}>
-              <span>DROP</span>
-            </div>
-            <div className="hero-meta">
-              <p>Now Playing</p>
-              <strong>{currentTrackLabel}</strong>
-              <small>
-                {isPlaying
-                  ? 'Seamless mix running'
-                  : isPaused
-                    ? 'Paused'
-                    : 'Ready to start'}
-              </small>
-            </div>
-          </div>
+          <section className="set-cockpit">
+            <article className="deck-card now">
+              <div className={`cover-disc ${isPlaying ? 'spinning' : ''}`}>
+                <span>NOW</span>
+              </div>
+              <div className="deck-copy">
+                <p>Now Playing</p>
+                <strong>{currentTrackLabel}</strong>
+                <small>
+                  {playbackNotice
+                    ? playbackNotice
+                    : isPlaying
+                    ? 'Playing from working set'
+                    : isPaused
+                      ? 'Paused'
+                      : 'Select a track and press play'}
+                </small>
+                <div className="deck-stats">
+                  <span>BPM {formatOptionalBpm(currentTrackBpm)}</span>
+                  <span>Length {formatOptionalDuration(currentTrack?.durationSec)}</span>
+                  <span>Outro {formatOptionalDuration(currentTrackAnalysis?.outroCueSec)}</span>
+                </div>
+              </div>
+            </article>
+
+            <article className="mix-card">
+              <p>AI Mix Plan</p>
+              <strong>{mixStatusLabel}</strong>
+              <div className="mix-metrics">
+                <span>
+                  <b>Window</b>
+                  {mixWindowLabel}
+                </span>
+                <span>
+                  <b>Offset</b>
+                  {mixOffsetLabel}
+                </span>
+                <span>
+                  <b>Style</b>
+                  {mixStyleLabel}
+                </span>
+                <span>
+                  <b>Confidence</b>
+                  {mixConfidenceLabel}
+                </span>
+              </div>
+              <small>{mixReasoningLabel}</small>
+            </article>
+
+            <article className="deck-card next">
+              <div className="cover-disc next-disc">
+                <span>NEXT</span>
+              </div>
+              <div className="deck-copy">
+                <p>Next Track</p>
+                <strong>{nextTrack?.title ?? 'No next track'}</strong>
+                <small>
+                  {nextTrack
+                    ? `Ready from playlist position ${nextTrackIndex !== null ? nextTrackIndex + 1 : '--'}`
+                    : 'Load or select a playlist item'}
+                </small>
+                <div className="deck-stats">
+                  <span>BPM {formatOptionalBpm(nextTrackBpm)}</span>
+                  <span>Length {formatOptionalDuration(nextTrack?.durationSec)}</span>
+                  <span>Intro {formatOptionalDuration(nextTrackAnalysis?.introCueSec)}</span>
+                </div>
+              </div>
+            </article>
+          </section>
 
           <div className="progress-wrap">
             <progress
@@ -1429,7 +1782,7 @@ export const App = (): JSX.Element => {
                 title="Previous"
               >
                 <span className="transport-icon">
-                  <TransportIcon name="previous" />
+                  <SkipBack aria-hidden="true" />
                 </span>
               </button>
               <button
@@ -1441,7 +1794,7 @@ export const App = (): JSX.Element => {
                 title={isPlaying ? 'Pause' : 'Play'}
               >
                 <span className="transport-icon">
-                  <TransportIcon name={isPlaying ? 'pause' : 'play'} />
+                  {isPlaying ? <Pause aria-hidden="true" /> : <Play aria-hidden="true" />}
                 </span>
               </button>
               <button
@@ -1453,7 +1806,7 @@ export const App = (): JSX.Element => {
                 title="Next"
               >
                 <span className="transport-icon">
-                  <TransportIcon name="next" />
+                  <SkipForward aria-hidden="true" />
                 </span>
               </button>
             </div>
@@ -1494,7 +1847,7 @@ export const App = (): JSX.Element => {
             </header>
 
             <section className="utility-section">
-              <h3>Advanced Playback</h3>
+              <h3>Playback</h3>
               <div className="setting-row">
                 <label htmlFor="fade-slider">
                   Crossfade (sec): {settings.fadeDurationSec}
@@ -1519,34 +1872,6 @@ export const App = (): JSX.Element => {
                 />
               </div>
               <div className="setting-row">
-                <label htmlFor="decode-duration-weight">
-                  Decode wait by track length: {settings.decodeTimeoutDurationWeightMs}ms/sec
-                </label>
-                <input
-                  id="decode-duration-weight"
-                  type="range"
-                  min={0}
-                  max={80}
-                  step={1}
-                  value={settings.decodeTimeoutDurationWeightMs}
-                  onChange={onDecodeDurationWeightChange}
-                />
-              </div>
-              <div className="setting-row">
-                <label htmlFor="decode-size-weight">
-                  Decode wait by file size: {settings.decodeTimeoutSizeWeightMs}ms/MB
-                </label>
-                <input
-                  id="decode-size-weight"
-                  type="range"
-                  min={0}
-                  max={1200}
-                  step={10}
-                  value={settings.decodeTimeoutSizeWeightMs}
-                  onChange={onDecodeSizeWeightChange}
-                />
-              </div>
-              <div className="setting-row">
                 <label>
                   Decode profile: {activeDecodePreset ? activeDecodePreset.label : '커스텀'}
                 </label>
@@ -1565,15 +1890,44 @@ export const App = (): JSX.Element => {
                   ))}
                 </div>
               </div>
-              <div className="setting-row hint">
-                <small className="setting-hint">
-                  예상 대기시간(10초 / 8MB 기준): 시작 {formatDecodePreviewSec(
-                    previewStartDecodeMs
-                  )}{' '}
-                  · 사전디코드 {formatDecodePreviewSec(previewPredecodeMs)} · 전환{' '}
-                  {formatDecodePreviewSec(previewTransitionDecodeMs)}
-                </small>
-              </div>
+              <details className="nested-details">
+                <summary>Decode tuning</summary>
+                <div className="setting-row">
+                  <label htmlFor="decode-duration-weight">
+                    Track length wait: {settings.decodeTimeoutDurationWeightMs}ms/sec
+                  </label>
+                  <input
+                    id="decode-duration-weight"
+                    type="range"
+                    min={0}
+                    max={80}
+                    step={1}
+                    value={settings.decodeTimeoutDurationWeightMs}
+                    onChange={onDecodeDurationWeightChange}
+                  />
+                </div>
+                <div className="setting-row">
+                  <label htmlFor="decode-size-weight">
+                    File size wait: {settings.decodeTimeoutSizeWeightMs}ms/MB
+                  </label>
+                  <input
+                    id="decode-size-weight"
+                    type="range"
+                    min={0}
+                    max={1200}
+                    step={10}
+                    value={settings.decodeTimeoutSizeWeightMs}
+                    onChange={onDecodeSizeWeightChange}
+                  />
+                </div>
+                <div className="setting-row hint">
+                  <small className="setting-hint">
+                    예상 대기시간: 시작 {formatDecodePreviewSec(previewStartDecodeMs)} ·
+                    사전디코드 {formatDecodePreviewSec(previewPredecodeMs)} · 전환{' '}
+                    {formatDecodePreviewSec(previewTransitionDecodeMs)}
+                  </small>
+                </div>
+              </details>
             </section>
 
             <section className="utility-section">
@@ -1600,53 +1954,6 @@ export const App = (): JSX.Element => {
                 </select>
               </div>
               <div className="setting-row">
-                <label htmlFor="planner-command">Planner command</label>
-                <input
-                  id="planner-command"
-                  type="text"
-                  value={plannerCommandDraft}
-                  onChange={(event) => setPlannerCommandDraft(event.target.value)}
-                  onBlur={commitPlannerCommandDraft}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter') {
-                      event.preventDefault();
-                      commitPlannerCommandDraft();
-                    }
-                  }}
-                  placeholder="node"
-                />
-              </div>
-              <div className="setting-row">
-                <label htmlFor="planner-args">Planner args (one per line)</label>
-                <textarea
-                  id="planner-args"
-                  rows={4}
-                  value={plannerArgsDraft}
-                  onChange={(event) => setPlannerArgsDraft(event.target.value)}
-                  onBlur={commitPlannerArgsDraft}
-                  placeholder={'scripts/codex-mix-planner.cjs'}
-                />
-              </div>
-              <div className="setting-row">
-                <label htmlFor="planner-timeout">Planner timeout (ms)</label>
-                <input
-                  id="planner-timeout"
-                  type="number"
-                  min={500}
-                  max={30000}
-                  step={100}
-                  value={plannerTimeoutDraft}
-                  onChange={(event) => setPlannerTimeoutDraft(event.target.value)}
-                  onBlur={commitPlannerTimeoutDraft}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter') {
-                      event.preventDefault();
-                      commitPlannerTimeoutDraft();
-                    }
-                  }}
-                />
-              </div>
-              <div className="setting-row">
                 <label>Planner status: {plannerStatusLabel}</label>
                 <div className="planner-helper-row">
                   <button
@@ -1665,17 +1972,60 @@ export const App = (): JSX.Element => {
                   </button>
                 </div>
               </div>
-              <div className="setting-row hint">
-                <small className="setting-hint">
-                  BeatDropper calls the planner through stdin/stdout JSON. Any agent CLI can work if
-                  it follows the same `MixPlan` contract. The sample Codex wrapper lives at
-                  `scripts/codex-mix-planner.cjs`.
-                </small>
-              </div>
+              <details className="nested-details">
+                <summary>Planner CLI</summary>
+                <div className="setting-row">
+                  <label htmlFor="planner-command">Command</label>
+                  <input
+                    id="planner-command"
+                    type="text"
+                    value={plannerCommandDraft}
+                    onChange={(event) => setPlannerCommandDraft(event.target.value)}
+                    onBlur={commitPlannerCommandDraft}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') {
+                        event.preventDefault();
+                        commitPlannerCommandDraft();
+                      }
+                    }}
+                    placeholder="node"
+                  />
+                </div>
+                <div className="setting-row">
+                  <label htmlFor="planner-args">Args</label>
+                  <textarea
+                    id="planner-args"
+                    rows={4}
+                    value={plannerArgsDraft}
+                    onChange={(event) => setPlannerArgsDraft(event.target.value)}
+                    onBlur={commitPlannerArgsDraft}
+                    placeholder={'scripts/codex-mix-planner.cjs'}
+                  />
+                </div>
+                <div className="setting-row">
+                  <label htmlFor="planner-timeout">Timeout (ms)</label>
+                  <input
+                    id="planner-timeout"
+                    type="number"
+                    min={500}
+                    max={30000}
+                    step={100}
+                    value={plannerTimeoutDraft}
+                    onChange={(event) => setPlannerTimeoutDraft(event.target.value)}
+                    onBlur={commitPlannerTimeoutDraft}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') {
+                        event.preventDefault();
+                        commitPlannerTimeoutDraft();
+                      }
+                    }}
+                  />
+                </div>
+              </details>
             </section>
 
-            <section className="utility-section">
-              <h3>Planner Debug</h3>
+            <details className="utility-section utility-details">
+              <summary>Planner Debug</summary>
               <input
                 ref={plannerImportInputRef}
                 type="file"
@@ -2066,10 +2416,10 @@ export const App = (): JSX.Element => {
                     'The latest applied or fallback planner event is shown here for debugging.'}
                 </small>
               </div>
-            </section>
+            </details>
 
-            <section className="utility-section">
-              <h3>Skipped Files</h3>
+            <details className="utility-section utility-details">
+              <summary>Skipped Files</summary>
               {skippedItems.length === 0 ? (
                 <p className="muted">No skipped files.</p>
               ) : (
@@ -2079,10 +2429,10 @@ export const App = (): JSX.Element => {
                   ))}
                 </ul>
               )}
-            </section>
+            </details>
 
-            <section className="utility-section">
-              <h3>Session Log</h3>
+            <details className="utility-section utility-details">
+              <summary>Session Log</summary>
               {events.length === 0 ? (
                 <p className="muted">No playback events yet.</p>
               ) : (
@@ -2103,7 +2453,7 @@ export const App = (): JSX.Element => {
                   ))}
                 </ul>
               )}
-            </section>
+            </details>
           </aside>
         </div>
       )}

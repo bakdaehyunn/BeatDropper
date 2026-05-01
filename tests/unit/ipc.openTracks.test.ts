@@ -83,6 +83,10 @@ const trackEntry = (id: string, title: string, filePath: string) => ({
   filePath
 });
 
+const bytesFromArrayBuffer = (value: unknown): number[] => {
+  return Array.from(new Uint8Array(value as ArrayBuffer));
+};
+
 const setupIpcHandlers = async () => {
   vi.resetModules();
   handlerMap.clear();
@@ -90,14 +94,29 @@ const setupIpcHandlers = async () => {
   mod.registerIpcHandlers();
 
   const openHandler = handlerMap.get('library:openTracks');
+  const getTracksHandler = handlerMap.get('library:getTracks');
   const readHandler = handlerMap.get('track:readBufferById');
   const analysisHandler = handlerMap.get('analysis:getByTrackId');
   const plannerHandler = handlerMap.get('planner:requestMixPlan');
   const saveSettingsHandler = handlerMap.get('settings:save');
-  if (!openHandler || !readHandler || !analysisHandler || !plannerHandler || !saveSettingsHandler) {
+  if (
+    !openHandler ||
+    !getTracksHandler ||
+    !readHandler ||
+    !analysisHandler ||
+    !plannerHandler ||
+    !saveSettingsHandler
+  ) {
     throw new Error('ipc handlers are not registered');
   }
-  return { openHandler, readHandler, analysisHandler, plannerHandler, saveSettingsHandler };
+  return {
+    openHandler,
+    getTracksHandler,
+    readHandler,
+    analysisHandler,
+    plannerHandler,
+    saveSettingsHandler
+  };
 };
 
 describe('IPC library:openTracks', () => {
@@ -112,7 +131,7 @@ describe('IPC library:openTracks', () => {
   });
 
   it('keeps existing registry entries when append mode is used', async () => {
-    const { openHandler, readHandler } = await setupIpcHandlers();
+    const { openHandler, getTracksHandler, readHandler } = await setupIpcHandlers();
 
     mockShowOpenDialog
       .mockResolvedValueOnce({ canceled: false, filePaths: ['/music/one.mp3'] })
@@ -133,6 +152,10 @@ describe('IPC library:openTracks', () => {
 
     expect(first).toMatchObject({ canceled: false, mode: 'replace' });
     expect(second).toMatchObject({ canceled: false, mode: 'append' });
+    expect(await getTracksHandler({})).toMatchObject([
+      { id: 'track-1', title: 'One' },
+      { id: 'track-2', title: 'Two' }
+    ]);
 
     await readHandler({}, 'track-1');
     await readHandler({}, 'track-2');
@@ -162,7 +185,7 @@ describe('IPC library:openTracks', () => {
     await openHandler({}, 'replace');
 
     await expect(readHandler({}, 'track-1')).rejects.toThrow('Track is not authorized');
-    await expect(readHandler({}, 'track-2')).resolves.toEqual(Buffer.from([9]));
+    expect(bytesFromArrayBuffer(await readHandler({}, 'track-2'))).toEqual([9]);
   });
 
   it('returns canceled=true and keeps current registry unchanged when dialog is canceled', async () => {
@@ -188,7 +211,7 @@ describe('IPC library:openTracks', () => {
     });
     expect(mockLoadTracksFromPaths).toHaveBeenCalledTimes(1);
 
-    await expect(readHandler({}, 'track-1')).resolves.toEqual(Buffer.from([4, 5]));
+    expect(bytesFromArrayBuffer(await readHandler({}, 'track-1'))).toEqual([4, 5]);
   });
 });
 

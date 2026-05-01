@@ -1,4 +1,4 @@
-import { dialog, ipcMain } from 'electron';
+import { BrowserWindow, dialog, ipcMain } from 'electron';
 import { readFile } from 'node:fs/promises';
 import { TrackAnalysisService } from './analysis/trackAnalysisService';
 import { TrackAnalysisStore } from './analysis/trackAnalysisStore';
@@ -43,6 +43,14 @@ const isFiniteNumber = (value: unknown): value is number => {
 
 const isStringArray = (value: unknown): value is string[] => {
   return Array.isArray(value) && value.every((item) => typeof item === 'string');
+};
+
+const parseTrackIdList = (input: unknown): string[] => {
+  if (!Array.isArray(input) || !input.every((item) => typeof item === 'string')) {
+    throw new Error('Invalid track id list');
+  }
+
+  return input.filter((item) => item.trim().length > 0);
 };
 
 const parseTrackCandidate = (input: unknown) => {
@@ -200,6 +208,27 @@ const parseSettingsCandidate = (input: unknown): Partial<PlayerSettings> => {
 };
 
 export const registerIpcHandlers = (): void => {
+  ipcMain.handle('window:minimize', async (event) => {
+    BrowserWindow.fromWebContents(event.sender)?.minimize();
+  });
+
+  ipcMain.handle('window:toggleMaximize', async (event) => {
+    const window = BrowserWindow.fromWebContents(event.sender);
+    if (!window) {
+      return;
+    }
+
+    if (window.isMaximized()) {
+      window.unmaximize();
+    } else {
+      window.maximize();
+    }
+  });
+
+  ipcMain.handle('window:close', async (event) => {
+    BrowserWindow.fromWebContents(event.sender)?.close();
+  });
+
   ipcMain.handle('library:openTracks', async (_event, modeInput: unknown) => {
     const mode: TrackLoadMode = modeInput === 'append' ? 'append' : 'replace';
     const result = await dialog.showOpenDialog({
@@ -220,7 +249,8 @@ export const registerIpcHandlers = (): void => {
     const loaded = await loadTracksFromPaths(result.filePaths);
     const registerEntries = loaded.tracks.map((entry) => ({
       trackId: entry.track.id,
-      filePath: entry.filePath
+      filePath: entry.filePath,
+      track: entry.track
     }));
 
     if (mode === 'append') {
@@ -237,9 +267,23 @@ export const registerIpcHandlers = (): void => {
     };
   });
 
+  ipcMain.handle('library:getTracks', async () => {
+    return trackRegistry.getTracks();
+  });
+
+  ipcMain.handle('library:setTrackOrder', async (_event, trackIdsInput: unknown) => {
+    trackRegistry.reorder(parseTrackIdList(trackIdsInput));
+    return trackRegistry.getTracks();
+  });
+
+  ipcMain.handle('library:clearTracks', async () => {
+    trackRegistry.clear();
+  });
+
   ipcMain.handle('track:readBufferById', async (_event, trackId: unknown) => {
     const filePath = trackRegistry.resolvePath(trackId);
-    return readFile(filePath);
+    const buffer = await readFile(filePath);
+    return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
   });
 
   ipcMain.handle('analysis:getByTrackId', async (_event, trackId: unknown) => {

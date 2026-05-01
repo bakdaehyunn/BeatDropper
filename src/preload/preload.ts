@@ -7,6 +7,17 @@ const toArrayBuffer = (payload: unknown): ArrayBuffer => {
     return payload;
   }
 
+  if (
+    typeof payload === 'object' &&
+    payload !== null &&
+    'type' in payload &&
+    'data' in payload &&
+    (payload as { type?: unknown }).type === 'Buffer' &&
+    Array.isArray((payload as { data?: unknown }).data)
+  ) {
+    return new Uint8Array((payload as { data: number[] }).data).buffer;
+  }
+
   if (ArrayBuffer.isView(payload)) {
     const view = payload as ArrayBufferView;
     const underlying = view.buffer;
@@ -30,6 +41,15 @@ const dropperApi: DropperApi = {
   openTracks: async (mode: TrackLoadMode): Promise<TrackLoadResult> => {
     return ipcRenderer.invoke('library:openTracks', mode);
   },
+  getTracks: async () => {
+    return ipcRenderer.invoke('library:getTracks');
+  },
+  setTrackOrder: async (trackIds: string[]) => {
+    return ipcRenderer.invoke('library:setTrackOrder', trackIds);
+  },
+  clearTracks: async (): Promise<void> => {
+    await ipcRenderer.invoke('library:clearTracks');
+  },
   readTrackBufferById: async (trackId: string): Promise<ArrayBuffer> => {
     const payload = await ipcRenderer.invoke('track:readBufferById', trackId);
     return toArrayBuffer(payload);
@@ -47,6 +67,15 @@ const dropperApi: DropperApi = {
     candidate: Partial<PlayerSettings>
   ): Promise<PlayerSettings> => {
     return ipcRenderer.invoke('settings:save', candidate);
+  },
+  minimizeWindow: async (): Promise<void> => {
+    await ipcRenderer.invoke('window:minimize');
+  },
+  toggleMaximizeWindow: async (): Promise<void> => {
+    await ipcRenderer.invoke('window:toggleMaximize');
+  },
+  closeWindow: async (): Promise<void> => {
+    await ipcRenderer.invoke('window:close');
   }
 };
 

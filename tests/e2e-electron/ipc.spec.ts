@@ -30,11 +30,17 @@ test('exposes preload API and executes IPC settings flow in Electron', async () 
     expect(apiKeys).toEqual(
       expect.arrayContaining([
         'openTracks',
+        'getTracks',
+        'setTrackOrder',
+        'clearTracks',
         'readTrackBufferById',
         'getTrackAnalysis',
         'requestMixPlan',
         'getSettings',
-        'saveSettings'
+        'saveSettings',
+        'minimizeWindow',
+        'toggleMaximizeWindow',
+        'closeWindow'
       ])
     );
 

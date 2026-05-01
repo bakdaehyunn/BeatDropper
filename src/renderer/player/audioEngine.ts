@@ -121,6 +121,7 @@ const PREDECODE_TIMEOUT_MS = 3000;
 const RECOVERY_DECODE_TIMEOUT_MS = 1200;
 const MANUAL_JUMP_DECODE_TIMEOUT_MS = 1800;
 const DECODE_TIMEOUT_PREFIX = 'Decode timeout';
+const OUTPUT_HEADROOM_GAIN = 0.72;
 
 export class AudioEngine {
   private readonly context: AudioContextLike;
@@ -171,7 +172,7 @@ export class AudioEngine {
 
     this.masterGain = this.context.createGain();
     this.masterGain.gain.setValueAtTime(
-      this.settings.masterGain,
+      this.resolveOutputGain(),
       this.context.currentTime
     );
     this.analyser = this.context.createAnalyser?.() ?? null;
@@ -205,7 +206,7 @@ export class AudioEngine {
     this.settings = sanitizeSettings({ ...this.settings, ...candidate });
     this.queueManager.setRepeatAll(this.settings.repeatAll);
     this.masterGain.gain.setValueAtTime(
-      this.settings.masterGain,
+      this.resolveOutputGain(),
       this.context.currentTime
     );
     return this.settings;
@@ -262,8 +263,9 @@ export class AudioEngine {
         this.stop();
       }
     } catch (error) {
-      this.emit('error', 'Failed to start playback', {
-        reason: this.normalizeErrorMessage(error)
+      const reason = this.normalizeErrorMessage(error);
+      this.emit('error', `Failed to start playback: ${reason}`, {
+        reason
       });
       this.stop();
     }
@@ -380,6 +382,10 @@ export class AudioEngine {
 
   private swapDecks(): void {
     this.activeDeck = this.activeDeck === 'A' ? 'B' : 'A';
+  }
+
+  private resolveOutputGain(): number {
+    return this.settings.masterGain * OUTPUT_HEADROOM_GAIN;
   }
 
   private emit(

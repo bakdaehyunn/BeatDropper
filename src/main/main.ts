@@ -7,6 +7,13 @@ const appName = 'BeatDropper';
 const appIconPath = path.join(__dirname, '../../public/icons/dropper-icon.png');
 const devServerUrl = process.env.VITE_DEV_SERVER_URL;
 const shouldOpenDevTools = process.env.BEATDROPPER_OPEN_DEVTOOLS !== '0';
+const shouldDisableGpu = process.env.BEATDROPPER_DISABLE_GPU === '1';
+
+if (shouldDisableGpu) {
+  app.disableHardwareAcceleration();
+  app.commandLine.appendSwitch('disable-gpu');
+}
+
 const devServerOrigin = (() => {
   if (!devServerUrl) {
     return null;
@@ -43,6 +50,9 @@ const createMainWindow = (): BrowserWindow => {
     height: 840,
     minWidth: 960,
     minHeight: 680,
+    frame: false,
+    autoHideMenuBar: true,
+    backgroundColor: '#050505',
     webPreferences: {
       preload: path.join(__dirname, '../preload/preload.js'),
       sandbox: true,

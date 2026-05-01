@@ -1,11 +1,15 @@
+import { Track } from '../shared/types';
+
 interface TrackRegistryEntry {
   filePath: string;
   selectedAt: number;
+  track?: Track;
 }
 
 interface RegisterTrackInput {
   trackId: string;
   filePath: string;
+  track?: Track;
 }
 
 const TRACK_AUTH_TTL_MS = 24 * 60 * 60 * 1000;
@@ -26,7 +30,8 @@ export class TrackRegistry {
     for (const track of tracks) {
       this.entries.set(track.trackId, {
         filePath: track.filePath,
-        selectedAt
+        selectedAt,
+        track: track.track
       });
     }
 
@@ -40,11 +45,37 @@ export class TrackRegistry {
     for (const track of tracks) {
       this.entries.set(track.trackId, {
         filePath: track.filePath,
-        selectedAt
+        selectedAt,
+        track: track.track
       });
     }
 
     this.pruneOverflow();
+  }
+
+  reorder(trackIds: string[]): void {
+    const nextEntries = new Map<string, TrackRegistryEntry>();
+    const now = this.nowProvider();
+    this.sweepExpired(now);
+
+    for (const trackId of trackIds) {
+      const entry = this.entries.get(trackId);
+      if (entry) {
+        nextEntries.set(trackId, {
+          ...entry,
+          selectedAt: now
+        });
+      }
+    }
+
+    this.entries.clear();
+    for (const [trackId, entry] of nextEntries) {
+      this.entries.set(trackId, entry);
+    }
+  }
+
+  clear(): void {
+    this.entries.clear();
   }
 
   resolvePath(trackId: unknown): string {
@@ -70,6 +101,14 @@ export class TrackRegistry {
 
   getSnapshot(): Map<string, TrackRegistryEntry> {
     return new Map(this.entries);
+  }
+
+  getTracks(): Track[] {
+    const now = this.nowProvider();
+    this.sweepExpired(now);
+    return Array.from(this.entries.values())
+      .map((entry) => entry.track)
+      .filter((track): track is Track => track !== undefined);
   }
 
   private sweepExpired(now: number): void {

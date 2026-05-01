@@ -15,15 +15,21 @@ test('renders BeatDropper shell', async ({ page }) => {
         canceled: true,
         mode
       }),
+      getTracks: async () => [],
+      setTrackOrder: async () => [],
+      clearTracks: async () => undefined,
       readTrackBufferById: async () => new ArrayBuffer(0),
       getSettings: async () => settings,
-      saveSettings: async () => settings
+      saveSettings: async () => settings,
+      minimizeWindow: async () => undefined,
+      toggleMaximizeWindow: async () => undefined,
+      closeWindow: async () => undefined
     };
   });
 
   await page.goto('/');
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('BeatDropper');
-  await expect(page.getByRole('button', { name: 'Load as New' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Add to Current' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'New Set' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Add Tracks' })).toBeDisabled();
   await expect(page.getByRole('heading', { level: 2, name: 'Auto DJ Queue' })).toBeVisible();
 });
