@@ -10,6 +10,7 @@ export type CueCandidateType =
 export type AnalysisWarning =
   | 'bpm_unavailable'
   | 'bpm_low_confidence'
+  | 'bpm_metadata_mismatch'
   | 'beat_grid_estimated'
   | 'short_track'
   | 'flat_energy'
@@ -250,6 +251,7 @@ const asAnalysisWarnings = (value: unknown): AnalysisWarning[] => {
   return value.filter((item): item is AnalysisWarning =>
     item === 'bpm_unavailable' ||
     item === 'bpm_low_confidence' ||
+    item === 'bpm_metadata_mismatch' ||
     item === 'beat_grid_estimated' ||
     item === 'short_track' ||
     item === 'flat_energy' ||

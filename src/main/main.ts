@@ -9,6 +9,8 @@ const devServerUrl = process.env.VITE_DEV_SERVER_URL;
 const shouldOpenDevTools = process.env.BEATDROPPER_OPEN_DEVTOOLS !== '0';
 const shouldDisableGpu = process.env.BEATDROPPER_DISABLE_GPU === '1';
 
+let mainWindow: BrowserWindow | null = null;
+
 if (shouldDisableGpu) {
   app.disableHardwareAcceleration();
   app.commandLine.appendSwitch('disable-gpu');
@@ -68,6 +70,11 @@ const createMainWindow = (): BrowserWindow => {
       event.preventDefault();
     }
   });
+  window.on('closed', () => {
+    if (mainWindow === window) {
+      mainWindow = null;
+    }
+  });
 
   if (isDev && devServerUrl) {
     void window.loadURL(devServerUrl);
@@ -88,11 +95,11 @@ app.whenReady().then(() => {
   }
 
   registerIpcHandlers();
-  createMainWindow();
+  mainWindow = createMainWindow();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
-      createMainWindow();
+      mainWindow = createMainWindow();
     }
   });
 });

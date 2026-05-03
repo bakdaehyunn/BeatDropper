@@ -38,7 +38,13 @@ const plannerSchema = {
             'style',
             'confidence',
             'reasoningSummary',
-            'tempoSync'
+            'tempoSync',
+            'candidateId',
+            'currentBarIndex',
+            'nextBarIndex',
+            'phraseAlignment',
+            'energyStrategy',
+            'evidence'
           ],
           properties: {
             transitionStartSec: { type: 'number' },
@@ -59,7 +65,7 @@ const plannerSchema = {
               properties: {
                 enabled: { type: 'boolean' },
                 targetRate: {
-                  anyOf: [{ type: 'number' }, { type: 'null' }]
+                  anyOf: [{ type: 'number', minimum: 0.85, maximum: 1.15 }, { type: 'null' }]
                 }
               }
             },
@@ -160,9 +166,13 @@ const buildPairContextHints = (request) => {
 
   return [
     'Mix candidates:',
+    `Readiness: ${request?.pairContext?.readiness ?? 'unknown'}`,
     ...candidates.slice(0, 5).map((candidate, index) =>
       [
         `- ${index + 1}. id ${candidate.id}`,
+        `source ${candidate.source ?? 'unknown'}`,
+        `evidence ${candidate.evidenceLevel ?? 'unknown'}`,
+        candidate.requiresAnalysisUpgrade ? 'requires analysis upgrade' : null,
         `score ${typeof candidate.score === 'number' ? candidate.score.toFixed(2) : '--'}`,
         `current out ${candidate.currentMixOutSec}s`,
         `next in ${candidate.nextMixInSec}s`,
@@ -196,10 +206,14 @@ const buildPrompt = (request) => {
     '- Prefer aligning transition timing to outro cues, downbeats, or beat-grid points when available',
     '- Prefer starting the next track from intro cue or an early stable downbeat instead of 0 when analysis supports it',
     '- Do not default to currentTrack.durationSec as transitionEndSec unless cue/downbeat data is missing or the tail is clearly the safest window',
+    '- Treat source=tail_fallback candidates as safety fallbacks, not AI-selected musical evidence',
+    '- Use tail_fallback only when pairContext.readiness is fallback_only or all analysis/cue candidates are unsafe',
+    '- If readiness is analysis_pending, either choose a cue/analysis candidate with evidence or return null with an analysis-pending error',
     '- Use reasoningSummary to cite the main evidence: mode, cues, BPM relation, and why the selected style is appropriate',
     '- Prefer choosing one pairContext candidate and include its candidateId, bar indices, phraseAlignment, energyStrategy, and evidence',
     '- Keep style choices operationally conservative unless the mode explicitly allows more aggressive transitions',
-    '- Use tempoSync only when BPM values are present and the chosen rate still sounds plausible',
+    '- Use tempoSync only when BPM values are present and the chosen playback-rate ratio still sounds plausible',
+    '- tempoSync.targetRate is a playback-rate ratio from 0.85 to 1.15, not a BPM value; use currentBpm / nextBpm when syncing the next track to the current track',
     '',
     buildModeGuidance(request?.settings?.aiDjMode),
     '',
@@ -284,7 +298,8 @@ module.exports = {
   buildModeGuidance,
   buildAnalysisHints,
   buildPairContextHints,
-  buildPrompt
+  buildPrompt,
+  plannerSchema
 };
 
 if (require.main === module) {

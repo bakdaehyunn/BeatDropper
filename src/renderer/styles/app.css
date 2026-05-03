@@ -1501,6 +1501,20 @@ input[type='range'] {
   flex: 1;
   flex-direction: column;
   gap: 8px;
+  position: relative;
+  overflow: hidden;
+}
+
+.playlist-table-wrap::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 10px;
+  bottom: 0;
+  height: 18px;
+  pointer-events: none;
+  background: linear-gradient(180deg, rgba(8, 8, 8, 0), #080808);
+  opacity: 0.92;
 }
 
 .playlist-table,
@@ -1522,8 +1536,32 @@ input[type='range'] {
 .playlist-table-body {
   flex: 1;
   min-height: 0;
-  overflow: auto;
-  padding-right: 4px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding-right: 6px;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: #5f5f5f #111;
+}
+
+.playlist-table-body::-webkit-scrollbar {
+  width: 9px;
+}
+
+.playlist-table-body::-webkit-scrollbar-track {
+  border-radius: 999px;
+  background: #111;
+}
+
+.playlist-table-body::-webkit-scrollbar-thumb {
+  border: 2px solid #111;
+  border-radius: 999px;
+  background: #5f5f5f;
+}
+
+.playlist-table-body::-webkit-scrollbar-thumb:hover {
+  background: #8a8a8a;
 }
 
 .playlist-table-body li {
@@ -1974,12 +2012,12 @@ input[type='range'] {
 
 .main-layout {
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: auto 260px minmax(270px, 1fr);
+  grid-template-rows: auto clamp(324px, 38vh, 340px) minmax(220px, 1fr);
 }
 
 .main-layout.has-analysis {
   grid-template-columns: minmax(0, 1fr) 330px;
-  grid-template-rows: auto 260px minmax(270px, 1fr);
+  grid-template-rows: auto clamp(324px, 38vh, 340px) minmax(220px, 1fr);
 }
 
 .source-strip,
@@ -2000,8 +2038,8 @@ input[type='range'] {
   grid-column: 2;
   grid-row: 3;
   overflow: hidden;
-  gap: 8px;
-  padding: 10px;
+  gap: 6px;
+  padding: 8px;
 }
 
 .analysis-panel .panel-head {
@@ -2017,7 +2055,7 @@ input[type='range'] {
   min-height: 0;
   display: grid;
   grid-template-columns: 1fr;
-  gap: 8px;
+  gap: 4px;
   overflow: hidden;
 }
 
@@ -2025,15 +2063,15 @@ input[type='range'] {
 .mix-candidate-card {
   min-width: 0;
   display: grid;
-  gap: 6px;
-  padding: 8px;
+  gap: 4px;
+  padding: 6px;
   border: 1px solid #2c2c2c;
   border-radius: 8px;
   background: #101010;
 }
 
 .pair-analysis-card {
-  gap: 6px;
+  gap: 5px;
 }
 
 .pair-track-line {
@@ -2043,7 +2081,7 @@ input[type='range'] {
 }
 
 .pair-track-line + .pair-track-line {
-  padding-top: 6px;
+  padding-top: 5px;
   border-top: 1px solid #252525;
 }
 
@@ -2093,7 +2131,7 @@ input[type='range'] {
 }
 
 .waveform-strip.compact {
-  height: 18px;
+  height: 16px;
   padding: 4px 6px;
 }
 
@@ -2142,13 +2180,12 @@ input[type='range'] {
 
 .candidate-list li {
   display: grid;
-  gap: 2px;
-  padding: 7px;
+  gap: 1px;
+  padding: 5px;
   border: 1px solid #252525;
   border-radius: 8px;
   background: #080808;
   min-width: 0;
-  max-height: 50px;
 }
 
 .candidate-list strong {
@@ -2171,6 +2208,11 @@ input[type='range'] {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.candidate-list span {
+  font-size: 10px;
+  line-height: 1.25;
 }
 
 .playlist-table-head {
@@ -2516,9 +2558,9 @@ input[type='range'] {
 .live-mix-panel {
   grid-row: 2;
   display: grid;
-  grid-template-rows: auto 50px minmax(0, 1fr) 46px;
-  gap: 8px;
-  padding: 12px;
+  grid-template-rows: auto 50px minmax(150px, 1fr) 42px;
+  gap: 6px;
+  padding: 10px;
   overflow: hidden;
 }
 
@@ -2540,17 +2582,25 @@ input[type='range'] {
   font-size: 18px;
 }
 
-.live-plan-pill {
-  min-width: 150px;
+.live-ai-statusbar {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(104px, 1fr));
+  gap: 6px;
+  flex: 0 1 520px;
+}
+
+.live-ai-statusbar article {
+  min-width: 0;
   display: grid;
   gap: 1px;
-  padding: 6px 10px;
+  padding: 5px 8px;
   border: 1px solid #333;
   border-radius: 8px;
   background: #101010;
 }
 
-.live-plan-pill span,
+.live-ai-statusbar span,
 .live-deck-strip span,
 .supervisor-wave-label span,
 .live-mix-reason span {
@@ -2560,11 +2610,15 @@ input[type='range'] {
   text-transform: uppercase;
 }
 
-.live-plan-pill strong {
+.live-ai-statusbar strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: #f4f4f4;
   font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
     monospace;
-  font-size: 13px;
+  font-size: 12px;
 }
 
 .live-deck-strip {
@@ -2576,8 +2630,8 @@ input[type='range'] {
 .live-deck-strip article {
   min-width: 0;
   display: grid;
-  gap: 2px;
-  padding: 7px 10px;
+  gap: 1px;
+  padding: 4px 9px;
   border: 1px solid #2c2c2c;
   border-radius: 8px;
   background: #101010;
@@ -2594,12 +2648,13 @@ input[type='range'] {
 
 .live-deck-strip strong {
   color: #f4f4f4;
-  font-size: 14px;
+  font-size: 13px;
 }
 
 .live-deck-strip small {
   color: #b6b6b6;
-  font-size: 11px;
+  font-size: 10px;
+  line-height: 1.15;
 }
 
 .mix-supervisor-card {
@@ -2610,7 +2665,7 @@ input[type='range'] {
 .supervisor-wave-stack {
   min-height: 0;
   display: grid;
-  grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-rows: minmax(68px, 1fr) minmax(68px, 1fr);
   gap: 8px;
   overflow: hidden;
 }
@@ -2644,14 +2699,15 @@ input[type='range'] {
 .supervisor-waveform {
   position: relative;
   min-width: 0;
-  min-height: 0;
+  min-height: 68px;
   display: flex;
-  align-items: center;
+  align-items: stretch;
   gap: 1px;
-  padding: 12px 8px 8px;
+  padding: 10px 8px 8px;
   border: 1px solid #2c2c2c;
   border-radius: 8px;
   background:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.055) 1px, transparent 1px) 0 0 / 8.333% 100%,
     linear-gradient(180deg, transparent 49%, rgba(255, 255, 255, 0.12) 50%, transparent 51%),
     #060606;
   overflow: hidden;
@@ -2659,6 +2715,7 @@ input[type='range'] {
 
 .supervisor-waveform.next {
   background:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.045) 1px, transparent 1px) 0 0 / 8.333% 100%,
     linear-gradient(180deg, transparent 49%, rgba(255, 255, 255, 0.1) 50%, transparent 51%),
     #080808;
 }
@@ -2669,14 +2726,84 @@ input[type='range'] {
   flex: 1 1 2px;
   min-width: 1px;
   max-width: 6px;
+  min-height: 100%;
+  background: none;
+  opacity: 0.96;
+}
+
+.supervisor-peak::before,
+.supervisor-peak::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
   border-radius: 2px;
-  background: linear-gradient(180deg, #f05252 0%, #f2a24d 42%, #2dd4bf 52%, #2563eb 100%);
-  opacity: 0.9;
+}
+
+.supervisor-peak::before {
+  bottom: calc(50% + 1px);
+  height: min(var(--peak-height, 28%), 48%);
+  background: linear-gradient(
+    180deg,
+    rgba(239, 68, 68, var(--high-alpha, 0.7)) 0%,
+    rgba(245, 158, 11, var(--mid-alpha, 0.65)) 100%
+  );
+  box-shadow: 0 -1px 6px rgba(245, 158, 11, 0.1);
+}
+
+.supervisor-peak::after {
+  top: calc(50% + 1px);
+  height: min(var(--rms-height, 18%), 44%);
+  background: linear-gradient(
+    180deg,
+    rgba(45, 212, 191, var(--low-alpha, 0.68)) 0%,
+    rgba(37, 99, 235, 0.72) 100%
+  );
+  box-shadow: 0 1px 6px rgba(45, 212, 191, 0.08);
 }
 
 .supervisor-waveform.next .supervisor-peak {
-  background: linear-gradient(180deg, #8dd7ff 0%, #47d6c6 52%, #5468ff 100%);
-  opacity: 0.78;
+  opacity: 0.88;
+}
+
+.supervisor-peak.preview {
+  opacity: 0.54;
+}
+
+.supervisor-peak.preview::before,
+.supervisor-peak.preview::after {
+  filter: saturate(0.72);
+}
+
+.supervisor-peak.preview.analyzing {
+  animation: waveform-preview-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes waveform-preview-pulse {
+  0%,
+  100% {
+    opacity: 0.42;
+  }
+
+  50% {
+    opacity: 0.68;
+  }
+}
+
+.supervisor-waveform.next .supervisor-peak::before {
+  background: linear-gradient(
+    180deg,
+    rgba(141, 215, 255, var(--high-alpha, 0.66)) 0%,
+    rgba(71, 214, 198, var(--mid-alpha, 0.64)) 100%
+  );
+}
+
+.supervisor-waveform.next .supervisor-peak::after {
+  background: linear-gradient(
+    180deg,
+    rgba(71, 214, 198, var(--low-alpha, 0.64)) 0%,
+    rgba(84, 104, 255, 0.68) 100%
+  );
 }
 
 .supervisor-waveform em {
@@ -2757,6 +2884,11 @@ input[type='range'] {
   background: #f59e0b;
 }
 
+.supervisor-cursor.mix-out b {
+  left: auto;
+  right: 4px;
+}
+
 .supervisor-cursor.mix-out b,
 .supervisor-cursor.mix-in b {
   background: #f59e0b;
@@ -2782,7 +2914,7 @@ input[type='range'] {
   min-width: 0;
   display: grid;
   gap: 2px;
-  padding: 7px 10px;
+  padding: 6px 10px;
   border: 1px solid #2c2c2c;
   border-radius: 8px;
   background: #101010;

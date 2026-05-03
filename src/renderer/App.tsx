@@ -1,5 +1,6 @@
 import {
   ChangeEvent,
+  CSSProperties,
   DragEvent,
   useEffect,
   useMemo,
@@ -23,7 +24,6 @@ import {
   Trash2,
   X
 } from 'lucide-react';
-import { estimateAdaptiveDecodeTimeoutMs } from '../shared/decodeTimeout';
 import {
   buildMixPlanComparisonExportEnvelope,
   buildMixPlanComparisonRows,
@@ -67,6 +67,10 @@ import {
   formatTrackLoadError,
   skippedMessagesToEvents
 } from './player/trackImportFlow';
+import {
+  pickNextTrackForDetailedAnalysis,
+  preferDetailedTrackAnalysis
+} from './player/trackAnalysisQueue';
 
 const MAX_LOG_ITEMS = 100;
 
@@ -92,6 +96,14 @@ const formatOptionalSigned = (value: number | null | undefined): string => {
   return `${value >= 0 ? '+' : ''}${value.toFixed(2)}`;
 };
 
+const formatCandidateReasonSummary = (reason: string): string => {
+  return reason.split(';')[0]?.trim() || reason;
+};
+
+const hasWaveformPreview = (analysis: TrackAnalysis | null | undefined): boolean => {
+  return Boolean(analysis && (analysis.waveformDetail.length > 0 || analysis.waveformPeaks.length > 0));
+};
+
 const clampPercent = (value: number): number => {
   if (!Number.isFinite(value)) {
     return 0;
@@ -108,11 +120,6 @@ const durationPercent = (timeSec: number | null | undefined, durationSec: number
 
 const formatEventTime = (value: number): string => value.toFixed(2);
 const METER_BAR_COUNT = 18;
-const PREVIEW_TRACK_DURATION_SEC = 10;
-const PREVIEW_TRACK_SIZE_BYTES = 8 * 1024 * 1024;
-const START_DECODE_BASE_TIMEOUT_MS = 2500;
-const PREDECODE_BASE_TIMEOUT_MS = 3000;
-const TRANSITION_DECODE_BASE_TIMEOUT_MS = 1200;
 const MAX_IMPORTED_MIX_PLAN_ARTIFACTS = 5;
 const LOCAL_COMPARE_TARGET_ID = '__latest_local__';
 
@@ -137,13 +144,6 @@ interface MixPlanCompareTargetOption {
   summary: string;
 }
 
-interface DecodeTimeoutPreset {
-  id: 'fast' | 'balanced' | 'stable';
-  label: string;
-  durationWeightMs: number;
-  sizeWeightMs: number;
-}
-
 interface AgentHarnessResult {
   profileId: string;
   profileName: string;
@@ -151,31 +151,6 @@ interface AgentHarnessResult {
   result: RequestMixPlanResult | null;
   error: string | null;
 }
-
-const DECODE_TIMEOUT_PRESETS: DecodeTimeoutPreset[] = [
-  {
-    id: 'fast',
-    label: '고성능',
-    durationWeightMs: 10,
-    sizeWeightMs: 80
-  },
-  {
-    id: 'balanced',
-    label: '균형',
-    durationWeightMs: 20,
-    sizeWeightMs: 200
-  },
-  {
-    id: 'stable',
-    label: '안정',
-    durationWeightMs: 36,
-    sizeWeightMs: 480
-  }
-];
-
-const formatDecodePreviewSec = (timeoutMs: number): string => {
-  return `${(timeoutMs / 1000).toFixed(1)}s`;
-};
 
 const formatPlannerArgsDraft = (args: string[]): string => args.join('\n');
 const formatAgentConnectionStatus = (
@@ -294,6 +269,20 @@ const formatPlannerEventDetails = (event: PlayerEvent): string | null => {
   return null;
 };
 
+let sharedAudioEngine: AudioEngine | null = null;
+
+const getSharedAudioEngine = (): AudioEngine => {
+  if (!sharedAudioEngine) {
+    sharedAudioEngine = new AudioEngine({
+      readTrackBuffer: window.dropperApi.readTrackBufferById,
+      requestMixPlan: window.dropperApi.requestMixPlan,
+      settings: DEFAULT_SETTINGS
+    });
+  }
+
+  return sharedAudioEngine;
+};
+
 export const App = (): JSX.Element => {
   const [tracks, setTracks] = useState<Track[]>([]);
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -315,6 +304,7 @@ export const App = (): JSX.Element => {
   const [resolvedBpmByTrack, setResolvedBpmByTrack] = useState<Record<string, number>>({});
   const [analysisByTrackId, setAnalysisByTrackId] = useState<Record<string, TrackAnalysis>>({});
   const [analyzingTrackIds, setAnalyzingTrackIds] = useState<string[]>([]);
+  const [failedAnalysisTrackIds, setFailedAnalysisTrackIds] = useState<string[]>([]);
   const [lastImportMode, setLastImportMode] = useState<TrackLoadMode | null>(null);
   const [lastImportAt, setLastImportAt] = useState<number | null>(null);
   const [isTrackLoadPending, setIsTrackLoadPending] = useState(false);
@@ -351,19 +341,15 @@ export const App = (): JSX.Element => {
   const tracksRef = useRef<Track[]>([]);
   const plannerImportInputRef = useRef<HTMLInputElement | null>(null);
   const comparisonImportInputRef = useRef<HTMLInputElement | null>(null);
-  const audioEngine = useMemo(
-    () =>
-      new AudioEngine({
-        readTrackBuffer: window.dropperApi.readTrackBufferById,
-        requestMixPlan: window.dropperApi.requestMixPlan,
-        settings: DEFAULT_SETTINGS
-      }),
-    []
-  );
+  const audioEngine = useMemo(() => getSharedAudioEngine(), []);
 
   useEffect(() => {
     tracksRef.current = tracks;
     audioEngine.loadTracks(tracks);
+    const trackIds = new Set(tracks.map((track) => track.id));
+    setFailedAnalysisTrackIds((previous) =>
+      previous.filter((trackId) => trackIds.has(trackId))
+    );
   }, [audioEngine, tracks]);
 
   useEffect(() => {
@@ -397,10 +383,22 @@ export const App = (): JSX.Element => {
         return;
       }
 
-      setAnalysisByTrackId((previous) => ({
-        ...previous,
-        ...Object.fromEntries(nextEntries)
-      }));
+      setAnalysisByTrackId((previous) => {
+        const next = { ...previous };
+        for (const [trackId, analysis] of nextEntries) {
+          next[trackId] = preferDetailedTrackAnalysis(previous[trackId], analysis);
+        }
+        return next;
+      });
+      setResolvedBpmByTrack((previous) => {
+        const bpmEntries = nextEntries
+          .map(([trackId, analysis]) => [trackId, analysis.bpm] as const)
+          .filter(
+            (entry): entry is readonly [string, number] =>
+              typeof entry[1] === 'number' && Number.isFinite(entry[1])
+          );
+        return bpmEntries.length > 0 ? { ...previous, ...Object.fromEntries(bpmEntries) } : previous;
+      });
     });
 
     return () => {
@@ -410,14 +408,12 @@ export const App = (): JSX.Element => {
 
   useEffect(() => {
     let canceled = false;
-    const pendingTrack = tracks.find((track) => {
-      const analysis = analysisByTrackId[track.id];
-      return (
-        analysis &&
-        (analysis.waveformPeaks.length === 0 || analysis.waveformDetail.length === 0) &&
-        !analyzingTrackIds.includes(track.id)
-      );
-    });
+    const pendingTrack = pickNextTrackForDetailedAnalysis(
+      tracks,
+      analysisByTrackId,
+      analyzingTrackIds,
+      new Set(failedAnalysisTrackIds)
+    );
 
     if (!pendingTrack) {
       return () => {
@@ -425,12 +421,20 @@ export const App = (): JSX.Element => {
       };
     }
 
-    setAnalyzingTrackIds((previous) => [...previous, pendingTrack.id]);
+    setAnalyzingTrackIds((previous) =>
+      previous.includes(pendingTrack.id) ? previous : [...previous, pendingTrack.id]
+    );
     void (async () => {
       const AudioContextCtor =
         window.AudioContext ??
         (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
       if (!AudioContextCtor) {
+        setFailedAnalysisTrackIds((previous) =>
+          previous.includes(pendingTrack.id) ? previous : [...previous, pendingTrack.id]
+        );
+        setAnalyzingTrackIds((previous) =>
+          previous.filter((trackId) => trackId !== pendingTrack.id)
+        );
         return;
       }
 
@@ -452,7 +456,19 @@ export const App = (): JSX.Element => {
           ...previous,
           [pendingTrack.id]: saved
         }));
+        setFailedAnalysisTrackIds((previous) =>
+          previous.filter((trackId) => trackId !== pendingTrack.id)
+        );
+        if (typeof saved.bpm === 'number' && Number.isFinite(saved.bpm)) {
+          setResolvedBpmByTrack((previous) => ({
+            ...previous,
+            [pendingTrack.id]: saved.bpm as number
+          }));
+        }
       } catch {
+        setFailedAnalysisTrackIds((previous) =>
+          previous.includes(pendingTrack.id) ? previous : [...previous, pendingTrack.id]
+        );
         return;
       } finally {
         await context.close().catch(() => undefined);
@@ -467,7 +483,7 @@ export const App = (): JSX.Element => {
     return () => {
       canceled = true;
     };
-  }, [analysisByTrackId, analyzingTrackIds, tracks]);
+  }, [analysisByTrackId, analyzingTrackIds, failedAnalysisTrackIds, tracks]);
 
   useEffect(() => {
     let mounted = true;
@@ -557,7 +573,20 @@ export const App = (): JSX.Element => {
 
     return () => {
       unsubscribe();
+    };
+  }, [audioEngine]);
+
+  useEffect(() => {
+    const destroyAudioEngine = (): void => {
       void audioEngine.destroy();
+      if (sharedAudioEngine === audioEngine) {
+        sharedAudioEngine = null;
+      }
+    };
+
+    window.addEventListener('beforeunload', destroyAudioEngine);
+    return () => {
+      window.removeEventListener('beforeunload', destroyAudioEngine);
     };
   }, [audioEngine]);
 
@@ -896,7 +925,7 @@ export const App = (): JSX.Element => {
     try {
       const result = await window.dropperApi.openTracks(mode);
       if (result.canceled) {
-        setTrackLoadNotice('Import canceled. Current playlist remains unchanged.');
+        setTrackLoadNotice('Canceled');
         return;
       }
 
@@ -922,7 +951,8 @@ export const App = (): JSX.Element => {
       const actionLabel = result.mode === 'append' ? 'Added' : 'Loaded';
       const skippedSuffix =
         result.skipped.length > 0 ? ` (${result.skipped.length} skipped)` : '';
-      setTrackLoadNotice(`${actionLabel} ${result.tracks.length} track(s)${skippedSuffix}.`);
+      const trackLabel = result.tracks.length === 1 ? 'track' : 'tracks';
+      setTrackLoadNotice(`${actionLabel} ${result.tracks.length} ${trackLabel}${skippedSuffix}`);
 
       if (result.skipped.length > 0) {
         const skippedEvents = skippedMessagesToEvents(result.skipped);
@@ -1061,25 +1091,6 @@ export const App = (): JSX.Element => {
 
   const onRepeatChange = (event: ChangeEvent<HTMLInputElement>): void => {
     void persistSettings({ repeatAll: event.target.checked });
-  };
-
-  const onDecodeDurationWeightChange = (
-    event: ChangeEvent<HTMLInputElement>
-  ): void => {
-    const value = Number(event.target.value);
-    void persistSettings({ decodeTimeoutDurationWeightMs: value });
-  };
-
-  const onDecodeSizeWeightChange = (event: ChangeEvent<HTMLInputElement>): void => {
-    const value = Number(event.target.value);
-    void persistSettings({ decodeTimeoutSizeWeightMs: value });
-  };
-
-  const applyDecodeTimeoutPreset = (preset: DecodeTimeoutPreset): void => {
-    void persistSettings({
-      decodeTimeoutDurationWeightMs: preset.durationWeightMs,
-      decodeTimeoutSizeWeightMs: preset.sizeWeightMs
-    });
   };
 
   const onAiDjEnabledChange = (event: ChangeEvent<HTMLInputElement>): void => {
@@ -1378,6 +1389,27 @@ export const App = (): JSX.Element => {
     }
     return resolvedBpmByTrack[track.id] ?? analysis?.bpm ?? track.bpm ?? null;
   };
+  const resolveTrackAnalysisStatus = (
+    track: Track | null,
+    analysis?: TrackAnalysis | null
+  ): string => {
+    if (!track) {
+      return '--';
+    }
+    if (analyzingTrackIds.includes(track.id)) {
+      return 'Analyzing';
+    }
+    if (hasWaveformPreview(analysis)) {
+      return `Ready · ${analysis?.barGrid.length ?? 0} bars`;
+    }
+    if (analysis) {
+      return 'Cue only';
+    }
+    if (failedAnalysisTrackIds.includes(track.id)) {
+      return 'Failed';
+    }
+    return 'Pending';
+  };
   const selectedPairContext =
     selectedTrack && selectedPairNextTrack && selectedTrack.id !== selectedPairNextTrack.id
       ? buildMixPairContext({
@@ -1390,30 +1422,22 @@ export const App = (): JSX.Element => {
   const selectedPairCandidates: MixCandidate[] = selectedPairContext?.candidates ?? [];
   const selectedTrackBpm = resolveTrackBpm(selectedTrack, selectedTrackAnalysis);
   const nextTrackBpm = resolveTrackBpm(nextTrack, nextTrackAnalysis);
-  const activeDecodePreset =
-    DECODE_TIMEOUT_PRESETS.find(
-      (preset) =>
-        preset.durationWeightMs === settings.decodeTimeoutDurationWeightMs &&
-        preset.sizeWeightMs === settings.decodeTimeoutSizeWeightMs
-    ) ?? null;
-  const previewStartDecodeMs = estimateAdaptiveDecodeTimeoutMs(
-    settings,
-    START_DECODE_BASE_TIMEOUT_MS,
-    PREVIEW_TRACK_DURATION_SEC,
-    PREVIEW_TRACK_SIZE_BYTES
-  );
-  const previewPredecodeMs = estimateAdaptiveDecodeTimeoutMs(
-    settings,
-    PREDECODE_BASE_TIMEOUT_MS,
-    PREVIEW_TRACK_DURATION_SEC,
-    PREVIEW_TRACK_SIZE_BYTES
-  );
-  const previewTransitionDecodeMs = estimateAdaptiveDecodeTimeoutMs(
-    settings,
-    TRANSITION_DECODE_BASE_TIMEOUT_MS,
-    PREVIEW_TRACK_DURATION_SEC,
-    PREVIEW_TRACK_SIZE_BYTES
-  );
+  const selectedPairStatusLabel =
+    selectedTrack &&
+    selectedPairNextTrack &&
+    (analyzingTrackIds.includes(selectedTrack.id) ||
+      analyzingTrackIds.includes(selectedPairNextTrack.id))
+      ? 'Analyzing'
+      : selectedPairCandidates.length > 0
+        ? `${selectedPairCandidates.length} possible links`
+        : selectedPairContext?.readiness === 'fallback_only'
+          ? 'Fallback only'
+          : selectedTrack &&
+              selectedPairNextTrack &&
+              (failedAnalysisTrackIds.includes(selectedTrack.id) ||
+                failedAnalysisTrackIds.includes(selectedPairNextTrack.id))
+            ? 'No candidates'
+            : 'Pending';
   const activeAiAgentProfile = resolveActiveAiAgentProfile(settings);
   const activeAgentConnectionResult = activeAiAgentProfile
     ? agentConnectionResultsById[activeAiAgentProfile.id]
@@ -1459,29 +1483,38 @@ export const App = (): JSX.Element => {
           asFiniteNumber(latestMixPlanApplied?.details?.transitionEndAt) ?? 0
         )}`
       : null;
-  const latestPlannerOffset = asFiniteNumber(
-    latestMixPlanApplied?.details?.nextTrackStartOffsetSec
-  );
   const latestTempoRate = formatTempoSyncRate(latestTempoApplied?.details?.targetRate);
-  const mixStatusLabel = latestMixPlanApplied
-    ? 'AI plan applied'
-    : latestMixPlanFallback
-      ? 'Rule-based fallback'
-      : settings.aiDjEnabled
-        ? 'Waiting for AI plan'
-        : 'Rule-based mix ready';
-  const mixWindowLabel = latestPlannerWindow ?? 'End-of-track crossfade';
-  const mixOffsetLabel =
-    latestPlannerOffset !== null ? formatDuration(latestPlannerOffset) : '--';
-  const mixStyleLabel = latestSuccessfulMixPlan?.style.replace('_', ' ') ?? 'smooth blend';
+  const latestPlannerSourceLabel =
+    latestMixPlanApplied && asString(latestMixPlanApplied.details?.source) === 'cli'
+      ? activeAiAgentProfile?.name ?? 'AI Agent'
+      : latestMixPlanApplied
+        ? asString(latestMixPlanApplied.details?.source) ?? 'AI Agent'
+        : latestMixPlanFallback
+          ? 'Rule-based'
+          : settings.aiDjEnabled
+            ? activeAiAgentProfile?.name ?? 'AI Agent'
+            : 'Rule-based';
+  const latestPlannerFailureReason = asString(latestMixPlanFallback?.details?.reason);
   const mixConfidenceLabel =
     latestSuccessfulMixPlan?.confidence !== undefined
       ? `${Math.round(latestSuccessfulMixPlan.confidence * 100)}%`
       : '--';
-  const mixReasoningLabel =
+  const mixEvidenceLabel =
+    latestSuccessfulMixPlan?.evidence?.[0] ??
     latestPlannerReasoning ??
-    asString(latestMixPlanFallback?.details?.reason) ??
-    'AI mix details appear after the next transition plan is requested.';
+    latestPlannerFailureReason ??
+    'No evidence';
+  const livePlanStateLabel = latestMixPlanApplied
+    ? `Applied · ${mixConfidenceLabel}`
+    : latestMixPlanFallback
+      ? `Fallback · ${latestPlannerFailureReason ?? 'unknown'}`
+      : settings.aiDjEnabled
+        ? 'Waiting'
+        : 'Off';
+  const liveTempoLabel =
+    latestSuccessfulMixPlan?.tempoSync.enabled && latestSuccessfulMixPlan.tempoSync.targetRate
+      ? formatTempoSyncRate(latestSuccessfulMixPlan.tempoSync.targetRate) ?? '--'
+      : latestTempoRate ?? '--';
   const latestPlannerRequestJson = prettyJson(
     latestPlannerDebugEvent?.details?.plannerRequest ?? null
   );
@@ -1700,8 +1733,13 @@ export const App = (): JSX.Element => {
   const supervisorCandidates = supervisorPairContext?.candidates ?? [];
   const supervisorCandidate =
     supervisorCandidates.find((candidate) => candidate.id === latestSuccessfulMixPlan?.candidateId) ??
+    supervisorCandidates.find((candidate) => candidate.id === supervisorPairContext?.recommendedCandidateId) ??
     supervisorCandidates[0] ??
     null;
+  const liveEvidenceLabel =
+    latestSuccessfulMixPlan?.evidence?.[0] ??
+    supervisorCandidate?.reason ??
+    mixEvidenceLabel;
   const supervisorCurrentDurationSec = supervisorCurrentTrack?.durationSec ?? 0;
   const supervisorNextDurationSec = supervisorNextTrack?.durationSec ?? 0;
   const supervisorMixOutSec =
@@ -1732,25 +1770,10 @@ export const App = (): JSX.Element => {
     isPlaying && typeof supervisorMixOutSec === 'number'
       ? Math.max(0, supervisorMixOutSec - elapsedSec)
       : null;
-  const supervisorPlanLabel = latestSuccessfulMixPlan
-    ? 'AI plan locked'
-    : supervisorCandidate
-      ? 'AI candidate preview'
-      : 'Waiting for analysis';
-  const supervisorConfidenceLabel =
-    latestSuccessfulMixPlan?.confidence !== undefined
-      ? `${Math.round(latestSuccessfulMixPlan.confidence * 100)}%`
-      : supervisorCandidate
-        ? `${Math.round(supervisorCandidate.confidence * 100)}%`
-        : '--';
   const supervisorStyleLabel =
     latestSuccessfulMixPlan?.style.replace('_', ' ') ??
     supervisorCandidate?.style.replace('_', ' ') ??
     '--';
-  const supervisorReasonLabel =
-    latestSuccessfulMixPlan?.reasoningSummary ??
-    supervisorCandidate?.reason ??
-    'Load at least two analyzed tracks to preview the next transition.';
   const supervisorBarLabel =
     latestSuccessfulMixPlan?.currentBarIndex !== undefined &&
     latestSuccessfulMixPlan?.nextBarIndex !== undefined
@@ -1774,12 +1797,43 @@ export const App = (): JSX.Element => {
               : '--'
           }`
         : 'Bar --';
-  const renderSupervisorPeaks = (analysis: TrackAnalysis | null, label: string) => {
+  const renderSupervisorPeaks = (
+    analysis: TrackAnalysis | null,
+    durationSec: number,
+    bpm: number | null,
+    isAnalyzing: boolean
+  ) => {
     const detail = analysis?.waveformDetail ?? [];
     const spectralBands = analysis?.spectralBands ?? [];
     const peaks = detail.length > 0 ? detail : (analysis?.waveformPeaks ?? []);
     if (peaks.length === 0) {
-      return <em>{label}</em>;
+      const sampleCount = 144;
+      const beatIntervalSec =
+        typeof bpm === 'number' && Number.isFinite(bpm) && bpm > 0 ? 60 / bpm : null;
+      return Array.from({ length: sampleCount }, (_, index) => {
+        const position = sampleCount <= 1 ? 0 : index / (sampleCount - 1);
+        const timeSec = durationSec > 0 ? position * durationSec : index;
+        const beatPhase =
+          beatIntervalSec !== null ? (timeSec % beatIntervalSec) / beatIntervalSec : position;
+        const beatPulse = beatIntervalSec !== null ? Math.max(0, 1 - beatPhase * 5.5) : 0;
+        const phraseLift = index % 16 === 0 ? 0.18 : index % 8 === 0 ? 0.1 : 0;
+        const movement = 0.1 + ((index * 7) % 11) / 110;
+        const previewPeak = clampPercent((0.2 + beatPulse * 0.5 + phraseLift + movement) * 100);
+        const previewRms = clampPercent((0.14 + beatPulse * 0.24 + movement * 0.55) * 100);
+        return (
+          <span
+            key={`preview-${index}`}
+            className={`supervisor-peak preview${isAnalyzing ? ' analyzing' : ''}`}
+            style={{
+              '--peak-height': `${Math.max(14, previewPeak)}%`,
+              '--rms-height': `${Math.max(8, previewRms)}%`,
+              '--high-alpha': 0.42,
+              '--mid-alpha': 0.44,
+              '--low-alpha': 0.42
+            } as CSSProperties}
+          />
+        );
+      });
     }
     const stride = Math.max(1, Math.ceil(peaks.length / 180));
     return peaks
@@ -1790,14 +1844,19 @@ export const App = (): JSX.Element => {
         const low = band?.low ?? point.rms;
         const mid = band?.mid ?? point.peak;
         const high = band?.high ?? Math.max(0, point.peak - point.rms);
+        const peakHeight = `${Math.max(14, clampPercent(point.peak * 100))}%`;
+        const rmsHeight = `${Math.max(8, clampPercent(point.rms * 78))}%`;
         return (
           <span
             key={`${point.timeSec}-${index}`}
             className="supervisor-peak"
             style={{
-              height: `${Math.max(8, point.peak * 100)}%`,
-              background: `linear-gradient(180deg, rgba(239,68,68,${Math.max(0.34, high)}) 0%, rgba(245,158,11,${Math.max(0.32, mid)}) 44%, rgba(45,212,191,${Math.max(0.34, low)}) 55%, rgba(37,99,235,${Math.max(0.28, low * 0.85)}) 100%)`
-            }}
+              '--peak-height': peakHeight,
+              '--rms-height': rmsHeight,
+              '--high-alpha': Math.max(0.42, high),
+              '--mid-alpha': Math.max(0.38, mid),
+              '--low-alpha': Math.max(0.42, low)
+            } as CSSProperties}
           />
         );
       });
@@ -1844,7 +1903,6 @@ export const App = (): JSX.Element => {
         <div className="brand-block">
           <span className="brand-chip">AUTO DJ / USB FLOW</span>
           <h1>BeatDropper</h1>
-          <p>USB Explorer vibe with automatic DJ transitions.</p>
         </div>
         <div className="header-actions">
           <div className={`state-pill ${isPlaying ? 'live' : ''}`}>
@@ -1883,7 +1941,7 @@ export const App = (): JSX.Element => {
           <div className="source-summary">
             <span className="panel-tag">Audio Files</span>
             <strong>Local Library</strong>
-            <small>{tracks.length} track(s) loaded</small>
+            <small>{tracks.length} tracks</small>
           </div>
           <div className="device-actions">
               <button
@@ -1921,16 +1979,16 @@ export const App = (): JSX.Element => {
           </div>
           <div className="import-note">
             {isTrackLoadPending ? (
-              <p>Importing tracks. Please wait...</p>
+              <p>Importing...</p>
             ) : trackLoadNotice ? (
               <p>{trackLoadNotice}</p>
             ) : lastImportAt && lastImportMode ? (
               <p>
-                Last import: {lastImportMode === 'replace' ? 'replace' : 'append'} ·{' '}
+                Last: {lastImportMode === 'replace' ? 'new set' : 'append'} ·{' '}
                 {new Date(lastImportAt).toLocaleTimeString()}
               </p>
             ) : (
-              <p>No import yet in this session.</p>
+              <p>Ready</p>
             )}
           </div>
         </section>
@@ -2000,7 +2058,7 @@ export const App = (): JSX.Element => {
             </button>
           </div>
           {tracks.length === 0 ? (
-            <p className="muted">Load MP3/WAV tracks to build a playlist.</p>
+            <p className="muted">No tracks</p>
           ) : (
             <div className="playlist-table-wrap">
               <div className="playlist-table playlist-table-head" aria-hidden="true">
@@ -2013,7 +2071,7 @@ export const App = (): JSX.Element => {
                 <span>Cue</span>
                 <span>Mix</span>
               </div>
-              <ul className="track-list playlist-table-body">
+              <ul className="track-list playlist-table-body" aria-label="Playlist tracks">
                 {tracks.map((track, index) => {
                   const analysis = analysisByTrackId[track.id] ?? null;
                   const bpm = resolveTrackBpm(track, analysis);
@@ -2024,13 +2082,7 @@ export const App = (): JSX.Element => {
                     analysis?.introCueSec != null || analysis?.outroCueSec != null
                       ? `${formatOptionalDuration(analysis?.introCueSec)} / ${formatOptionalDuration(analysis?.outroCueSec)}`
                       : '--';
-                  const mixReady = analyzingTrackIds.includes(track.id)
-                    ? 'Analyzing'
-                    : analysis?.waveformDetail.length || analysis?.waveformPeaks.length
-                      ? `Mix ready · ${analysis.barGrid.length} bars`
-                      : bpm !== null || analysis !== null
-                        ? 'Cue ready'
-                        : 'Pending';
+                  const mixReady = resolveTrackAnalysisStatus(track, analysis);
 
                   return (
                     <li
@@ -2110,7 +2162,7 @@ export const App = (): JSX.Element => {
                         />
                       ))
                     ) : (
-                      <em>Waveform pending</em>
+                      <em>{resolveTrackAnalysisStatus(selectedTrack, selectedTrackAnalysis)}</em>
                     )}
                   </div>
                   <div className="analysis-stats">
@@ -2141,7 +2193,7 @@ export const App = (): JSX.Element => {
                         />
                       ))
                     ) : (
-                      <em>Waveform pending</em>
+                      <em>{resolveTrackAnalysisStatus(selectedPairNextTrack, selectedPairNextAnalysis)}</em>
                     )}
                   </div>
                   <div className="analysis-stats">
@@ -2155,11 +2207,9 @@ export const App = (): JSX.Element => {
               <article className="mix-candidate-card">
                 <div className="analysis-card-head">
                   <div>
-                    <p>Connection Candidates</p>
+                    <p>Candidates</p>
                     <strong>
-                      {selectedPairCandidates.length > 0
-                        ? `${selectedPairCandidates.length} possible links`
-                        : 'Waiting for analysis'}
+                      {selectedPairStatusLabel}
                     </strong>
                   </div>
                   <span>{selectedPairCandidates[0] ? `${Math.round(selectedPairCandidates[0].score * 100)}%` : '--'}</span>
@@ -2173,23 +2223,22 @@ export const App = (): JSX.Element => {
                         </strong>
                         <small>
                           Bar {candidate.currentBarIndex !== null ? candidate.currentBarIndex + 1 : '--'} {'->'}{' '}
-                          {candidate.nextBarIndex !== null ? candidate.nextBarIndex + 1 : '--'} ·{' '}
-                          {candidate.phraseAlignment} · energy {formatOptionalSigned(candidate.energyDelta)}
+                          {candidate.nextBarIndex !== null ? candidate.nextBarIndex + 1 : '--'} · {candidate.phraseAlignment}
                         </small>
-                        <span>{candidate.reason}</span>
+                        <span>{formatCandidateReasonSummary(candidate.reason)}</span>
                       </li>
                     ))
                   ) : (
                     <li>
-                      <strong>No pair context yet</strong>
-                      <small>Analyze at least two tracks to show BPM, bars, phrase, and energy links.</small>
+                      <strong>No candidates</strong>
+                      <small>Need two analyzed tracks</small>
                     </li>
                   )}
                 </ul>
               </article>
             </div>
           ) : (
-            <p className="muted">Select a track with another track after it to inspect mix links.</p>
+            <p className="muted">No pair selected</p>
           )}
         </section>
         )}
@@ -2198,19 +2247,28 @@ export const App = (): JSX.Element => {
           <div className="live-mix-head">
             <div>
               <h2>Live Mix Monitor</h2>
-              <small className="panel-subtitle">AI transition supervision</small>
             </div>
-            <div className="live-plan-pill">
-              <span>{supervisorPlanLabel}</span>
-              <strong>{supervisorConfidenceLabel}</strong>
+            <div className="live-ai-statusbar" aria-label="AI mix planner status">
+              <article title={latestPlannerSourceLabel}>
+                <span>Agent</span>
+                <strong>{latestPlannerSourceLabel}</strong>
+              </article>
+              <article title={livePlanStateLabel}>
+                <span>Plan</span>
+                <strong>{livePlanStateLabel}</strong>
+              </article>
+              <article title={liveTempoLabel}>
+                <span>Tempo</span>
+                <strong>{liveTempoLabel}</strong>
+              </article>
             </div>
           </div>
 
           <section className="live-deck-strip" aria-label="Current and next deck summary">
             <article>
               <span>Now</span>
-              <strong title={supervisorCurrentTrack?.title ?? 'No current track'}>
-                {supervisorCurrentTrack?.title ?? 'No current track'}
+              <strong title={supervisorCurrentTrack?.title ?? 'No track'}>
+                {supervisorCurrentTrack?.title ?? 'No track'}
               </strong>
               <small>
                 BPM {formatOptionalBpm(supervisorCurrentBpm)} · Length{' '}
@@ -2231,13 +2289,13 @@ export const App = (): JSX.Element => {
                 {supervisorBarLabel} · {supervisorStyleLabel} ·{' '}
                 {supervisorTimeToMix !== null
                   ? `${formatDuration(supervisorTimeToMix)} to mix`
-                  : 'standby preview'}
+                  : 'Preview'}
               </small>
             </article>
             <article>
               <span>Next</span>
-              <strong title={supervisorNextTrack?.title ?? 'No next track'}>
-                {supervisorNextTrack?.title ?? 'No next track'}
+              <strong title={supervisorNextTrack?.title ?? 'No next'}>
+                {supervisorNextTrack?.title ?? 'No next'}
               </strong>
               <small>
                 BPM {formatOptionalBpm(supervisorNextBpm)} · Length{' '}
@@ -2295,13 +2353,21 @@ export const App = (): JSX.Element => {
                     }}
                   />
                 ))}
-                {renderSupervisorPeaks(supervisorCurrentAnalysis, 'Current waveform pending')}
-                {supervisorCurrentTrack && (
+                {renderSupervisorPeaks(
+                  supervisorCurrentAnalysis,
+                  supervisorCurrentDurationSec,
+                  supervisorCurrentBpm,
+                  Boolean(
+                    supervisorCurrentTrack &&
+                      analyzingTrackIds.includes(supervisorCurrentTrack.id)
+                  )
+                )}
+                {currentTrack && (
                   <i
                     className="supervisor-cursor playhead"
                     style={{ left: `${supervisorPlayheadPercent}%` }}
                   >
-                    <b>{currentTrack ? 'PLAY' : 'PREVIEW'}</b>
+                    <b>PLAY</b>
                   </i>
                 )}
                 {supervisorCurrentTrack && supervisorMixOutSec !== null && (
@@ -2352,7 +2418,12 @@ export const App = (): JSX.Element => {
                     }}
                   />
                 ))}
-                {renderSupervisorPeaks(supervisorNextAnalysis, 'Next waveform pending')}
+                {renderSupervisorPeaks(
+                  supervisorNextAnalysis,
+                  supervisorNextDurationSec,
+                  supervisorNextBpm,
+                  Boolean(supervisorNextTrack && analyzingTrackIds.includes(supervisorNextTrack.id))
+                )}
                 {supervisorNextTrack && (
                   <i
                     className="supervisor-cursor mix-in"
@@ -2366,9 +2437,9 @@ export const App = (): JSX.Element => {
           </section>
 
           <div className="live-mix-footer">
-            <div className="live-mix-reason" title={supervisorReasonLabel}>
-              <span>Reasoning</span>
-              <strong>{supervisorReasonLabel}</strong>
+            <div className="live-mix-reason" title={liveEvidenceLabel}>
+              <span>Evidence</span>
+              <strong>{liveEvidenceLabel}</strong>
             </div>
             <div className="transport-shell main-buttons">
               <div className="transport-row">
@@ -2454,63 +2525,6 @@ export const App = (): JSX.Element => {
                   onChange={onRepeatChange}
                 />
               </div>
-              <div className="setting-row">
-                <label>
-                  Decode profile: {activeDecodePreset ? activeDecodePreset.label : '커스텀'}
-                </label>
-                <div className="preset-row">
-                  {DECODE_TIMEOUT_PRESETS.map((preset) => (
-                    <button
-                      key={preset.id}
-                      type="button"
-                      className={`preset-button ${
-                        activeDecodePreset?.id === preset.id ? 'active' : ''
-                      }`}
-                      onClick={() => applyDecodeTimeoutPreset(preset)}
-                    >
-                      {preset.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <details className="nested-details">
-                <summary>Decode tuning</summary>
-                <div className="setting-row">
-                  <label htmlFor="decode-duration-weight">
-                    Track length wait: {settings.decodeTimeoutDurationWeightMs}ms/sec
-                  </label>
-                  <input
-                    id="decode-duration-weight"
-                    type="range"
-                    min={0}
-                    max={80}
-                    step={1}
-                    value={settings.decodeTimeoutDurationWeightMs}
-                    onChange={onDecodeDurationWeightChange}
-                  />
-                </div>
-                <div className="setting-row">
-                  <label htmlFor="decode-size-weight">
-                    File size wait: {settings.decodeTimeoutSizeWeightMs}ms/MB
-                  </label>
-                  <input
-                    id="decode-size-weight"
-                    type="range"
-                    min={0}
-                    max={1200}
-                    step={10}
-                    value={settings.decodeTimeoutSizeWeightMs}
-                    onChange={onDecodeSizeWeightChange}
-                  />
-                </div>
-                <div className="setting-row hint">
-                  <small className="setting-hint">
-                    예상 대기시간: 시작 {formatDecodePreviewSec(previewStartDecodeMs)} ·
-                    사전디코드 {formatDecodePreviewSec(previewPredecodeMs)} · 전환{' '}
-                    {formatDecodePreviewSec(previewTransitionDecodeMs)}
-                  </small>
-                </div>
-              </details>
             </section>
 
             <section className="utility-section">
@@ -2552,10 +2566,6 @@ export const App = (): JSX.Element => {
               </div>
               <div className="setting-row">
                 <label>Agent status: {plannerStatusLabel}</label>
-                <small className="setting-hint">
-                  Active agent is used during playback. Compare runs use the same current/next
-                  transition without changing playback.
-                </small>
               </div>
               <div className="agent-connection-panel">
                 <div>
@@ -2563,7 +2573,7 @@ export const App = (): JSX.Element => {
                   <strong>{activeAgentConnectionLabel}</strong>
                   <small>
                     {activeAgentConnectionResult?.message ??
-                      'Choose an agent and check whether its CLI/auth setup can return a MixPlan.'}
+                      'Not checked'}
                   </small>
                   <small>{formatAgentConnectionCheckedAt(activeAgentConnectionResult)}</small>
                 </div>
@@ -2818,7 +2828,7 @@ export const App = (): JSX.Element => {
                     ) : null}
                   </div>
                 ) : (
-                  <p className="muted">No imported export artifacts.</p>
+                  <p className="muted">None</p>
                 )}
               </div>
               <div className="setting-row">
@@ -2902,7 +2912,7 @@ export const App = (): JSX.Element => {
                     </div>
                   </div>
                 ) : (
-                  <p className="muted">Select an imported artifact and a compare target.</p>
+                  <p className="muted">No selection</p>
                 )}
               </div>
               <div className="setting-row">
@@ -2955,7 +2965,7 @@ export const App = (): JSX.Element => {
                     ) : null}
                   </div>
                 ) : (
-                  <p className="muted">No imported comparison artifacts.</p>
+                  <p className="muted">None</p>
                 )}
               </div>
               <div className="setting-row">
@@ -3016,7 +3026,7 @@ export const App = (): JSX.Element => {
                     </div>
                   </div>
                 ) : (
-                  <p className="muted">No imported comparison artifact selected.</p>
+                  <p className="muted">No selection</p>
                 )}
               </div>
               <div className="setting-row">
@@ -3056,21 +3066,19 @@ export const App = (): JSX.Element => {
                     </div>
                   </div>
                 ) : (
-                  <p className="muted">
-                    Select an imported comparison artifact and keep a live pairwise comparison active.
-                  </p>
+                  <p className="muted">No comparison</p>
                 )}
               </div>
               <div className="setting-row hint">
                 <small className="setting-hint">
                   {importedMixPlanComparison ??
-                    'Imported export artifacts are compare-only in this slice, stay in the current session, and never override playback.'}
+                    'No comparison'}
                 </small>
               </div>
               <div className="setting-row hint">
                 <small className="setting-hint">
                   {plannerDebugCopyNotice ??
-                    'The latest applied or fallback planner event is shown here for debugging.'}
+                    'No planner event'}
                 </small>
               </div>
             </details>

@@ -38,12 +38,17 @@ const resolveRecommendedCandidate = (request) => {
   }
 
   const recommendedId = request?.pairContext?.recommendedCandidateId;
+  const analysisOrCueCandidates = candidates.filter(
+    (candidate) => candidate?.source === 'analysis' || candidate?.source === 'cue'
+  );
+  const rankedCandidates = analysisOrCueCandidates.length > 0 ? analysisOrCueCandidates : candidates;
   return (
-    candidates.find((candidate) => candidate?.id === recommendedId) ??
-    candidates
+    rankedCandidates.find((candidate) => candidate?.id === recommendedId) ??
+    rankedCandidates
       .filter((candidate) => typeof candidate?.score === 'number')
       .sort((left, right) => right.score - left.score)[0] ??
-    candidates[0]
+    rankedCandidates[0] ??
+    null
   );
 };
 
@@ -149,9 +154,11 @@ const buildHeuristicResponse = (request) => {
   ].sort((left, right) => left - right);
   const policy = buildModePolicy(mode, fadeDurationSec);
   const candidate = resolveRecommendedCandidate(request);
+  const readiness = request?.pairContext?.readiness ?? 'fallback_only';
+  const isTailFallbackCandidate = candidate?.source === 'tail_fallback';
 
   const preferredEndSec =
-    candidate && asNumber(candidate.currentMixOutSec) !== null
+    candidate && !isTailFallbackCandidate && asNumber(candidate.currentMixOutSec) !== null
       ? asNumber(candidate.currentMixOutSec)
       : currentOutroCueSec !== null && currentOutroCueSec > elapsedSec + 0.25
         ? currentOutroCueSec
@@ -177,7 +184,7 @@ const buildHeuristicResponse = (request) => {
   }
 
   const inferredNextOffsetSec =
-    candidate && asNumber(candidate.nextMixInSec) !== null
+    candidate && !isTailFallbackCandidate && asNumber(candidate.nextMixInSec) !== null
       ? asNumber(candidate.nextMixInSec)
       : nextIntroCueSec ??
         pickPointAtOrAfter(nextPoints, 0, asNumber(request?.nextTrack?.durationSec) ?? 0) ??
@@ -222,7 +229,9 @@ const buildHeuristicResponse = (request) => {
       confidence,
       reasoningSummary: [
         `Mode ${mode}`,
-        candidate ? `selected candidate ${candidate.id}` : null,
+        candidate && !isTailFallbackCandidate ? `selected ${candidate.source ?? 'unknown'} candidate ${candidate.id}` : null,
+        readiness !== 'ready' ? `readiness ${readiness}` : null,
+        isTailFallbackCandidate ? 'using fallback timing because analysis candidate is unavailable' : null,
         currentOutroCueSec !== null
           ? `aligned to current outro cue near ${currentOutroCueSec.toFixed(2)}s`
           : 'used current track tail',
@@ -236,7 +245,7 @@ const buildHeuristicResponse = (request) => {
         .filter(Boolean)
         .join('; '),
       tempoSync,
-      candidateId: typeof candidate?.id === 'string' ? candidate.id : null,
+      candidateId: candidate && !isTailFallbackCandidate && typeof candidate.id === 'string' ? candidate.id : null,
       currentBarIndex: asNumber(candidate?.currentBarIndex),
       nextBarIndex: asNumber(candidate?.nextBarIndex),
       phraseAlignment:
@@ -255,6 +264,8 @@ const buildHeuristicResponse = (request) => {
           : null,
       evidence: [
         candidate?.reason,
+        candidate?.source ? `candidate source ${candidate.source}` : null,
+        candidate?.evidenceLevel ? `evidence ${candidate.evidenceLevel}` : null,
         typeof candidate?.score === 'number' ? `candidate score ${candidate.score.toFixed(2)}` : null
       ].filter(Boolean)
     }

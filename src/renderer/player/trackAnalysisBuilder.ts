@@ -1,4 +1,5 @@
 import {
+  BarMarker,
   sanitizeTrackAnalysis,
   SpectralBandPoint,
   TrackAnalysis,
@@ -10,8 +11,12 @@ import { AudioBufferForBpm, estimateTrackBpm } from './bpmEstimator';
 
 const WAVEFORM_BUCKETS = 160;
 const WAVEFORM_DETAIL_MAX_BUCKETS = 1200;
-const WAVEFORM_DETAIL_BUCKETS_PER_SEC = 4;
+const WAVEFORM_DETAIL_BUCKETS_PER_SEC = 12;
 const ENERGY_BUCKETS = 64;
+const MIN_VALID_BPM = 60;
+const MAX_VALID_BPM = 200;
+const DERIVED_BPM_CONFIDENCE_PRIORITY = 0.58;
+const BPM_MISMATCH_DELTA = 3;
 
 const clamp = (value: number, min: number, max: number): number => {
   return Math.min(max, Math.max(min, value));
@@ -191,6 +196,253 @@ const buildTransientMarkers = (
   return markers.slice(0, 256);
 };
 
+const normalizeBpm = (candidate: number | null | undefined): number | null => {
+  if (
+    typeof candidate !== 'number' ||
+    !Number.isFinite(candidate) ||
+    candidate < MIN_VALID_BPM ||
+    candidate > MAX_VALID_BPM
+  ) {
+    return null;
+  }
+  return candidate;
+};
+
+const resolveAnalysisBpm = (
+  track: Track,
+  estimate: ReturnType<typeof estimateTrackBpm>
+): { bpm: number | null; source: 'metadata' | 'derived'; metadataMismatch: boolean } => {
+  const metadataBpm = normalizeBpm(track.bpm);
+  const derivedBpm = normalizeBpm(estimate.bpm);
+  const metadataMismatch =
+    metadataBpm !== null && derivedBpm !== null && Math.abs(metadataBpm - derivedBpm) > BPM_MISMATCH_DELTA;
+
+  if (
+    derivedBpm !== null &&
+    (metadataBpm === null ||
+      (estimate.confidence >= DERIVED_BPM_CONFIDENCE_PRIORITY && metadataMismatch))
+  ) {
+    return {
+      bpm: derivedBpm,
+      source: 'derived',
+      metadataMismatch
+    };
+  }
+
+  if (metadataBpm !== null) {
+    return {
+      bpm: metadataBpm,
+      source: 'metadata',
+      metadataMismatch
+    };
+  }
+
+  return {
+    bpm: derivedBpm,
+    source: 'derived',
+    metadataMismatch
+  };
+};
+
+const findNearestBeatTime = (timeSec: number, beatOffsetSec: number, beatIntervalSec: number): number => {
+  const beatIndex = Math.round((timeSec - beatOffsetSec) / beatIntervalSec);
+  return beatOffsetSec + beatIndex * beatIntervalSec;
+};
+
+const scoreBeatPhase = (
+  phaseOffsetSec: number,
+  beatIntervalSec: number,
+  transientMarkers: TransientMarker[]
+): number => {
+  if (transientMarkers.length === 0) {
+    return 0;
+  }
+
+  const windowSec = Math.min(0.14, beatIntervalSec * 0.3);
+  let score = 0;
+  let weight = 0;
+  for (const marker of transientMarkers.slice(0, 160)) {
+    const nearest = findNearestBeatTime(marker.timeSec, phaseOffsetSec, beatIntervalSec);
+    const distance = Math.abs(nearest - marker.timeSec);
+    weight += marker.strength;
+    if (distance <= windowSec) {
+      score += marker.strength * (1 - distance / windowSec);
+    }
+  }
+
+  return weight > 0 ? score / weight : 0;
+};
+
+const resolveBeatPhaseOffset = (
+  beatIntervalSec: number,
+  transientMarkers: TransientMarker[]
+): { offsetSec: number; confidence: number } => {
+  if (beatIntervalSec <= 0) {
+    return { offsetSec: 0, confidence: 0 };
+  }
+
+  const candidates = new Set<number>([0]);
+  for (const marker of transientMarkers.filter((item) => item.strength >= 0.45).slice(0, 80)) {
+    const modulo = marker.timeSec % beatIntervalSec;
+    candidates.add(modulo);
+  }
+
+  let bestOffsetSec = 0;
+  let bestScore = scoreBeatPhase(0, beatIntervalSec, transientMarkers);
+  for (const candidate of candidates) {
+    const score = scoreBeatPhase(candidate, beatIntervalSec, transientMarkers);
+    if (score > bestScore) {
+      bestScore = score;
+      bestOffsetSec = candidate;
+    }
+  }
+
+  return {
+    offsetSec: bestOffsetSec,
+    confidence: clamp(bestScore, 0, 1)
+  };
+};
+
+const buildBeatGrid = (
+  durationSec: number,
+  beatIntervalSec: number,
+  beatOffsetSec: number
+): number[] => {
+  const beatGrid: number[] = [];
+  let current = beatOffsetSec;
+  while (current > 0) {
+    current -= beatIntervalSec;
+  }
+  while (current < 0) {
+    current += beatIntervalSec;
+  }
+
+  for (let timeSec = current; timeSec <= durationSec + 0.001; timeSec += beatIntervalSec) {
+    beatGrid.push(Number(timeSec.toFixed(4)));
+    if (beatGrid.length >= 2200) {
+      break;
+    }
+  }
+
+  return beatGrid;
+};
+
+const scoreDownbeatPhase = (
+  beatGridSec: number[],
+  phase: number,
+  transientMarkers: TransientMarker[],
+  energyProfile: number[],
+  durationSec: number
+): number => {
+  const bars = beatGridSec.filter((_beat, index) => index % 4 === phase);
+  if (bars.length === 0) {
+    return 0;
+  }
+
+  const windowSec = 0.16;
+  let score = 0;
+  for (const barStartSec of bars.slice(0, 96)) {
+    const transientScore = transientMarkers.reduce((sum, marker) => {
+      const distance = Math.abs(marker.timeSec - barStartSec);
+      return distance <= windowSec
+        ? sum + marker.strength * (1 - distance / windowSec)
+        : sum;
+    }, 0);
+    const energyIndex = durationSec > 0
+      ? Math.min(
+          energyProfile.length - 1,
+          Math.max(0, Math.floor((barStartSec / durationSec) * energyProfile.length))
+        )
+      : 0;
+    const energyScore = energyProfile[energyIndex] ?? 0;
+    score += transientScore + energyScore * 0.12;
+  }
+
+  return score / Math.max(1, bars.length);
+};
+
+const buildDownbeatGrid = (
+  beatGridSec: number[],
+  transientMarkers: TransientMarker[],
+  energyProfile: number[],
+  durationSec: number
+): { downbeatsSec: number[]; barGrid: BarMarker[]; confidence: number } => {
+  if (beatGridSec.length === 0) {
+    return {
+      downbeatsSec: [],
+      barGrid: [],
+      confidence: 0
+    };
+  }
+
+  let bestPhase = 0;
+  let bestScore = scoreDownbeatPhase(beatGridSec, 0, transientMarkers, energyProfile, durationSec);
+  for (let phase = 1; phase < 4; phase += 1) {
+    const score = scoreDownbeatPhase(beatGridSec, phase, transientMarkers, energyProfile, durationSec);
+    if (score > bestScore) {
+      bestScore = score;
+      bestPhase = phase;
+    }
+  }
+
+  const downbeatsSec = beatGridSec.filter((_beat, index) => index % 4 === bestPhase);
+  const barGrid = downbeatsSec.map((startSec, index) => ({
+    index,
+    startSec,
+    beatIndex: bestPhase + index * 4
+  }));
+
+  return {
+    downbeatsSec,
+    barGrid,
+    confidence: clamp(bestScore, 0, 1)
+  };
+};
+
+const findNearestBar = (barGrid: BarMarker[], timeSec: number): BarMarker | null => {
+  if (barGrid.length === 0) {
+    return null;
+  }
+
+  let best = barGrid[0];
+  let distance = Math.abs(best.startSec - timeSec);
+  for (const marker of barGrid) {
+    const nextDistance = Math.abs(marker.startSec - timeSec);
+    if (nextDistance < distance) {
+      best = marker;
+      distance = nextDistance;
+    }
+  }
+  return best;
+};
+
+const snapToBar = (
+  barGrid: BarMarker[],
+  timeSec: number,
+  direction: 'nearest' | 'before' | 'after',
+  maxDistanceSec = 8
+): number => {
+  if (barGrid.length === 0) {
+    return timeSec;
+  }
+
+  const candidates = barGrid.filter((marker) => {
+    if (direction === 'before') {
+      return marker.startSec <= timeSec;
+    }
+    if (direction === 'after') {
+      return marker.startSec >= timeSec;
+    }
+    return true;
+  });
+  const marker = findNearestBar(candidates.length > 0 ? candidates : barGrid, timeSec);
+  if (!marker || Math.abs(marker.startSec - timeSec) > maxDistanceSec) {
+    return timeSec;
+  }
+
+  return marker.startSec;
+};
+
 const findEnergyTime = (
   energyProfile: number[],
   durationSec: number,
@@ -220,7 +472,8 @@ export const buildTrackAnalysisFromAudioBuffer = (
   buffer: AudioBufferForBpm
 ): TrackAnalysis => {
   const bpmEstimate = estimateTrackBpm(buffer);
-  const bpm = track.bpm ?? bpmEstimate.bpm;
+  const resolvedBpm = resolveAnalysisBpm(track, bpmEstimate);
+  const bpm = resolvedBpm.bpm;
   const durationSec = Math.max(0, buffer.duration || track.durationSec);
   const energyProfile = buildEnergyProfile(buffer);
   const waveformPeaks = buildWaveformPeaks(buffer);
@@ -228,41 +481,67 @@ export const buildTrackAnalysisFromAudioBuffer = (
   const spectralBands = buildSpectralBands(buffer);
   const transientMarkers = buildTransientMarkers(waveformDetail, durationSec);
   const beatIntervalSec = bpm && bpm > 0 ? 60 / bpm : null;
+  const beatPhase =
+    beatIntervalSec !== null
+      ? resolveBeatPhaseOffset(beatIntervalSec, transientMarkers)
+      : { offsetSec: 0, confidence: 0 };
   const beatGridSec =
     beatIntervalSec !== null
-      ? Array.from(
-          { length: Math.min(2200, Math.floor(durationSec / beatIntervalSec) + 1) },
-          (_, index) => index * beatIntervalSec
-        )
+      ? buildBeatGrid(durationSec, beatIntervalSec, beatPhase.offsetSec)
       : [];
-  const downbeatsSec = beatGridSec.filter((_value, index) => index % 4 === 0);
-  const barGrid = downbeatsSec.map((startSec, index) => ({
-    index,
-    startSec,
-    beatIndex: index * 4
-  }));
+  const downbeatGrid = buildDownbeatGrid(beatGridSec, transientMarkers, energyProfile, durationSec);
+  const downbeatsSec = downbeatGrid.downbeatsSec;
+  const barGrid = downbeatGrid.barGrid;
   const phraseMarkers = barGrid
     .filter((_bar, index) => index % 8 === 0)
     .map((bar, index) => ({
       index,
       startSec: bar.startSec,
       bars: 8,
-      confidence: bpmEstimate.confidence || (track.bpm ? 0.7 : 0.25)
+      confidence: clamp(
+        (bpmEstimate.confidence || (track.bpm ? 0.7 : 0.25)) * 0.72 +
+          downbeatGrid.confidence * 0.28,
+        0,
+        1
+      )
     }));
-  const introCueSec = downbeatsSec[0] ?? 0;
-  const firstDownbeatSec = downbeatsSec[1] ?? introCueSec;
-  const outroCueSec = Math.max(
+  const introCueSec = snapToBar(barGrid, downbeatsSec[0] ?? 0, 'nearest', beatIntervalSec ?? 4);
+  const firstDownbeatSec = snapToBar(
+    barGrid,
+    downbeatsSec.find((timeSec) => timeSec > 0.2) ?? introCueSec,
+    'nearest',
+    beatIntervalSec ?? 4
+  );
+  const rawOutroCueSec = Math.max(
     0,
     findEnergyTime(energyProfile, durationSec, 'min', 0.72, 0.95) ??
       durationSec - Math.min(16, durationSec * 0.12)
   );
-  const lowEnergyBreakSec = findEnergyTime(energyProfile, durationSec, 'min', 0.35, 0.8);
-  const highEnergyDropSec = findEnergyTime(energyProfile, durationSec, 'max', 0.05, 0.55);
-  const bpmConfidence = bpmEstimate.bpm ? bpmEstimate.confidence : track.bpm ? 0.72 : 0;
+  const outroCueSec = snapToBar(barGrid, rawOutroCueSec, 'before');
+  const lowEnergyBreakSecRaw = findEnergyTime(energyProfile, durationSec, 'min', 0.35, 0.8);
+  const lowEnergyBreakSec =
+    lowEnergyBreakSecRaw !== null
+      ? snapToBar(barGrid, lowEnergyBreakSecRaw, 'nearest')
+      : null;
+  const highEnergyDropSecRaw = findEnergyTime(energyProfile, durationSec, 'max', 0.05, 0.55);
+  const highEnergyDropSec =
+    highEnergyDropSecRaw !== null
+      ? snapToBar(barGrid, highEnergyDropSecRaw, 'nearest')
+      : null;
+  const bpmConfidence =
+    resolvedBpm.source === 'derived'
+      ? bpmEstimate.confidence
+      : track.bpm
+        ? Math.max(0.62, Math.min(0.76, bpmEstimate.confidence || 0.72))
+        : 0;
+  const beatGridQuality =
+    beatGridSec.length > 0
+      ? clamp(bpmConfidence * 0.68 + beatPhase.confidence * 0.18 + downbeatGrid.confidence * 0.14, 0, 1)
+      : 0;
   const analysisConfidence = clamp(
     0.25 +
       (bpm ? 0.25 : 0) +
-      (beatGridSec.length > 0 ? 0.2 : 0) +
+      (beatGridSec.length > 0 ? beatGridQuality * 0.2 : 0) +
       (energyProfile.length > 8 ? 0.15 : 0) +
       (waveformPeaks.length > 8 ? 0.1 : 0) +
       (waveformDetail.length > WAVEFORM_BUCKETS ? 0.05 : 0),
@@ -273,12 +552,12 @@ export const buildTrackAnalysisFromAudioBuffer = (
     waveformDetail: clamp(waveformDetail.length / WAVEFORM_DETAIL_MAX_BUCKETS, 0, 1),
     spectralBands: clamp(spectralBands.length / WAVEFORM_DETAIL_MAX_BUCKETS, 0, 1),
     transientMarkers: clamp(transientMarkers.length / Math.max(16, durationSec / 2), 0, 1),
-    beatGrid: beatGridSec.length > 0 ? bpmConfidence : 0
+    beatGrid: beatGridQuality
   };
 
   return sanitizeTrackAnalysis(track.id, {
     generatedAt: new Date().toISOString(),
-    source: bpmEstimate.bpm ? 'derived' : track.bpm ? 'metadata' : 'derived',
+    source: resolvedBpm.source,
     bpm,
     bpmConfidence,
     beatGridSec,
@@ -298,7 +577,7 @@ export const buildTrackAnalysisFromAudioBuffer = (
         type: 'intro',
         startSec: introCueSec,
         endSec: Math.min(durationSec, introCueSec + 8),
-        confidence: 0.7,
+        confidence: clamp(0.58 + beatGridQuality * 0.24, 0, 0.86),
         label: 'Intro'
       },
       {
@@ -306,7 +585,7 @@ export const buildTrackAnalysisFromAudioBuffer = (
         type: 'first_downbeat',
         startSec: firstDownbeatSec,
         endSec: Math.min(durationSec, firstDownbeatSec + 4),
-        confidence: bpm ? 0.68 : 0.25,
+        confidence: bpm ? clamp(0.5 + beatGridQuality * 0.34, 0, 0.88) : 0.25,
         label: 'First downbeat'
       },
       {
@@ -314,7 +593,7 @@ export const buildTrackAnalysisFromAudioBuffer = (
         type: 'outro',
         startSec: outroCueSec,
         endSec: durationSec,
-        confidence: 0.64,
+        confidence: clamp(0.46 + beatGridQuality * 0.2 + (rawOutroCueSec !== outroCueSec ? 0.08 : 0), 0, 0.82),
         label: 'Outro mix-out'
       },
       ...(lowEnergyBreakSec !== null
@@ -324,7 +603,7 @@ export const buildTrackAnalysisFromAudioBuffer = (
               type: 'low_energy_break' as const,
               startSec: lowEnergyBreakSec,
               endSec: Math.min(durationSec, lowEnergyBreakSec + 8),
-              confidence: 0.52,
+              confidence: clamp(0.44 + beatGridQuality * 0.18, 0, 0.72),
               label: 'Low-energy break'
             }
           ]
@@ -336,7 +615,7 @@ export const buildTrackAnalysisFromAudioBuffer = (
               type: 'high_energy_drop' as const,
               startSec: highEnergyDropSec,
               endSec: Math.min(durationSec, highEnergyDropSec + 8),
-              confidence: 0.5,
+              confidence: clamp(0.42 + beatGridQuality * 0.16, 0, 0.7),
               label: 'High-energy drop'
             }
           ]
@@ -349,6 +628,7 @@ export const buildTrackAnalysisFromAudioBuffer = (
       ...(bpmEstimate.bpm && bpmEstimate.confidence < 0.45
         ? ['bpm_low_confidence' as const]
         : []),
+      ...(resolvedBpm.metadataMismatch ? ['bpm_metadata_mismatch' as const] : []),
       ...(bpm ? ['beat_grid_estimated' as const] : []),
       ...(durationSec < 30 ? ['short_track' as const] : []),
       ...(Math.max(...energyProfile, 0) < 0.05 ? ['flat_energy' as const] : [])

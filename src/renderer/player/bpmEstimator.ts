@@ -4,6 +4,8 @@ const MAX_ANALYSIS_SEC = 90;
 const MIN_CONFIDENCE = 0.3;
 const FRAME_SIZE = 1024;
 const HOP_SIZE = 512;
+const MIN_WINDOW_SEC = 8;
+const BPM_CLUSTER_TOLERANCE = 3;
 
 export interface AudioBufferForBpm {
   duration: number;
@@ -146,6 +148,19 @@ interface CorrelationPeak {
   score: number;
 }
 
+interface AnalysisWindow {
+  startSec: number;
+  endSec: number;
+  weight: number;
+}
+
+interface WindowEstimate {
+  bpm: number;
+  confidence: number;
+  analyzedSeconds: number;
+  weight: number;
+}
+
 const findCorrelationPeak = (
   normalizedEnvelope: Float32Array,
   featureRate: number
@@ -186,6 +201,140 @@ const findCorrelationPeak = (
   };
 };
 
+const buildDefaultAnalysisWindow = (durationSec: number): AnalysisWindow => {
+  const analysisSec = Math.min(MAX_ANALYSIS_SEC, Math.max(MIN_WINDOW_SEC, durationSec * 0.6));
+  const initialStartSec = Math.min(Math.max(2, durationSec * 0.1), 20);
+  const startSec = Math.max(0, Math.min(initialStartSec, durationSec - analysisSec));
+  const endSec = Math.min(durationSec, startSec + analysisSec);
+  return {
+    startSec,
+    endSec,
+    weight: 1.25
+  };
+};
+
+const buildAnalysisWindows = (durationSec: number): AnalysisWindow[] => {
+  const windows: AnalysisWindow[] = [buildDefaultAnalysisWindow(durationSec)];
+  const introEnd = Math.min(durationSec, Math.max(MIN_WINDOW_SEC, Math.min(45, durationSec * 0.32)));
+  const bodyStart = Math.min(durationSec, Math.max(0, durationSec * 0.32));
+  const bodyEnd = Math.min(durationSec, bodyStart + Math.min(60, Math.max(MIN_WINDOW_SEC, durationSec * 0.4)));
+  const outroStart = Math.max(0, durationSec - Math.min(60, Math.max(MIN_WINDOW_SEC, durationSec * 0.32)));
+
+  windows.push(
+    { startSec: 0, endSec: introEnd, weight: 0.9 },
+    { startSec: bodyStart, endSec: bodyEnd, weight: 1 },
+    { startSec: outroStart, endSec: durationSec, weight: 0.75 }
+  );
+
+  const deduped: AnalysisWindow[] = [];
+  for (const window of windows) {
+    if (window.endSec - window.startSec < MIN_WINDOW_SEC) {
+      continue;
+    }
+    if (
+      deduped.some(
+        (existing) =>
+          Math.abs(existing.startSec - window.startSec) < 0.5 &&
+          Math.abs(existing.endSec - window.endSec) < 0.5
+      )
+    ) {
+      continue;
+    }
+    deduped.push(window);
+  }
+
+  return deduped;
+};
+
+const estimateWindowBpm = (
+  buffer: AudioBufferForBpm,
+  window: AnalysisWindow
+): WindowEstimate | null => {
+  const startSample = Math.floor(window.startSec * buffer.sampleRate);
+  const endSample = Math.floor(window.endSec * buffer.sampleRate);
+  const analyzedSeconds = Math.max(0, window.endSec - window.startSec);
+  const envelope = buildEnvelope(buffer, startSample, endSample);
+  if (envelope.length < 32) {
+    return null;
+  }
+
+  const normalized = normalizeEnvelope(smoothEnvelope(envelope));
+  if (!normalized) {
+    return null;
+  }
+
+  const featureRate = buffer.sampleRate / HOP_SIZE;
+  const peak = findCorrelationPeak(normalized, featureRate);
+  const confidence = clamp(peak.score, 0, 1);
+  if (confidence < MIN_CONFIDENCE) {
+    return null;
+  }
+
+  return {
+    bpm: normalizeBpmRange((60 * featureRate) / peak.lag),
+    confidence,
+    analyzedSeconds,
+    weight: window.weight
+  };
+};
+
+const areBpmCandidatesCompatible = (left: number, right: number): boolean => {
+  return Math.abs(left - right) <= BPM_CLUSTER_TOLERANCE;
+};
+
+const chooseClusteredEstimate = (estimates: WindowEstimate[]): BpmEstimate | null => {
+  if (estimates.length === 0) {
+    return null;
+  }
+
+  const clusters = estimates.map((estimate) => {
+    const members = estimates.filter((candidate) =>
+      areBpmCandidatesCompatible(candidate.bpm, estimate.bpm)
+    );
+    const totalWeight = members.reduce(
+      (sum, member) => sum + member.confidence * member.weight,
+      0
+    );
+    const bpm =
+      members.reduce(
+        (sum, member) => sum + member.bpm * member.confidence * member.weight,
+        0
+      ) / Math.max(1e-6, totalWeight);
+    return {
+      members,
+      bpm,
+      totalWeight
+    };
+  });
+
+  const selected = clusters.sort((left, right) => right.totalWeight - left.totalWeight)[0];
+  if (!selected) {
+    return null;
+  }
+
+  const confidenceWeight = selected.members.reduce(
+    (sum, member) => sum + member.confidence * member.weight,
+    0
+  );
+  const plainWeight = selected.members.reduce((sum, member) => sum + member.weight, 0);
+  const averageConfidence = confidenceWeight / Math.max(1e-6, plainWeight);
+  const support = selected.members.length / Math.max(1, Math.min(3, estimates.length));
+  const confidence = clamp(averageConfidence * 0.78 + support * 0.22, 0, 1);
+
+  if (confidence < MIN_CONFIDENCE) {
+    return null;
+  }
+
+  return {
+    bpm: selected.bpm,
+    confidence,
+    analyzedSeconds: selected.members.reduce(
+      (sum, member) => sum + member.analyzedSeconds,
+      0
+    )
+  };
+};
+
 export const estimateTrackBpm = (buffer: AudioBufferForBpm | unknown): BpmEstimate => {
   if (!hasAudioBufferShape(buffer)) {
     return {
@@ -205,51 +354,33 @@ export const estimateTrackBpm = (buffer: AudioBufferForBpm | unknown): BpmEstima
     };
   }
 
-  const analysisSec = Math.min(MAX_ANALYSIS_SEC, Math.max(8, buffer.duration * 0.6));
-  const initialStartSec = Math.min(Math.max(2, buffer.duration * 0.1), 20);
-  const startSec = Math.max(0, Math.min(initialStartSec, buffer.duration - analysisSec));
-  const endSec = Math.min(buffer.duration, startSec + analysisSec);
-  const analyzedSeconds = Math.max(0, endSec - startSec);
-
-  const startSample = Math.floor(startSec * buffer.sampleRate);
-  const endSample = Math.floor(endSec * buffer.sampleRate);
-
-  const envelope = buildEnvelope(buffer, startSample, endSample);
-  if (envelope.length < 32) {
+  const windows = buildAnalysisWindows(buffer.duration);
+  if (windows.length === 0) {
     return {
       bpm: null,
       confidence: 0,
-      analyzedSeconds,
+      analyzedSeconds: 0,
       reason: 'short_analysis'
     };
   }
 
-  const normalized = normalizeEnvelope(smoothEnvelope(envelope));
-  if (!normalized) {
+  const estimates = windows
+    .map((window) => estimateWindowBpm(buffer, window))
+    .filter((estimate): estimate is WindowEstimate => estimate !== null);
+  const clustered = chooseClusteredEstimate(estimates);
+  if (!clustered) {
     return {
       bpm: null,
-      confidence: 0,
-      analyzedSeconds,
-      reason: 'flat_signal'
+      confidence: estimates.length > 0
+        ? Math.max(...estimates.map((estimate) => estimate.confidence))
+        : 0,
+      analyzedSeconds: windows.reduce(
+        (sum, window) => sum + Math.max(0, window.endSec - window.startSec),
+        0
+      ),
+      reason: estimates.length > 0 ? 'low_confidence' : 'flat_signal'
     };
   }
 
-  const featureRate = buffer.sampleRate / HOP_SIZE;
-  const peak = findCorrelationPeak(normalized, featureRate);
-  const confidence = clamp(peak.score, 0, 1);
-  if (confidence < MIN_CONFIDENCE) {
-    return {
-      bpm: null,
-      confidence,
-      analyzedSeconds,
-      reason: 'low_confidence'
-    };
-  }
-
-  const bpm = normalizeBpmRange((60 * featureRate) / peak.lag);
-  return {
-    bpm,
-    confidence,
-    analyzedSeconds
-  };
+  return clustered;
 };

@@ -2,8 +2,19 @@ import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
 
-const { buildPrompt } = require('../../scripts/codex-mix-planner.cjs') as {
+const { buildPrompt, plannerSchema } = require('../../scripts/codex-mix-planner.cjs') as {
   buildPrompt: (request: Record<string, unknown>) => string;
+  plannerSchema: {
+    properties: {
+      mixPlan: {
+        anyOf: Array<{
+          type: string;
+          properties?: Record<string, unknown>;
+          required?: string[];
+        }>;
+      };
+    };
+  };
 };
 
 const { buildHeuristicResponse } = require('../../scripts/heuristic-mix-planner.cjs') as {
@@ -21,6 +32,7 @@ const { buildHeuristicResponse } = require('../../scripts/heuristic-mix-planner.
         enabled: boolean;
         targetRate: number | null;
       };
+      candidateId?: string | null;
     };
   };
 };
@@ -67,6 +79,32 @@ describe('planner scripts', () => {
     expect(prompt).toContain('Prefer aligning transition timing to outro cues, downbeats, or beat-grid points');
     expect(prompt).toContain('Prefer starting the next track from intro cue');
     expect(prompt).toContain('Analysis hints:');
+    expect(prompt).toContain('Treat source=tail_fallback candidates as safety fallbacks');
+    expect(prompt).toContain('tempoSync.targetRate is a playback-rate ratio');
+  });
+
+  it('keeps the codex output schema strict-compatible for nullable mix plan fields', () => {
+    const mixPlanObjectSchema = plannerSchema.properties.mixPlan.anyOf.find(
+      (entry) => entry.type === 'object'
+    );
+
+    expect(mixPlanObjectSchema).toBeDefined();
+    expect(mixPlanObjectSchema?.required?.sort()).toEqual(
+      Object.keys(mixPlanObjectSchema?.properties ?? {}).sort()
+    );
+    const tempoSyncSchema = mixPlanObjectSchema?.properties?.tempoSync as
+      | {
+          properties?: {
+            targetRate?: {
+              anyOf?: Array<{ type: string; minimum?: number; maximum?: number }>;
+            };
+          };
+        }
+      | undefined;
+    const targetRateNumberSchema = tempoSyncSchema?.properties?.targetRate?.anyOf?.find(
+      (entry) => entry.type === 'number'
+    );
+    expect(targetRateNumberSchema).toMatchObject({ minimum: 0.85, maximum: 1.15 });
   });
 
   it('includes distinct mode guidance in the codex prompt', () => {
@@ -151,5 +189,31 @@ describe('planner scripts', () => {
     expect(adventurous.mixPlan.style).toBe('energy_swap');
     expect(safe.mixPlan.transitionStartSec).toBeLessThan(balanced.mixPlan.transitionStartSec);
     expect(balanced.mixPlan.transitionStartSec).toBeLessThan(adventurous.mixPlan.transitionStartSec);
+  });
+
+  it('does not promote tail fallback candidates as selected AI candidates', () => {
+    const response = buildHeuristicResponse({
+      ...baseRequest,
+      pairContext: {
+        readiness: 'analysis_pending',
+        recommendedCandidateId: null,
+        candidates: [
+          {
+            id: 'tail:current-track:20200->next-track:0',
+            source: 'tail_fallback',
+            evidenceLevel: 'fallback',
+            requiresAnalysisUpgrade: true,
+            currentMixOutSec: 202,
+            nextMixInSec: 0,
+            score: 0.38,
+            style: 'smooth_blend',
+            reason: 'tail fallback only'
+          }
+        ]
+      }
+    });
+
+    expect(response.mixPlan.candidateId).toBeNull();
+    expect(response.mixPlan.reasoningSummary).toContain('readiness analysis_pending');
   });
 });
