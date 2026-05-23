@@ -47,6 +47,11 @@ export interface AnalysisQuality {
   beatGrid: number;
 }
 
+export interface TrackFileRevision {
+  sizeBytes: number;
+  mtimeMs: number;
+}
+
 export interface BarMarker {
   index: number;
   startSec: number;
@@ -74,6 +79,7 @@ export interface TrackAnalysis {
   trackId: string;
   generatedAt: string;
   source: TrackAnalysisSource;
+  fileRevision: TrackFileRevision | null;
   bpm: number | null;
   bpmConfidence: number;
   beatGridSec: number[];
@@ -92,6 +98,10 @@ export interface TrackAnalysis {
   analysisQuality: AnalysisQuality;
   analysisWarnings: AnalysisWarning[];
 }
+
+export const PLANNER_READY_MIN_WAVEFORM_DETAIL_QUALITY = 0.2;
+export const PLANNER_READY_MIN_BEAT_GRID_QUALITY = 0.35;
+export const PLANNER_READY_MIN_BPM_CONFIDENCE = 0.45;
 
 const isFiniteNumber = (value: unknown): value is number => {
   return typeof value === 'number' && Number.isFinite(value);
@@ -277,6 +287,20 @@ const asAnalysisQuality = (value: unknown): AnalysisQuality => {
   };
 };
 
+const asTrackFileRevision = (value: unknown): TrackFileRevision | null => {
+  if (!isRecord(value)) {
+    return null;
+  }
+  if (!isFiniteNumber(value.sizeBytes) || !isFiniteNumber(value.mtimeMs)) {
+    return null;
+  }
+
+  return {
+    sizeBytes: Math.max(0, value.sizeBytes),
+    mtimeMs: Math.max(0, value.mtimeMs)
+  };
+};
+
 export const sanitizeTrackAnalysis = (
   trackId: string,
   candidate?: Partial<TrackAnalysis> | null
@@ -291,8 +315,13 @@ export const sanitizeTrackAnalysis = (
     ? Math.floor(candidate.schemaVersion)
     : 1;
   const analysisWarnings = asAnalysisWarnings(candidate?.analysisWarnings);
+  const quality = asAnalysisQuality(candidate?.analysisQuality);
+  const hasPlannerReadyDetail =
+    waveformDetail.length > 0 &&
+    quality.waveformDetail >= PLANNER_READY_MIN_WAVEFORM_DETAIL_QUALITY &&
+    quality.beatGrid >= PLANNER_READY_MIN_BEAT_GRID_QUALITY;
   const upgradeWarnings =
-    sourceSchemaVersion < TRACK_ANALYSIS_SCHEMA_VERSION && waveformDetail.length === 0
+    (sourceSchemaVersion < TRACK_ANALYSIS_SCHEMA_VERSION || !hasPlannerReadyDetail)
       ? Array.from(new Set([...analysisWarnings, 'analysis_upgrade_available' as const]))
       : analysisWarnings;
 
@@ -309,6 +338,7 @@ export const sanitizeTrackAnalysis = (
       candidate?.source === 'external'
         ? candidate.source
         : 'derived',
+    fileRevision: asTrackFileRevision(candidate?.fileRevision),
     bpm: isFiniteNumber(candidate?.bpm) ? candidate.bpm : null,
     bpmConfidence: isFiniteNumber(candidate?.bpmConfidence)
       ? clamp(candidate.bpmConfidence, 0, 1)
@@ -326,7 +356,24 @@ export const sanitizeTrackAnalysis = (
     transientMarkers,
     cueCandidates: asCueCandidates(candidate?.cueCandidates),
     analysisConfidence: clamp(confidence, 0, 1),
-    analysisQuality: asAnalysisQuality(candidate?.analysisQuality),
+    analysisQuality: quality,
     analysisWarnings: upgradeWarnings
   };
+};
+
+export const hasPlannerReadyTrackAnalysis = (analysis: TrackAnalysis | null | undefined): boolean => {
+  if (!analysis) {
+    return false;
+  }
+
+  return (
+    analysis.waveformDetail.length > 0 &&
+    analysis.energyProfile.length > 0 &&
+    analysis.barGrid.length > 0 &&
+    analysis.analysisQuality.waveformDetail >= PLANNER_READY_MIN_WAVEFORM_DETAIL_QUALITY &&
+    analysis.analysisQuality.beatGrid >= PLANNER_READY_MIN_BEAT_GRID_QUALITY &&
+    analysis.bpmConfidence >= PLANNER_READY_MIN_BPM_CONFIDENCE &&
+    !analysis.analysisWarnings.includes('analysis_upgrade_available') &&
+    !analysis.analysisWarnings.includes('bpm_low_confidence')
+  );
 };

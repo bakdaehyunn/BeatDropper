@@ -18,6 +18,45 @@ test('renders BeatDropper shell', async ({ page }) => {
       getTracks: async () => [],
       setTrackOrder: async () => [],
       clearTracks: async () => undefined,
+      getLibraryTracks: async () => [],
+      importLibraryFolder: async () => ({
+        tracks: [],
+        added: 0,
+        updated: 0,
+        restored: 0,
+        missing: 0,
+        skipped: [],
+        canceled: true,
+        sourcePath: null
+      }),
+      rescanLibraryFolder: async () => ({
+        tracks: [],
+        added: 0,
+        updated: 0,
+        restored: 0,
+        missing: 0,
+        skipped: [],
+        canceled: false,
+        sourcePath: null
+      }),
+      addLibraryTracksToPlaylist: async (_trackIds: string[], mode: 'replace' | 'append') => ({
+        tracks: [],
+        skipped: [],
+        canceled: false,
+        mode
+      }),
+      getUserPlaylists: async () => [],
+      createUserPlaylist: async () => ({ playlists: [], playlist: null }),
+      renameUserPlaylist: async () => ({ playlists: [], playlist: null }),
+      deleteUserPlaylist: async () => ({ playlists: [], playlist: null }),
+      setUserPlaylistTracks: async () => ({ playlists: [], playlist: null }),
+      addLibraryTracksToUserPlaylist: async () => ({ playlists: [], playlist: null }),
+      loadUserPlaylist: async () => ({
+        tracks: [],
+        skipped: [],
+        canceled: false,
+        mode: 'replace'
+      }),
       readTrackBufferById: async () => new ArrayBuffer(0),
       getTrackAnalysis: async () => null,
       saveTrackAnalysis: async (_trackId: string, analysis: unknown) => analysis,
@@ -163,6 +202,45 @@ test('keeps playlist and mix inspector visible without internal scrollbars', asy
       getTracks: async () => tracks,
       setTrackOrder: async () => [],
       clearTracks: async () => undefined,
+      getLibraryTracks: async () => [],
+      importLibraryFolder: async () => ({
+        tracks: [],
+        added: 0,
+        updated: 0,
+        restored: 0,
+        missing: 0,
+        skipped: [],
+        canceled: true,
+        sourcePath: null
+      }),
+      rescanLibraryFolder: async () => ({
+        tracks: [],
+        added: 0,
+        updated: 0,
+        restored: 0,
+        missing: 0,
+        skipped: [],
+        canceled: false,
+        sourcePath: null
+      }),
+      addLibraryTracksToPlaylist: async (_trackIds: string[], mode: 'replace' | 'append') => ({
+        tracks: [],
+        skipped: [],
+        canceled: false,
+        mode
+      }),
+      getUserPlaylists: async () => [],
+      createUserPlaylist: async () => ({ playlists: [], playlist: null }),
+      renameUserPlaylist: async () => ({ playlists: [], playlist: null }),
+      deleteUserPlaylist: async () => ({ playlists: [], playlist: null }),
+      setUserPlaylistTracks: async () => ({ playlists: [], playlist: null }),
+      addLibraryTracksToUserPlaylist: async () => ({ playlists: [], playlist: null }),
+      loadUserPlaylist: async () => ({
+        tracks: [],
+        skipped: [],
+        canceled: false,
+        mode: 'replace'
+      }),
       readTrackBufferById: async () => new ArrayBuffer(0),
       getTrackAnalysis: async (trackId: string) => analyses[trackId],
       saveTrackAnalysis: async (_trackId: string, analysis: unknown) => analysis,
@@ -319,6 +397,45 @@ test('contains long playlist scrolling inside the playlist table', async ({ page
       getTracks: async () => tracks,
       setTrackOrder: async () => [],
       clearTracks: async () => undefined,
+      getLibraryTracks: async () => [],
+      importLibraryFolder: async () => ({
+        tracks: [],
+        added: 0,
+        updated: 0,
+        restored: 0,
+        missing: 0,
+        skipped: [],
+        canceled: true,
+        sourcePath: null
+      }),
+      rescanLibraryFolder: async () => ({
+        tracks: [],
+        added: 0,
+        updated: 0,
+        restored: 0,
+        missing: 0,
+        skipped: [],
+        canceled: false,
+        sourcePath: null
+      }),
+      addLibraryTracksToPlaylist: async (_trackIds: string[], mode: 'replace' | 'append') => ({
+        tracks: [],
+        skipped: [],
+        canceled: false,
+        mode
+      }),
+      getUserPlaylists: async () => [],
+      createUserPlaylist: async () => ({ playlists: [], playlist: null }),
+      renameUserPlaylist: async () => ({ playlists: [], playlist: null }),
+      deleteUserPlaylist: async () => ({ playlists: [], playlist: null }),
+      setUserPlaylistTracks: async () => ({ playlists: [], playlist: null }),
+      addLibraryTracksToUserPlaylist: async () => ({ playlists: [], playlist: null }),
+      loadUserPlaylist: async () => ({
+        tracks: [],
+        skipped: [],
+        canceled: false,
+        mode: 'replace'
+      }),
       readTrackBufferById: async () => new ArrayBuffer(0),
       getTrackAnalysis: async (trackId: string) => analyses[trackId],
       saveTrackAnalysis: async (_trackId: string, analysis: unknown) => analysis,

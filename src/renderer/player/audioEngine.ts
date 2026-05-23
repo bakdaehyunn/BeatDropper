@@ -1,6 +1,8 @@
 import { DEFAULT_SETTINGS, sanitizeSettings } from '../../shared/settings';
 import { estimateAdaptiveDecodeTimeoutMs } from '../../shared/decodeTimeout';
 import { MixPlan } from '../../shared/mixPlan';
+import { evaluateMixPlanQuality } from '../../shared/mixPlanQuality';
+import type { MixPlanQualityResult } from '../../shared/mixPlanQuality';
 import {
   RequestMixPlanResult
 } from '../../shared/plannerContract';
@@ -77,6 +79,14 @@ interface TrackTempo {
 
 interface AudioEngineDeps {
   readTrackBuffer(trackId: string): Promise<ArrayBuffer>;
+  getCachedMixPlan?: (input: {
+    currentTrack: Track;
+    nextTrack: Track;
+    currentPlayback: {
+      elapsedSec: number;
+    };
+    settingsOverride?: Partial<PlayerSettings>;
+  }) => RequestMixPlanResult | null;
   requestMixPlan?: (input: {
     currentTrack: Track;
     nextTrack: Track;
@@ -123,9 +133,23 @@ const MANUAL_JUMP_DECODE_TIMEOUT_MS = 1800;
 const DECODE_TIMEOUT_PREFIX = 'Decode timeout';
 const OUTPUT_HEADROOM_GAIN = 0.72;
 
+const mixPlanQualityEventDetails = (quality: MixPlanQualityResult) => ({
+  mixPlanQualityGrade: quality.grade,
+  mixPlanQualityScore: quality.score,
+  mixPlanQualityShouldApply: quality.shouldApply,
+  mixPlanQualitySummary: quality.summary,
+  mixPlanQualityIssues: quality.issues.map((issue) => ({
+    code: issue.code,
+    severity: issue.severity
+  }))
+});
+
 export class AudioEngine {
   private readonly context: AudioContextLike;
   private readonly readTrackBuffer: (trackId: string) => Promise<ArrayBuffer>;
+  private getCachedMixPlan:
+    | NonNullable<AudioEngineDeps['getCachedMixPlan']>
+    | null;
   private readonly requestMixPlan:
     | AudioEngineDeps['requestMixPlan']
     | null;
@@ -157,6 +181,7 @@ export class AudioEngine {
 
   constructor(deps: AudioEngineDeps) {
     this.readTrackBuffer = deps.readTrackBuffer;
+    this.getCachedMixPlan = deps.getCachedMixPlan ?? null;
     this.requestMixPlan = deps.requestMixPlan ?? null;
     this.settings = sanitizeSettings({
       ...DEFAULT_SETTINGS,
@@ -214,6 +239,12 @@ export class AudioEngine {
 
   getSettings(): PlayerSettings {
     return this.settings;
+  }
+
+  setCachedMixPlanResolver(
+    resolver: NonNullable<AudioEngineDeps['getCachedMixPlan']> | null
+  ): void {
+    this.getCachedMixPlan = resolver;
   }
 
   getCurrentIndex(): number | null {
@@ -530,19 +561,23 @@ export class AudioEngine {
         });
       }
 
-      if (!this.requestMixPlan) {
+      const plannerInput = {
+        currentTrack,
+        nextTrack,
+        currentPlayback: {
+          elapsedSec: Math.max(0, this.context.currentTime - currentStartAt)
+        }
+      };
+      let result = this.getCachedMixPlan?.(plannerInput) ?? null;
+      const usedCachedMixPlan = result !== null;
+      if (!result && !this.requestMixPlan) {
         return;
       }
 
-      let result: RequestMixPlanResult;
       try {
-        result = await this.requestMixPlan({
-          currentTrack,
-          nextTrack,
-          currentPlayback: {
-            elapsedSec: Math.max(0, this.context.currentTime - currentStartAt)
-          }
-        });
+        if (!result && this.requestMixPlan) {
+          result = await this.requestMixPlan(plannerInput);
+        }
       } catch (error) {
         this.emit('mix_plan_fallback', 'Using rule-based transition plan', {
           currentTrackId: currentTrack.id,
@@ -561,13 +596,40 @@ export class AudioEngine {
         return;
       }
 
+      if (!result) {
+        return;
+      }
+
       if (!result.plan) {
         this.emit('mix_plan_fallback', 'Using rule-based transition plan', {
           currentTrackId: currentTrack.id,
           nextTrackId: nextTrack.id,
           reason: result.reason,
           plannerRequest: result.request,
-          plannerResponse: result.response
+          plannerResponse: result.response,
+          cacheStatus: usedCachedMixPlan ? 'hit' : 'miss'
+        });
+        return;
+      }
+
+      const mixPlanQuality = evaluateMixPlanQuality({
+        plan: result.plan,
+        currentTrack,
+        nextTrack,
+        currentAnalysis: result.analysis.current,
+        nextAnalysis: result.analysis.next,
+        settings: this.settings,
+        currentPlaybackElapsedSec: Math.max(0, this.context.currentTime - currentStartAt)
+      });
+      if (mixPlanQuality.grade === 'reject') {
+        this.emit('mix_plan_fallback', 'Using rule-based transition plan', {
+          currentTrackId: currentTrack.id,
+          nextTrackId: nextTrack.id,
+          reason: 'mix_plan_quality_reject',
+          plannerRequest: result.request,
+          plannerResponse: result.response,
+          cacheStatus: usedCachedMixPlan ? 'hit' : 'miss',
+          ...mixPlanQualityEventDetails(mixPlanQuality)
         });
         return;
       }
@@ -593,7 +655,9 @@ export class AudioEngine {
         nextTrackStartOffsetSec: executionPlan.nextTrackStartOffsetSec,
         reasoningSummary: executionPlan.reasoningSummary,
         plannerRequest: result.request,
-        plannerResponse: result.response
+        plannerResponse: result.response,
+        cacheStatus: usedCachedMixPlan ? 'hit' : 'miss',
+        ...mixPlanQualityEventDetails(mixPlanQuality)
       });
     } catch (error) {
       if (this.isDecodeTimeoutError(error)) {

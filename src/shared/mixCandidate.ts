@@ -1,4 +1,4 @@
-import { TrackAnalysis } from './analysis';
+import { hasPlannerReadyTrackAnalysis, TrackAnalysis } from './analysis';
 import { MixStyle } from './mixPlan';
 import { Track } from './types';
 
@@ -85,16 +85,7 @@ interface CandidatePoint {
 }
 
 const hasDetailedAnalysis = (analysis: TrackAnalysis | null): boolean => {
-  if (!analysis) {
-    return false;
-  }
-
-  return (
-    analysis.analysisQuality.waveformDetail >= 0.2 &&
-    analysis.analysisQuality.beatGrid >= 0.35 &&
-    analysis.barGrid.length > 0 &&
-    analysis.energyProfile.length > 0
-  );
+  return hasPlannerReadyTrackAnalysis(analysis);
 };
 
 const hasPendingAnalysisUpgrade = (analysis: TrackAnalysis | null): boolean => {

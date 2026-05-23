@@ -18,6 +18,28 @@ describe('sanitizeTrackAnalysis', () => {
     expect(analysis.analysisWarnings).toContain('analysis_upgrade_available');
   });
 
+  it('marks current-schema metadata-only analysis for planner detail upgrade', () => {
+    const analysis = sanitizeTrackAnalysis('track-1', {
+      schemaVersion: TRACK_ANALYSIS_SCHEMA_VERSION,
+      source: 'metadata',
+      bpm: 124,
+      bpmConfidence: 0.7,
+      beatGridSec: [0, 0.48, 0.96],
+      downbeatsSec: [0],
+      barGrid: [{ index: 0, startSec: 0, beatIndex: 0 }],
+      analysisConfidence: 0.6,
+      analysisQuality: {
+        waveformDetail: 0,
+        spectralBands: 0,
+        transientMarkers: 0,
+        beatGrid: 0.5
+      }
+    });
+
+    expect(analysis.waveformDetail).toEqual([]);
+    expect(analysis.analysisWarnings).toContain('analysis_upgrade_available');
+  });
+
   it('clamps v3 waveform detail and spectral band values', () => {
     const analysis = sanitizeTrackAnalysis('track-1', {
       waveformDetail: [{ timeSec: 1, peak: 2, rms: -1, min: -2, max: 2 }],

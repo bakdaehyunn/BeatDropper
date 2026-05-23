@@ -42,6 +42,33 @@ const buildPulseBuffer = (
   return new TestAudioBuffer([data], sampleRate);
 };
 
+const buildAlternatingPulseBuffer = (
+  bpm: number,
+  durationSec: number,
+  sampleRate = 22050
+): TestAudioBuffer => {
+  const length = Math.floor(durationSec * sampleRate);
+  const data = new Float32Array(length);
+  const beatInterval = (60 / bpm) * sampleRate;
+  const pulseLength = Math.floor(sampleRate * 0.015);
+  let beatIndex = 0;
+
+  for (let beat = 0; beat < length; beat += beatInterval) {
+    const start = Math.floor(beat);
+    const gain = beatIndex % 2 === 0 ? 1 : 0.42;
+    for (let offset = 0; offset < pulseLength; offset += 1) {
+      const index = start + offset;
+      if (index >= length) {
+        break;
+      }
+      data[index] += gain * Math.exp(-offset / 35);
+    }
+    beatIndex += 1;
+  }
+
+  return new TestAudioBuffer([data], sampleRate);
+};
+
 const buildNoiseBuffer = (durationSec: number, sampleRate = 22050): TestAudioBuffer => {
   const length = Math.floor(durationSec * sampleRate);
   const data = new Float32Array(length);
@@ -63,6 +90,24 @@ describe('estimateTrackBpm', () => {
     expect(result.bpm).not.toBeNull();
     expect(result.bpm ?? 0).toBeGreaterThanOrEqual(116);
     expect(result.bpm ?? 0).toBeLessThanOrEqual(124);
+  });
+
+  it('prefers the beat-level BPM over a strong half-tempo pulse family', () => {
+    const buffer = buildAlternatingPulseBuffer(160, 36);
+    const result = estimateTrackBpm(buffer);
+
+    expect(result.bpm).not.toBeNull();
+    expect(result.bpm ?? 0).toBeGreaterThanOrEqual(154);
+    expect(result.bpm ?? 0).toBeLessThanOrEqual(166);
+  });
+
+  it('does not double a sparse low-tempo pulse without beat-level support', () => {
+    const buffer = buildPulseBuffer(80, 36);
+    const result = estimateTrackBpm(buffer);
+
+    expect(result.bpm).not.toBeNull();
+    expect(result.bpm ?? 0).toBeGreaterThanOrEqual(76);
+    expect(result.bpm ?? 0).toBeLessThanOrEqual(84);
   });
 
   it('returns null for random noise', () => {

@@ -38,6 +38,28 @@ export interface Track {
   bpm?: number | null;
 }
 
+export interface MusicLibraryTrack extends Track {
+  addedAt: string;
+  updatedAt: string;
+  sourcePath: string;
+  sourceLabel: string;
+  missing: boolean;
+  missingAt: string | null;
+}
+
+export interface UserPlaylist {
+  id: string;
+  name: string;
+  trackIds: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface UserPlaylistMutationResult {
+  playlists: UserPlaylist[];
+  playlist: UserPlaylist | null;
+}
+
 export interface PlayerSettings {
   fadeDurationSec: number;
   masterGain: number;
@@ -78,6 +100,17 @@ export interface TrackLoadResult {
 }
 
 export type TrackLoadMode = 'replace' | 'append';
+
+export interface MusicLibraryImportResult {
+  tracks: MusicLibraryTrack[];
+  added: number;
+  updated: number;
+  restored: number;
+  missing: number;
+  skipped: string[];
+  canceled: boolean;
+  sourcePath: string | null;
+}
 
 export type PlayerEventType =
   | 'track_started'

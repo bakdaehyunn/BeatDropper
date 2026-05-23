@@ -1,5 +1,11 @@
 import { parseFile } from 'music-metadata';
-import { TrackAnalysis, sanitizeTrackAnalysis } from '../../shared/analysis';
+import { stat } from 'node:fs/promises';
+import {
+  TRACK_ANALYSIS_SCHEMA_VERSION,
+  TrackAnalysis,
+  TrackFileRevision,
+  sanitizeTrackAnalysis
+} from '../../shared/analysis';
 
 interface TrackAnalysisServiceDeps {
   store: {
@@ -8,6 +14,25 @@ interface TrackAnalysisServiceDeps {
   };
   resolveTrackPath(trackId: string): string;
 }
+
+const readFileRevision = async (filePath: string): Promise<TrackFileRevision> => {
+  const fileStats = await stat(filePath);
+  return {
+    sizeBytes: fileStats.size,
+    mtimeMs: fileStats.mtimeMs
+  };
+};
+
+const isSameRevision = (
+  cached: TrackFileRevision | null,
+  current: TrackFileRevision
+): boolean => {
+  if (!cached) {
+    return true;
+  }
+
+  return cached.sizeBytes === current.sizeBytes && cached.mtimeMs === current.mtimeMs;
+};
 
 export class TrackAnalysisService {
   private readonly store: TrackAnalysisServiceDeps['store'];
@@ -19,12 +44,13 @@ export class TrackAnalysisService {
   }
 
   async getTrackAnalysis(trackId: string): Promise<TrackAnalysis | null> {
+    const filePath = this.resolveTrackPath(trackId);
+    const fileRevision = await readFileRevision(filePath);
     const cached = await this.store.read(trackId);
-    if (cached) {
+    if (cached && isSameRevision(cached.fileRevision, fileRevision)) {
       return cached;
     }
 
-    const filePath = this.resolveTrackPath(trackId);
     const metadata = await parseFile(filePath, { duration: true });
     const durationSec =
       typeof metadata.format.duration === 'number' && Number.isFinite(metadata.format.duration)
@@ -60,8 +86,10 @@ export class TrackAnalysisService {
       durationSec !== null ? Math.max(0, durationSec - Math.min(16, durationSec * 0.12)) : null;
 
     const analysis = sanitizeTrackAnalysis(trackId, {
+      schemaVersion: TRACK_ANALYSIS_SCHEMA_VERSION,
       generatedAt: new Date().toISOString(),
       source: metadataBpm !== null ? 'metadata' : 'derived',
+      fileRevision,
       bpm: metadataBpm,
       bpmConfidence: metadataBpm !== null ? 0.7 : 0,
       introCueSec: 0,
@@ -115,6 +143,8 @@ export class TrackAnalysisService {
   }
 
   async saveTrackAnalysis(trackId: string, candidate: Partial<TrackAnalysis>): Promise<TrackAnalysis> {
-    return this.store.write(sanitizeTrackAnalysis(trackId, candidate));
+    const filePath = this.resolveTrackPath(trackId);
+    const fileRevision = await readFileRevision(filePath);
+    return this.store.write(sanitizeTrackAnalysis(trackId, { ...candidate, fileRevision }));
   }
 }

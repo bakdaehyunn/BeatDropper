@@ -3,10 +3,14 @@ import { RequestMixPlanInput, RequestMixPlanResult } from './plannerContract';
 import {
   AiAgentConnectionResult,
   AiAgentProfile,
+  MusicLibraryImportResult,
+  MusicLibraryTrack,
   PlayerSettings,
   Track,
   TrackLoadMode,
-  TrackLoadResult
+  TrackLoadResult,
+  UserPlaylist,
+  UserPlaylistMutationResult
 } from './types';
 
 export interface DropperApi {
@@ -14,6 +18,20 @@ export interface DropperApi {
   getTracks(): Promise<Track[]>;
   setTrackOrder(trackIds: string[]): Promise<Track[]>;
   clearTracks(): Promise<void>;
+  getLibraryTracks(): Promise<MusicLibraryTrack[]>;
+  importLibraryFolder(): Promise<MusicLibraryImportResult>;
+  rescanLibraryFolder(sourcePath: string): Promise<MusicLibraryImportResult>;
+  addLibraryTracksToPlaylist(trackIds: string[], mode: TrackLoadMode): Promise<TrackLoadResult>;
+  getUserPlaylists(): Promise<UserPlaylist[]>;
+  createUserPlaylist(name: string, trackIds: string[]): Promise<UserPlaylistMutationResult>;
+  renameUserPlaylist(playlistId: string, name: string): Promise<UserPlaylistMutationResult>;
+  deleteUserPlaylist(playlistId: string): Promise<UserPlaylistMutationResult>;
+  setUserPlaylistTracks(playlistId: string, trackIds: string[]): Promise<UserPlaylistMutationResult>;
+  addLibraryTracksToUserPlaylist(
+    playlistId: string,
+    trackIds: string[]
+  ): Promise<UserPlaylistMutationResult>;
+  loadUserPlaylist(playlistId: string): Promise<TrackLoadResult>;
   readTrackBufferById(trackId: string): Promise<ArrayBuffer>;
   getTrackAnalysis(trackId: string): Promise<TrackAnalysis | null>;
   saveTrackAnalysis(trackId: string, analysis: TrackAnalysis): Promise<TrackAnalysis>;

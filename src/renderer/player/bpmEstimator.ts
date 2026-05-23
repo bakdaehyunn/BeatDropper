@@ -161,6 +161,26 @@ interface WindowEstimate {
   weight: number;
 }
 
+const scoreCorrelationLag = (normalizedEnvelope: Float32Array, lag: number): number => {
+  let sumXY = 0;
+  let sumX2 = 0;
+  let sumY2 = 0;
+
+  for (let index = 0; index + lag < normalizedEnvelope.length; index += 1) {
+    const x = normalizedEnvelope[index];
+    const y = normalizedEnvelope[index + lag];
+    sumXY += x * y;
+    sumX2 += x * x;
+    sumY2 += y * y;
+  }
+
+  if (sumX2 === 0 || sumY2 === 0) {
+    return 0;
+  }
+
+  return sumXY / Math.sqrt(sumX2 * sumY2);
+};
+
 const findCorrelationPeak = (
   normalizedEnvelope: Float32Array,
   featureRate: number
@@ -172,26 +192,24 @@ const findCorrelationPeak = (
   let bestScore = -Infinity;
 
   for (let lag = lagMin; lag <= lagMax; lag += 1) {
-    let sumXY = 0;
-    let sumX2 = 0;
-    let sumY2 = 0;
-
-    for (let index = 0; index + lag < normalizedEnvelope.length; index += 1) {
-      const x = normalizedEnvelope[index];
-      const y = normalizedEnvelope[index + lag];
-      sumXY += x * y;
-      sumX2 += x * x;
-      sumY2 += y * y;
-    }
-
-    if (sumX2 === 0 || sumY2 === 0) {
-      continue;
-    }
-
-    const score = sumXY / Math.sqrt(sumX2 * sumY2);
+    const score = scoreCorrelationLag(normalizedEnvelope, lag);
     if (score > bestScore) {
       bestScore = score;
       bestLag = lag;
+    }
+  }
+
+  const halfLag = Math.round(bestLag / 2);
+  if (halfLag >= lagMin) {
+    const halfScore = scoreCorrelationLag(normalizedEnvelope, halfLag);
+    const hasMeaningfulBeatLevelSupport =
+      halfScore >= MIN_CONFIDENCE &&
+      halfScore >= Math.max(0.42, bestScore * 0.45);
+    if (hasMeaningfulBeatLevelSupport) {
+      return {
+        lag: halfLag,
+        score: halfScore
+      };
     }
   }
 

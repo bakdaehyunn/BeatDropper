@@ -50,6 +50,39 @@ const dropperApi: DropperApi = {
   clearTracks: async (): Promise<void> => {
     await ipcRenderer.invoke('library:clearTracks');
   },
+  getLibraryTracks: async () => {
+    return ipcRenderer.invoke('musicLibrary:getTracks');
+  },
+  importLibraryFolder: async () => {
+    return ipcRenderer.invoke('musicLibrary:importFolder');
+  },
+  rescanLibraryFolder: async (sourcePath: string) => {
+    return ipcRenderer.invoke('musicLibrary:rescanFolder', sourcePath);
+  },
+  addLibraryTracksToPlaylist: async (trackIds: string[], mode: TrackLoadMode) => {
+    return ipcRenderer.invoke('musicLibrary:addTracksToPlaylist', trackIds, mode);
+  },
+  getUserPlaylists: async () => {
+    return ipcRenderer.invoke('userPlaylists:get');
+  },
+  createUserPlaylist: async (name: string, trackIds: string[]) => {
+    return ipcRenderer.invoke('userPlaylists:create', name, trackIds);
+  },
+  renameUserPlaylist: async (playlistId: string, name: string) => {
+    return ipcRenderer.invoke('userPlaylists:rename', playlistId, name);
+  },
+  deleteUserPlaylist: async (playlistId: string) => {
+    return ipcRenderer.invoke('userPlaylists:delete', playlistId);
+  },
+  setUserPlaylistTracks: async (playlistId: string, trackIds: string[]) => {
+    return ipcRenderer.invoke('userPlaylists:setTracks', playlistId, trackIds);
+  },
+  addLibraryTracksToUserPlaylist: async (playlistId: string, trackIds: string[]) => {
+    return ipcRenderer.invoke('userPlaylists:addLibraryTracks', playlistId, trackIds);
+  },
+  loadUserPlaylist: async (playlistId: string) => {
+    return ipcRenderer.invoke('userPlaylists:load', playlistId);
+  },
   readTrackBufferById: async (trackId: string): Promise<ArrayBuffer> => {
     const payload = await ipcRenderer.invoke('track:readBufferById', trackId);
     return toArrayBuffer(payload);

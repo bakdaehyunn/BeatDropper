@@ -1,4 +1,4 @@
-import { stat } from 'node:fs/promises';
+import { readdir } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { parseFile } from 'music-metadata';
@@ -12,6 +12,7 @@ export interface LoadedTrackEntry {
 export interface InternalTrackLoadResult {
   tracks: LoadedTrackEntry[];
   skipped: string[];
+  scannedFilePaths: string[];
 }
 
 const supportedExtensions = new Map<string, AudioFormat>([
@@ -26,12 +27,10 @@ const resolveFormat = (filePath: string): AudioFormat | null => {
 
 const TRACK_PARSE_CONCURRENCY = 4;
 
-const buildTrackId = async (filePath: string): Promise<string> => {
-  const fileStats = await stat(filePath);
+export const buildStableTrackId = (filePath: string): string => {
   return createHash('sha1')
-    .update(filePath)
-    .update(String(fileStats.size))
-    .update(String(fileStats.mtimeMs))
+    .update('beatdropper:file-path:v1')
+    .update(path.resolve(filePath))
     .digest('hex');
 };
 
@@ -51,7 +50,7 @@ const parseTrackFromPath = async (
     }
 
     const title = metadata.common.title?.trim() || path.basename(filePath);
-    const id = await buildTrackId(filePath);
+    const id = buildStableTrackId(filePath);
 
     return {
       track: {
@@ -75,7 +74,7 @@ const parseTrackFromPath = async (
 
 export const loadTracksFromPaths = async (filePaths: string[]): Promise<InternalTrackLoadResult> => {
   if (filePaths.length === 0) {
-    return { tracks: [], skipped: [] };
+    return { tracks: [], skipped: [], scannedFilePaths: [] };
   }
 
   const results: Array<{ track?: LoadedTrackEntry; skip?: string }> = new Array(filePaths.length);
@@ -107,5 +106,52 @@ export const loadTracksFromPaths = async (filePaths: string[]): Promise<Internal
       skipped.push(result.skip);
     }
   }
-  return { tracks, skipped };
+  return { tracks, skipped, scannedFilePaths: filePaths };
+};
+
+export const collectAudioFilesFromDirectory = async (
+  directoryPath: string
+): Promise<{ filePaths: string[]; skipped: string[] }> => {
+  const filePaths: string[] = [];
+  const skipped: string[] = [];
+
+  const visit = async (currentPath: string): Promise<void> => {
+    let entries;
+    try {
+      entries = await readdir(currentPath, { withFileTypes: true });
+    } catch {
+      skipped.push(`${path.basename(currentPath) || currentPath}: unreadable folder`);
+      return;
+    }
+
+    entries.sort((left, right) => left.name.localeCompare(right.name));
+    for (const entry of entries) {
+      const entryPath = path.join(currentPath, entry.name);
+      if (entry.isDirectory()) {
+        await visit(entryPath);
+        continue;
+      }
+      if (!entry.isFile()) {
+        continue;
+      }
+      if (resolveFormat(entryPath)) {
+        filePaths.push(entryPath);
+      }
+    }
+  };
+
+  await visit(directoryPath);
+  return { filePaths, skipped };
+};
+
+export const loadTracksFromDirectory = async (
+  directoryPath: string
+): Promise<InternalTrackLoadResult> => {
+  const scan = await collectAudioFilesFromDirectory(directoryPath);
+  const loaded = await loadTracksFromPaths(scan.filePaths);
+  return {
+    tracks: loaded.tracks,
+    skipped: [...scan.skipped, ...loaded.skipped],
+    scannedFilePaths: scan.filePaths
+  };
 };

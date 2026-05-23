@@ -3,6 +3,20 @@ const handlerMap = new Map<string, (...args: unknown[]) => unknown>();
 const mockShowOpenDialog = vi.fn();
 const mockReadFile = vi.fn();
 const mockLoadTracksFromPaths = vi.fn();
+const mockLoadTracksFromDirectory = vi.fn();
+const mockReadLibraryTracks = vi.fn();
+const mockRefreshLibraryAvailability = vi.fn();
+const mockUpsertLoadedTracks = vi.fn();
+const mockRescanSource = vi.fn();
+const mockGetLibraryEntriesByIds = vi.fn();
+const mockToRegisterEntries = vi.fn();
+const mockReadUserPlaylists = vi.fn();
+const mockCreateUserPlaylist = vi.fn();
+const mockRenameUserPlaylist = vi.fn();
+const mockDeleteUserPlaylist = vi.fn();
+const mockSetUserPlaylistTracks = vi.fn();
+const mockAddUserPlaylistTrackIds = vi.fn();
+const mockGetUserPlaylist = vi.fn();
 const mockReadSettings = vi.fn();
 const mockWriteSettings = vi.fn();
 const mockGetTrackAnalysis = vi.fn();
@@ -41,7 +55,36 @@ vi.mock('node:fs/promises', async (importOriginal) => {
 
 vi.mock('../../src/main/trackLibrary', () => {
   return {
-    loadTracksFromPaths: mockLoadTracksFromPaths
+    loadTracksFromPaths: mockLoadTracksFromPaths,
+    loadTracksFromDirectory: mockLoadTracksFromDirectory
+  };
+});
+
+vi.mock('../../src/main/musicLibraryStore', () => {
+  return {
+    MusicLibraryStore: class {
+      readTracks = mockReadLibraryTracks;
+      refreshAvailability = mockRefreshLibraryAvailability;
+      upsertLoadedTracks = mockUpsertLoadedTracks;
+      rescanSource = mockRescanSource;
+      getEntriesByIds = mockGetLibraryEntriesByIds;
+      toRegisterEntries = mockToRegisterEntries;
+    }
+  };
+});
+
+vi.mock('../../src/main/userPlaylistStore', () => {
+  return {
+    normalizePlaylistName: (name: string) => name.trim().replace(/\s+/g, ' ').slice(0, 80),
+    UserPlaylistStore: class {
+      readPlaylists = mockReadUserPlaylists;
+      createPlaylist = mockCreateUserPlaylist;
+      renamePlaylist = mockRenameUserPlaylist;
+      deletePlaylist = mockDeleteUserPlaylist;
+      setPlaylistTracks = mockSetUserPlaylistTracks;
+      addTrackIds = mockAddUserPlaylistTrackIds;
+      getPlaylist = mockGetUserPlaylist;
+    }
   };
 });
 
@@ -106,6 +149,17 @@ const setupIpcHandlers = async () => {
 
   const openHandler = handlerMap.get('library:openTracks');
   const getTracksHandler = handlerMap.get('library:getTracks');
+  const getLibraryTracksHandler = handlerMap.get('musicLibrary:getTracks');
+  const importLibraryFolderHandler = handlerMap.get('musicLibrary:importFolder');
+  const rescanLibraryFolderHandler = handlerMap.get('musicLibrary:rescanFolder');
+  const addLibraryTracksToPlaylistHandler = handlerMap.get('musicLibrary:addTracksToPlaylist');
+  const getUserPlaylistsHandler = handlerMap.get('userPlaylists:get');
+  const createUserPlaylistHandler = handlerMap.get('userPlaylists:create');
+  const renameUserPlaylistHandler = handlerMap.get('userPlaylists:rename');
+  const deleteUserPlaylistHandler = handlerMap.get('userPlaylists:delete');
+  const setUserPlaylistTracksHandler = handlerMap.get('userPlaylists:setTracks');
+  const addLibraryTracksToUserPlaylistHandler = handlerMap.get('userPlaylists:addLibraryTracks');
+  const loadUserPlaylistHandler = handlerMap.get('userPlaylists:load');
   const readHandler = handlerMap.get('track:readBufferById');
   const analysisHandler = handlerMap.get('analysis:getByTrackId');
   const saveAnalysisHandler = handlerMap.get('analysis:saveForTrackId');
@@ -115,6 +169,17 @@ const setupIpcHandlers = async () => {
   if (
     !openHandler ||
     !getTracksHandler ||
+    !getLibraryTracksHandler ||
+    !importLibraryFolderHandler ||
+    !rescanLibraryFolderHandler ||
+    !addLibraryTracksToPlaylistHandler ||
+    !getUserPlaylistsHandler ||
+    !createUserPlaylistHandler ||
+    !renameUserPlaylistHandler ||
+    !deleteUserPlaylistHandler ||
+    !setUserPlaylistTracksHandler ||
+    !addLibraryTracksToUserPlaylistHandler ||
+    !loadUserPlaylistHandler ||
     !readHandler ||
     !analysisHandler ||
     !saveAnalysisHandler ||
@@ -127,6 +192,17 @@ const setupIpcHandlers = async () => {
   return {
     openHandler,
     getTracksHandler,
+    getLibraryTracksHandler,
+    importLibraryFolderHandler,
+    rescanLibraryFolderHandler,
+    addLibraryTracksToPlaylistHandler,
+    getUserPlaylistsHandler,
+    createUserPlaylistHandler,
+    renameUserPlaylistHandler,
+    deleteUserPlaylistHandler,
+    setUserPlaylistTracksHandler,
+    addLibraryTracksToUserPlaylistHandler,
+    loadUserPlaylistHandler,
     readHandler,
     analysisHandler,
     saveAnalysisHandler,
@@ -141,6 +217,20 @@ describe('IPC library:openTracks', () => {
     mockShowOpenDialog.mockReset();
     mockReadFile.mockReset();
     mockLoadTracksFromPaths.mockReset();
+    mockLoadTracksFromDirectory.mockReset();
+    mockReadLibraryTracks.mockReset();
+    mockRefreshLibraryAvailability.mockReset();
+    mockUpsertLoadedTracks.mockReset();
+    mockRescanSource.mockReset();
+    mockGetLibraryEntriesByIds.mockReset();
+    mockToRegisterEntries.mockReset();
+    mockReadUserPlaylists.mockReset();
+    mockCreateUserPlaylist.mockReset();
+    mockRenameUserPlaylist.mockReset();
+    mockDeleteUserPlaylist.mockReset();
+    mockSetUserPlaylistTracks.mockReset();
+    mockAddUserPlaylistTrackIds.mockReset();
+    mockGetUserPlaylist.mockReset();
     mockReadSettings.mockReset();
     mockWriteSettings.mockReset();
     mockGetTrackAnalysis.mockReset();
@@ -231,6 +321,216 @@ describe('IPC library:openTracks', () => {
     expect(mockLoadTracksFromPaths).toHaveBeenCalledTimes(1);
 
     expect(bytesFromArrayBuffer(await readHandler({}, 'track-1'))).toEqual([4, 5]);
+  });
+
+  it('imports a music folder into the persistent library', async () => {
+    const { importLibraryFolderHandler } = await setupIpcHandlers();
+    const entry = trackEntry('track-1', 'One', '/music/folder/one.mp3');
+    const libraryTrack = {
+      ...entry.track,
+      addedAt: '2026-05-22T00:00:00.000Z',
+      updatedAt: '2026-05-22T00:00:00.000Z',
+      sourcePath: '/music/folder',
+      sourceLabel: 'folder',
+      missing: false,
+      missingAt: null
+    };
+
+    mockShowOpenDialog.mockResolvedValueOnce({
+      canceled: false,
+      filePaths: ['/music/folder']
+    });
+    mockLoadTracksFromDirectory.mockResolvedValueOnce({
+      tracks: [entry],
+      skipped: ['bad.wav: unreadable or corrupted']
+    });
+    mockUpsertLoadedTracks.mockResolvedValueOnce({
+      tracks: [libraryTrack],
+      added: 1,
+      updated: 0,
+      restored: 0,
+      missing: 0
+    });
+
+    const result = await importLibraryFolderHandler({});
+
+    expect(mockLoadTracksFromDirectory).toHaveBeenCalledWith('/music/folder');
+    expect(mockUpsertLoadedTracks).toHaveBeenCalledWith([entry], '/music/folder');
+    expect(result).toMatchObject({
+      tracks: [libraryTrack],
+      added: 1,
+      updated: 0,
+      restored: 0,
+      missing: 0,
+      skipped: ['bad.wav: unreadable or corrupted'],
+      canceled: false,
+      sourcePath: '/music/folder'
+    });
+  });
+
+  it('adds selected library tracks to the playable playlist registry', async () => {
+    const { addLibraryTracksToPlaylistHandler, getTracksHandler, readHandler } =
+      await setupIpcHandlers();
+    const entry = trackEntry('track-1', 'One', '/music/one.mp3');
+
+    mockGetLibraryEntriesByIds.mockResolvedValueOnce([{ id: 'track-1' }]);
+    mockToRegisterEntries.mockReturnValueOnce([
+      { trackId: 'track-1', filePath: '/music/one.mp3', track: entry.track }
+    ]);
+    mockReadFile.mockResolvedValue(Buffer.from([7, 8]));
+
+    const result = await addLibraryTracksToPlaylistHandler(
+      {},
+      ['track-1', 'missing-track'],
+      'replace'
+    );
+
+    expect(mockGetLibraryEntriesByIds).toHaveBeenCalledWith(['track-1', 'missing-track']);
+    expect(result).toMatchObject({
+      tracks: [entry.track],
+      skipped: ['missing-track: not in library'],
+      canceled: false,
+      mode: 'replace'
+    });
+    expect(await getTracksHandler({})).toMatchObject([{ id: 'track-1', title: 'One' }]);
+    expect(bytesFromArrayBuffer(await readHandler({}, 'track-1'))).toEqual([7, 8]);
+  });
+
+  it('rescans an imported music folder and returns missing counts', async () => {
+    const { rescanLibraryFolderHandler } = await setupIpcHandlers();
+    const entry = trackEntry('track-2', 'Two', '/music/folder/two.mp3');
+    const libraryTrack = {
+      ...entry.track,
+      addedAt: '2026-05-22T00:00:00.000Z',
+      updatedAt: '2026-05-23T00:00:00.000Z',
+      sourcePath: '/music/folder',
+      sourceLabel: 'folder',
+      missing: false,
+      missingAt: null
+    };
+
+    mockLoadTracksFromDirectory.mockResolvedValueOnce({
+      tracks: [entry],
+      skipped: [],
+      scannedFilePaths: ['/music/folder/two.mp3']
+    });
+    mockRescanSource.mockResolvedValueOnce({
+      tracks: [libraryTrack],
+      added: 1,
+      updated: 1,
+      restored: 0,
+      missing: 2
+    });
+
+    const result = await rescanLibraryFolderHandler({}, '/music/folder');
+
+    expect(mockLoadTracksFromDirectory).toHaveBeenCalledWith('/music/folder');
+    expect(mockRescanSource).toHaveBeenCalledWith(
+      [entry],
+      '/music/folder',
+      ['/music/folder/two.mp3']
+    );
+    expect(result).toMatchObject({
+      tracks: [libraryTrack],
+      added: 1,
+      updated: 1,
+      restored: 0,
+      missing: 2,
+      canceled: false,
+      sourcePath: '/music/folder'
+    });
+  });
+
+  it('creates and updates user taste playlists through IPC', async () => {
+    const {
+      createUserPlaylistHandler,
+      renameUserPlaylistHandler,
+      setUserPlaylistTracksHandler,
+      addLibraryTracksToUserPlaylistHandler,
+      deleteUserPlaylistHandler
+    } = await setupIpcHandlers();
+    const playlist = {
+      id: 'playlist-1',
+      name: 'Warmup',
+      trackIds: ['track-1'],
+      createdAt: '2026-05-22T00:00:00.000Z',
+      updatedAt: '2026-05-22T00:00:00.000Z'
+    };
+
+    mockCreateUserPlaylist.mockResolvedValueOnce({
+      playlists: [playlist],
+      playlist
+    });
+    mockRenameUserPlaylist.mockResolvedValueOnce({
+      playlists: [{ ...playlist, name: 'Warmup v2' }],
+      playlist: { ...playlist, name: 'Warmup v2' }
+    });
+    mockSetUserPlaylistTracks.mockResolvedValueOnce({
+      playlists: [{ ...playlist, trackIds: ['track-2'] }],
+      playlist: { ...playlist, trackIds: ['track-2'] }
+    });
+    mockAddUserPlaylistTrackIds.mockResolvedValueOnce({
+      playlists: [{ ...playlist, trackIds: ['track-1', 'track-3'] }],
+      playlist: { ...playlist, trackIds: ['track-1', 'track-3'] }
+    });
+    mockDeleteUserPlaylist.mockResolvedValueOnce({
+      playlists: [],
+      playlist: null
+    });
+
+    await createUserPlaylistHandler({}, '  Warmup  ', ['track-1']);
+    await renameUserPlaylistHandler({}, 'playlist-1', 'Warmup v2');
+    await setUserPlaylistTracksHandler({}, 'playlist-1', ['track-2']);
+    await addLibraryTracksToUserPlaylistHandler({}, 'playlist-1', ['track-3']);
+    await deleteUserPlaylistHandler({}, 'playlist-1');
+
+    expect(mockCreateUserPlaylist).toHaveBeenCalledWith('Warmup', ['track-1']);
+    expect(mockRenameUserPlaylist).toHaveBeenCalledWith('playlist-1', 'Warmup v2');
+    expect(mockSetUserPlaylistTracks).toHaveBeenCalledWith('playlist-1', ['track-2']);
+    expect(mockAddUserPlaylistTrackIds).toHaveBeenCalledWith('playlist-1', ['track-3']);
+    expect(mockDeleteUserPlaylist).toHaveBeenCalledWith('playlist-1');
+  });
+
+  it('loads a saved user playlist into the playable registry', async () => {
+    const { loadUserPlaylistHandler, getTracksHandler, readHandler } = await setupIpcHandlers();
+    const first = trackEntry('track-1', 'One', '/music/one.mp3');
+    const second = trackEntry('track-2', 'Two', '/music/two.mp3');
+
+    mockGetUserPlaylist.mockResolvedValueOnce({
+      id: 'playlist-1',
+      name: 'Warmup',
+      trackIds: ['track-2', 'missing-track', 'track-1'],
+      createdAt: '2026-05-22T00:00:00.000Z',
+      updatedAt: '2026-05-22T00:00:00.000Z'
+    });
+    mockGetLibraryEntriesByIds.mockResolvedValueOnce([
+      { id: 'track-2', title: 'Two', missing: false },
+      { id: 'track-1', title: 'One', missing: false }
+    ]);
+    mockToRegisterEntries.mockReturnValueOnce([
+      { trackId: 'track-2', filePath: '/music/two.mp3', track: second.track },
+      { trackId: 'track-1', filePath: '/music/one.mp3', track: first.track }
+    ]);
+    mockReadFile.mockResolvedValue(Buffer.from([6]));
+
+    const result = await loadUserPlaylistHandler({}, 'playlist-1');
+
+    expect(mockGetLibraryEntriesByIds).toHaveBeenCalledWith([
+      'track-2',
+      'missing-track',
+      'track-1'
+    ]);
+    expect(result).toMatchObject({
+      tracks: [second.track, first.track],
+      skipped: ['missing-track: not in library'],
+      canceled: false,
+      mode: 'replace'
+    });
+    expect(await getTracksHandler({})).toMatchObject([
+      { id: 'track-2', title: 'Two' },
+      { id: 'track-1', title: 'One' }
+    ]);
+    expect(bytesFromArrayBuffer(await readHandler({}, 'track-2'))).toEqual([6]);
   });
 });
 

@@ -1,18 +1,10 @@
-import { TrackAnalysis } from '../../shared/analysis';
+import { hasPlannerReadyTrackAnalysis, TrackAnalysis } from '../../shared/analysis';
 import { Track } from '../../shared/types';
 
 export const shouldBuildDetailedTrackAnalysis = (
   analysis: TrackAnalysis | null | undefined
 ): boolean => {
-  if (!analysis) {
-    return true;
-  }
-
-  return (
-    analysis.waveformPeaks.length === 0 ||
-    analysis.waveformDetail.length === 0 ||
-    analysis.analysisWarnings.includes('analysis_upgrade_available')
-  );
+  return !hasPlannerReadyTrackAnalysis(analysis);
 };
 
 export const pickNextTrackForDetailedAnalysis = (

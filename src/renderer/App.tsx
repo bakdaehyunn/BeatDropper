@@ -17,6 +17,7 @@ import {
   Minus,
   Pause,
   Play,
+  RefreshCw,
   Settings,
   SkipBack,
   SkipForward,
@@ -42,6 +43,12 @@ import {
 } from '../shared/mixPlanExport';
 import { MixCandidate, buildMixPairContext } from '../shared/mixCandidate';
 import { RequestMixPlanResult } from '../shared/plannerContract';
+import {
+  createMixPlanCacheEntry,
+  MixPlanCacheStore,
+  summarizeMixPlanCache
+} from '../shared/mixPlanCache';
+import { evaluateMixPlanQuality } from '../shared/mixPlanQuality';
 import { TrackAnalysis } from '../shared/analysis';
 import {
   CODEX_AGENT_PROFILE_ID,
@@ -55,10 +62,13 @@ import {
 import {
   AiAgentConnectionResult,
   AiAgentProfile,
+  MusicLibraryTrack,
   PlayerEvent,
   PlayerSettings,
   Track,
-  TrackLoadMode
+  TrackLoadMode,
+  TrackLoadResult,
+  UserPlaylist
 } from '../shared/types';
 import { AudioEngine } from './player';
 import { buildTrackAnalysisFromAudioBuffer } from './player/trackAnalysisBuilder';
@@ -71,6 +81,17 @@ import {
   pickNextTrackForDetailedAnalysis,
   preferDetailedTrackAnalysis
 } from './player/trackAnalysisQueue';
+import {
+  MIX_PLAN_PRECOMPUTE_LOOKAHEAD_PAIRS,
+  buildMixPlanPrecomputePairs,
+  findCachedMixPlanResult
+} from './player/mixPlanPrecompute';
+import { buildAnalysisInspectorSummary } from './player/analysisInspector';
+import {
+  ALL_LIBRARY_SOURCES,
+  buildMusicLibrarySourceSummaries,
+  filterMusicLibraryTracks
+} from './player/musicLibraryFilter';
 
 const MAX_LOG_ITEMS = 100;
 
@@ -87,6 +108,10 @@ const formatOptionalDuration = (sec: number | null | undefined): string => {
 
 const formatOptionalBpm = (bpm: number | null | undefined): string => {
   return typeof bpm === 'number' && Number.isFinite(bpm) ? String(Math.round(bpm)) : '--';
+};
+
+const formatAnalysisPercent = (value: number | null | undefined): string => {
+  return typeof value === 'number' && Number.isFinite(value) ? `${Math.round(value * 100)}%` : '--';
 };
 
 const formatOptionalSigned = (value: number | null | undefined): string => {
@@ -285,6 +310,17 @@ const getSharedAudioEngine = (): AudioEngine => {
 
 export const App = (): JSX.Element => {
   const [tracks, setTracks] = useState<Track[]>([]);
+  const [libraryTracks, setLibraryTracks] = useState<MusicLibraryTrack[]>([]);
+  const [selectedLibraryTrackIds, setSelectedLibraryTrackIds] = useState<string[]>([]);
+  const [librarySearchQuery, setLibrarySearchQuery] = useState('');
+  const [selectedLibrarySourcePath, setSelectedLibrarySourcePath] = useState(ALL_LIBRARY_SOURCES);
+  const [isLibraryPending, setIsLibraryPending] = useState(false);
+  const [libraryNotice, setLibraryNotice] = useState<string | null>(null);
+  const [userPlaylists, setUserPlaylists] = useState<UserPlaylist[]>([]);
+  const [selectedUserPlaylistId, setSelectedUserPlaylistId] = useState('');
+  const [userPlaylistNameDraft, setUserPlaylistNameDraft] = useState('');
+  const [isUserPlaylistPending, setIsUserPlaylistPending] = useState(false);
+  const [userPlaylistNotice, setUserPlaylistNotice] = useState<string | null>(null);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [settings, setSettings] = useState<PlayerSettings>(DEFAULT_SETTINGS);
   const [skippedItems, setSkippedItems] = useState<string[]>([]);
@@ -337,8 +373,13 @@ export const App = (): JSX.Element => {
     useState<string | null>(null);
   const [selectedMixPlanCompareTargetId, setSelectedMixPlanCompareTargetId] =
     useState<string>(LOCAL_COMPARE_TARGET_ID);
+  const [mixPlanCache, setMixPlanCache] = useState<MixPlanCacheStore>({});
+  const [precomputingMixPlanKeys, setPrecomputingMixPlanKeys] = useState<string[]>([]);
 
   const tracksRef = useRef<Track[]>([]);
+  const settingsRef = useRef<PlayerSettings>(settings);
+  const analysisByTrackIdRef = useRef<Record<string, TrackAnalysis>>(analysisByTrackId);
+  const mixPlanCacheRef = useRef<MixPlanCacheStore>(mixPlanCache);
   const plannerImportInputRef = useRef<HTMLInputElement | null>(null);
   const comparisonImportInputRef = useRef<HTMLInputElement | null>(null);
   const audioEngine = useMemo(() => getSharedAudioEngine(), []);
@@ -351,6 +392,42 @@ export const App = (): JSX.Element => {
       previous.filter((trackId) => trackIds.has(trackId))
     );
   }, [audioEngine, tracks]);
+
+  useEffect(() => {
+    settingsRef.current = settings;
+  }, [settings]);
+
+  useEffect(() => {
+    analysisByTrackIdRef.current = analysisByTrackId;
+  }, [analysisByTrackId]);
+
+  useEffect(() => {
+    mixPlanCacheRef.current = mixPlanCache;
+  }, [mixPlanCache]);
+
+  useEffect(() => {
+    audioEngine.setCachedMixPlanResolver((input) => {
+      const nextSettings = sanitizeSettings({
+        ...settingsRef.current,
+        ...(input.settingsOverride ?? {})
+      });
+      const entry = findCachedMixPlanResult({
+        currentTrack: input.currentTrack,
+        nextTrack: input.nextTrack,
+        currentAnalysis: analysisByTrackIdRef.current[input.currentTrack.id] ?? null,
+        nextAnalysis: analysisByTrackIdRef.current[input.nextTrack.id] ?? null,
+        settings: nextSettings,
+        cache: mixPlanCacheRef.current,
+        nowMs: Date.now()
+      });
+
+      return entry?.result ?? null;
+    });
+
+    return () => {
+      audioEngine.setCachedMixPlanResolver(null);
+    };
+  }, [audioEngine]);
 
   useEffect(() => {
     let canceled = false;
@@ -486,6 +563,88 @@ export const App = (): JSX.Element => {
   }, [analysisByTrackId, analyzingTrackIds, failedAnalysisTrackIds, tracks]);
 
   useEffect(() => {
+    if (precomputingMixPlanKeys.length > 0) {
+      return;
+    }
+
+    const pair = buildMixPlanPrecomputePairs({
+      tracks,
+      analysisByTrackId,
+      settings,
+      cache: mixPlanCache,
+      inFlightKeys: precomputingMixPlanKeys,
+      nowMs: Date.now(),
+      startTrackId:
+        (currentTrackIndex !== null ? tracks[currentTrackIndex]?.id : tracks[selectedIndex]?.id) ??
+        null,
+      maxLookaheadPairs: MIX_PLAN_PRECOMPUTE_LOOKAHEAD_PAIRS
+    })[0];
+    if (!pair) {
+      return;
+    }
+
+    setPrecomputingMixPlanKeys([pair.key]);
+    void (async () => {
+      try {
+        const result = await window.dropperApi.requestMixPlan({
+          currentTrack: pair.currentTrack,
+          nextTrack: pair.nextTrack,
+          currentPlayback: {
+            elapsedSec: 0
+          },
+          settingsOverride: settings
+        });
+        const quality = result.plan
+          ? evaluateMixPlanQuality({
+              plan: result.plan,
+              currentTrack: pair.currentTrack,
+              nextTrack: pair.nextTrack,
+              currentAnalysis: pair.currentAnalysis,
+              nextAnalysis: pair.nextAnalysis,
+              settings,
+              currentPlaybackElapsedSec: 0
+            })
+          : null;
+        const entry = createMixPlanCacheEntry({
+          key: pair.key,
+          currentTrackId: pair.currentTrack.id,
+          nextTrackId: pair.nextTrack.id,
+          result,
+          quality,
+          createdAtMs: Date.now()
+        });
+        setMixPlanCache((previous) => ({
+          ...previous,
+          [pair.key]: entry
+        }));
+      } catch (error) {
+        const entry = createMixPlanCacheEntry({
+          key: pair.key,
+          currentTrackId: pair.currentTrack.id,
+          nextTrackId: pair.nextTrack.id,
+          result: null,
+          error: error instanceof Error ? error.message : String(error),
+          createdAtMs: Date.now()
+        });
+        setMixPlanCache((previous) => ({
+          ...previous,
+          [pair.key]: entry
+        }));
+      } finally {
+        setPrecomputingMixPlanKeys((previous) => previous.filter((key) => key !== pair.key));
+      }
+    })();
+  }, [
+    analysisByTrackId,
+    currentTrackIndex,
+    mixPlanCache,
+    precomputingMixPlanKeys,
+    selectedIndex,
+    settings,
+    tracks
+  ]);
+
+  useEffect(() => {
     let mounted = true;
     void window.dropperApi
       .getTracks()
@@ -502,6 +661,79 @@ export const App = (): JSX.Element => {
       mounted = false;
     };
   }, []);
+
+  useEffect(() => {
+    const libraryIds = new Set(
+      libraryTracks.filter((track) => !track.missing).map((track) => track.id)
+    );
+    setSelectedLibraryTrackIds((previous) =>
+      previous.filter((trackId) => libraryIds.has(trackId))
+    );
+    setSelectedLibrarySourcePath((previous) =>
+      previous === ALL_LIBRARY_SOURCES || libraryTracks.some((track) => track.sourcePath === previous)
+        ? previous
+        : ALL_LIBRARY_SOURCES
+    );
+  }, [libraryTracks]);
+
+  useEffect(() => {
+    let mounted = true;
+    void window.dropperApi
+      .getLibraryTracks()
+      .then((restoredLibraryTracks) => {
+        if (!mounted) {
+          return;
+        }
+        setLibraryTracks(restoredLibraryTracks);
+      })
+      .catch(() => undefined);
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    void window.dropperApi
+      .getUserPlaylists()
+      .then((restoredUserPlaylists) => {
+        if (!mounted) {
+          return;
+        }
+        setUserPlaylists(restoredUserPlaylists);
+        const firstPlaylist = restoredUserPlaylists[0] ?? null;
+        if (firstPlaylist) {
+          setSelectedUserPlaylistId(firstPlaylist.id);
+          setUserPlaylistNameDraft(firstPlaylist.name);
+        }
+      })
+      .catch(() => undefined);
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    setSelectedUserPlaylistId((previous) => {
+      if (previous && userPlaylists.some((playlist) => playlist.id === previous)) {
+        return previous;
+      }
+      return userPlaylists[0]?.id ?? '';
+    });
+  }, [userPlaylists]);
+
+  useEffect(() => {
+    const selectedPlaylist = userPlaylists.find(
+      (playlist) => playlist.id === selectedUserPlaylistId
+    );
+    if (selectedPlaylist) {
+      setUserPlaylistNameDraft(selectedPlaylist.name);
+    } else if (userPlaylists.length === 0) {
+      setUserPlaylistNameDraft('');
+    }
+  }, [selectedUserPlaylistId, userPlaylists]);
 
   useEffect(() => {
     const unsubscribe = audioEngine.onEvent((event) => {
@@ -919,6 +1151,34 @@ export const App = (): JSX.Element => {
     flashPlannerDebugNotice('Pairwise comparison exported');
   };
 
+  const commitTrackLoadResult = (result: TrackLoadResult): void => {
+    const nextState = applyTrackLoadResult(
+      {
+        tracks,
+        selectedIndex,
+        currentTrackIndex,
+        resolvedBpmByTrack
+      },
+      result
+    );
+
+    setTracks(nextState.tracks);
+    setSelectedIndex(nextState.selectedIndex);
+    setCurrentTrackIndex(nextState.currentTrackIndex);
+    setResolvedBpmByTrack(nextState.resolvedBpmByTrack);
+    setLastImportMode(result.mode);
+    setLastImportAt(Date.now());
+    setSkippedItems(result.skipped);
+    setPlaybackNotice(null);
+
+    if (result.skipped.length > 0) {
+      const skippedEvents = skippedMessagesToEvents(result.skipped);
+      setEvents((previous) =>
+        [...skippedEvents.reverse(), ...previous].slice(0, MAX_LOG_ITEMS)
+      );
+    }
+  };
+
   const handleLoadTracks = async (mode: TrackLoadMode): Promise<void> => {
     setIsTrackLoadPending(true);
     setTrackLoadNotice(null);
@@ -929,37 +1189,13 @@ export const App = (): JSX.Element => {
         return;
       }
 
-      const nextState = applyTrackLoadResult(
-        {
-          tracks,
-          selectedIndex,
-          currentTrackIndex,
-          resolvedBpmByTrack
-        },
-        result
-      );
-
-      setTracks(nextState.tracks);
-      setSelectedIndex(nextState.selectedIndex);
-      setCurrentTrackIndex(nextState.currentTrackIndex);
-      setResolvedBpmByTrack(nextState.resolvedBpmByTrack);
-      setLastImportMode(result.mode);
-      setLastImportAt(Date.now());
-      setSkippedItems(result.skipped);
-      setPlaybackNotice(null);
+      commitTrackLoadResult(result);
 
       const actionLabel = result.mode === 'append' ? 'Added' : 'Loaded';
       const skippedSuffix =
         result.skipped.length > 0 ? ` (${result.skipped.length} skipped)` : '';
       const trackLabel = result.tracks.length === 1 ? 'track' : 'tracks';
       setTrackLoadNotice(`${actionLabel} ${result.tracks.length} ${trackLabel}${skippedSuffix}`);
-
-      if (result.skipped.length > 0) {
-        const skippedEvents = skippedMessagesToEvents(result.skipped);
-        setEvents((previous) =>
-          [...skippedEvents.reverse(), ...previous].slice(0, MAX_LOG_ITEMS)
-        );
-      }
     } catch (error) {
       const message = formatTrackLoadError(error);
       const loadErrorEvent: PlayerEvent = {
@@ -972,6 +1208,305 @@ export const App = (): JSX.Element => {
       setTrackLoadNotice(message);
     } finally {
       setIsTrackLoadPending(false);
+    }
+  };
+
+  const handleImportLibraryFolder = async (): Promise<void> => {
+    setIsLibraryPending(true);
+    setLibraryNotice(null);
+    try {
+      const result = await window.dropperApi.importLibraryFolder();
+      setLibraryTracks(result.tracks);
+      if (result.canceled) {
+        setLibraryNotice('Canceled');
+        return;
+      }
+
+      const skippedSuffix =
+        result.skipped.length > 0 ? ` · ${result.skipped.length} skipped` : '';
+      const restoredSuffix = result.restored > 0 ? ` · ${result.restored} restored` : '';
+      const missingSuffix = result.missing > 0 ? ` · ${result.missing} missing` : '';
+      setLibraryNotice(
+        `Imported ${result.added} new · ${result.updated} updated${restoredSuffix}${missingSuffix}${skippedSuffix}`
+      );
+
+      if (result.skipped.length > 0) {
+        const skippedEvents = skippedMessagesToEvents(result.skipped);
+        setEvents((previous) =>
+          [...skippedEvents.reverse(), ...previous].slice(0, MAX_LOG_ITEMS)
+        );
+      }
+    } catch (error) {
+      const message = formatTrackLoadError(error);
+      setLibraryNotice(message);
+      setEvents((previous) =>
+        [
+          {
+            type: 'error',
+            at: 0,
+            message
+          },
+          ...previous
+        ].slice(0, MAX_LOG_ITEMS)
+      );
+    } finally {
+      setIsLibraryPending(false);
+    }
+  };
+
+  const handleRescanLibrarySource = async (): Promise<void> => {
+    if (!rescanLibrarySourcePath) {
+      setLibraryNotice('Select one folder to rescan.');
+      return;
+    }
+
+    setIsLibraryPending(true);
+    setLibraryNotice(null);
+    try {
+      const result = await window.dropperApi.rescanLibraryFolder(rescanLibrarySourcePath);
+      setLibraryTracks(result.tracks);
+      const skippedSuffix =
+        result.skipped.length > 0 ? ` · ${result.skipped.length} skipped` : '';
+      const restoredSuffix = result.restored > 0 ? ` · ${result.restored} restored` : '';
+      const missingSuffix = result.missing > 0 ? ` · ${result.missing} missing` : '';
+      setLibraryNotice(
+        `Rescanned ${result.added} new · ${result.updated} updated${restoredSuffix}${missingSuffix}${skippedSuffix}`
+      );
+
+      if (result.skipped.length > 0) {
+        const skippedEvents = skippedMessagesToEvents(result.skipped);
+        setEvents((previous) =>
+          [...skippedEvents.reverse(), ...previous].slice(0, MAX_LOG_ITEMS)
+        );
+      }
+    } catch (error) {
+      const message = formatTrackLoadError(error);
+      setLibraryNotice(message);
+      setEvents((previous) =>
+        [
+          {
+            type: 'error',
+            at: 0,
+            message
+          },
+          ...previous
+        ].slice(0, MAX_LOG_ITEMS)
+      );
+    } finally {
+      setIsLibraryPending(false);
+    }
+  };
+
+  const toggleLibraryTrackSelection = (trackId: string): void => {
+    const libraryTrack = libraryTracks.find((track) => track.id === trackId);
+    if (libraryTrack?.missing) {
+      return;
+    }
+    setSelectedLibraryTrackIds((previous) =>
+      previous.includes(trackId)
+        ? previous.filter((item) => item !== trackId)
+        : [...previous, trackId]
+    );
+  };
+
+  const addSelectedLibraryTracksToPlaylist = async (mode: TrackLoadMode): Promise<void> => {
+    if (selectedLibraryTrackIds.length === 0) {
+      setLibraryNotice('Select library tracks first.');
+      return;
+    }
+
+    setIsLibraryPending(true);
+    setLibraryNotice(null);
+    try {
+      const result = await window.dropperApi.addLibraryTracksToPlaylist(
+        selectedLibraryTrackIds,
+        mode
+      );
+      if (result.canceled) {
+        setLibraryNotice('Canceled');
+        return;
+      }
+
+      commitTrackLoadResult(result);
+      const actionLabel = mode === 'replace' ? 'Started set with' : 'Added';
+      const skippedSuffix =
+        result.skipped.length > 0 ? ` (${result.skipped.length} skipped)` : '';
+      setLibraryNotice(`${actionLabel} ${result.tracks.length} library tracks${skippedSuffix}`);
+      setTrackLoadNotice(`${actionLabel} ${result.tracks.length} library tracks${skippedSuffix}`);
+    } catch (error) {
+      const message = formatTrackLoadError(error);
+      setLibraryNotice(message);
+      setEvents((previous) =>
+        [
+          {
+            type: 'error',
+            at: 0,
+            message
+          },
+          ...previous
+        ].slice(0, MAX_LOG_ITEMS)
+      );
+    } finally {
+      setIsLibraryPending(false);
+    }
+  };
+
+  const handleUserPlaylistSelect = (playlistId: string): void => {
+    setSelectedUserPlaylistId(playlistId);
+    const playlist = userPlaylists.find((item) => item.id === playlistId);
+    setUserPlaylistNameDraft(playlist?.name ?? '');
+    setUserPlaylistNotice(null);
+  };
+
+  const handleSaveCurrentUserPlaylist = async (): Promise<void> => {
+    if (!canSaveCurrentUserPlaylist) {
+      setUserPlaylistNotice(
+        tracks.length === 0 ? 'Load tracks before saving.' : 'Name the playlist first.'
+      );
+      return;
+    }
+
+    setIsUserPlaylistPending(true);
+    setUserPlaylistNotice(null);
+    try {
+      const result = selectedUserPlaylist
+        ? await window.dropperApi.setUserPlaylistTracks(
+            selectedUserPlaylist.id,
+            currentPlaylistTrackIds
+          )
+        : await window.dropperApi.createUserPlaylist(
+            userPlaylistNameDraft,
+            currentPlaylistTrackIds
+          );
+
+      setUserPlaylists(result.playlists);
+      if (result.playlist) {
+        setSelectedUserPlaylistId(result.playlist.id);
+        setUserPlaylistNameDraft(result.playlist.name);
+        setUserPlaylistNotice(`Saved ${result.playlist.trackIds.length} tracks.`);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setUserPlaylistNotice(message);
+    } finally {
+      setIsUserPlaylistPending(false);
+    }
+  };
+
+  const handleRenameUserPlaylist = async (): Promise<void> => {
+    if (!selectedUserPlaylist) {
+      setUserPlaylistNotice('Select a playlist first.');
+      return;
+    }
+    if (userPlaylistNameDraft.trim().length === 0) {
+      setUserPlaylistNotice('Name the playlist first.');
+      return;
+    }
+
+    setIsUserPlaylistPending(true);
+    setUserPlaylistNotice(null);
+    try {
+      const result = await window.dropperApi.renameUserPlaylist(
+        selectedUserPlaylist.id,
+        userPlaylistNameDraft
+      );
+      setUserPlaylists(result.playlists);
+      if (result.playlist) {
+        setSelectedUserPlaylistId(result.playlist.id);
+        setUserPlaylistNameDraft(result.playlist.name);
+        setUserPlaylistNotice('Renamed playlist.');
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setUserPlaylistNotice(message);
+    } finally {
+      setIsUserPlaylistPending(false);
+    }
+  };
+
+  const handleDeleteUserPlaylist = async (): Promise<void> => {
+    if (!selectedUserPlaylist) {
+      return;
+    }
+
+    setIsUserPlaylistPending(true);
+    setUserPlaylistNotice(null);
+    try {
+      const result = await window.dropperApi.deleteUserPlaylist(selectedUserPlaylist.id);
+      setUserPlaylists(result.playlists);
+      const nextPlaylist = result.playlists[0] ?? null;
+      setSelectedUserPlaylistId(nextPlaylist?.id ?? '');
+      setUserPlaylistNameDraft(nextPlaylist?.name ?? '');
+      setUserPlaylistNotice('Deleted playlist.');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setUserPlaylistNotice(message);
+    } finally {
+      setIsUserPlaylistPending(false);
+    }
+  };
+
+  const handleLoadUserPlaylist = async (): Promise<void> => {
+    if (!selectedUserPlaylist) {
+      setUserPlaylistNotice('Select a playlist first.');
+      return;
+    }
+
+    setIsUserPlaylistPending(true);
+    setUserPlaylistNotice(null);
+    try {
+      const result = await window.dropperApi.loadUserPlaylist(selectedUserPlaylist.id);
+      if (result.tracks.length === 0 && result.skipped.length > 0) {
+        setSkippedItems(result.skipped);
+        const skippedEvents = skippedMessagesToEvents(result.skipped);
+        setEvents((previous) =>
+          [...skippedEvents.reverse(), ...previous].slice(0, MAX_LOG_ITEMS)
+        );
+        setUserPlaylistNotice(`No playable tracks (${result.skipped.length} skipped).`);
+        return;
+      }
+
+      commitTrackLoadResult(result);
+      const skippedSuffix =
+        result.skipped.length > 0 ? ` (${result.skipped.length} skipped)` : '';
+      setUserPlaylistNotice(`Loaded ${result.tracks.length} tracks${skippedSuffix}.`);
+      setTrackLoadNotice(`Loaded ${result.tracks.length} playlist tracks${skippedSuffix}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setUserPlaylistNotice(message);
+    } finally {
+      setIsUserPlaylistPending(false);
+    }
+  };
+
+  const handleAddSelectedLibraryTracksToUserPlaylist = async (): Promise<void> => {
+    if (!selectedUserPlaylist) {
+      setLibraryNotice('Select a saved playlist first.');
+      return;
+    }
+    if (selectedLibraryTrackCount === 0) {
+      setLibraryNotice('Select library tracks first.');
+      return;
+    }
+
+    setIsLibraryPending(true);
+    setLibraryNotice(null);
+    try {
+      const result = await window.dropperApi.addLibraryTracksToUserPlaylist(
+        selectedUserPlaylist.id,
+        selectedLibraryTrackIds
+      );
+      setUserPlaylists(result.playlists);
+      if (result.playlist) {
+        setSelectedUserPlaylistId(result.playlist.id);
+        setUserPlaylistNameDraft(result.playlist.name);
+        setLibraryNotice(`Saved ${result.playlist.trackIds.length} tracks to playlist.`);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setLibraryNotice(message);
+    } finally {
+      setIsLibraryPending(false);
     }
   };
 
@@ -1352,6 +1887,33 @@ export const App = (): JSX.Element => {
     0,
     Math.min(METER_BAR_COUNT, Math.round(rmsLevel * METER_BAR_COUNT * 1.7))
   );
+  const libraryTrackIdSet = new Set(libraryTracks.map((track) => track.id));
+  const availableLibraryTrackIdSet = new Set(
+    libraryTracks.filter((track) => !track.missing).map((track) => track.id)
+  );
+  const selectedLibraryTrackCount = selectedLibraryTrackIds.filter((trackId) =>
+    availableLibraryTrackIdSet.has(trackId)
+  ).length;
+  const librarySources = buildMusicLibrarySourceSummaries(libraryTracks);
+  const visibleLibraryTracks = filterMusicLibraryTracks(libraryTracks, {
+    query: librarySearchQuery,
+    sourcePath: selectedLibrarySourcePath
+  });
+  const visibleLibraryTrackLimit = 80;
+  const visibleLibraryTracksCapped = visibleLibraryTracks.slice(0, visibleLibraryTrackLimit);
+  const librarySourceCount = librarySources.length;
+  const missingLibraryTrackCount = libraryTracks.filter((track) => track.missing).length;
+  const rescanLibrarySourcePath =
+    selectedLibrarySourcePath !== ALL_LIBRARY_SOURCES
+      ? selectedLibrarySourcePath
+      : librarySources.length === 1
+        ? librarySources[0].sourcePath
+        : null;
+  const selectedUserPlaylist =
+    userPlaylists.find((playlist) => playlist.id === selectedUserPlaylistId) ?? null;
+  const currentPlaylistTrackIds = tracks.map((track) => track.id);
+  const canSaveCurrentUserPlaylist =
+    currentPlaylistTrackIds.length > 0 && userPlaylistNameDraft.trim().length > 0;
 
   const queueStartIndex =
     currentTrackIndex !== null
@@ -1383,6 +1945,8 @@ export const App = (): JSX.Element => {
   const selectedPairNextAnalysis = selectedPairNextTrack
     ? analysisByTrackId[selectedPairNextTrack.id] ?? null
     : null;
+  const selectedTrackInspector = buildAnalysisInspectorSummary(selectedTrackAnalysis);
+  const selectedPairNextInspector = buildAnalysisInspectorSummary(selectedPairNextAnalysis);
   const resolveTrackBpm = (track: Track | null, analysis?: TrackAnalysis | null): number | null => {
     if (!track) {
       return null;
@@ -1698,6 +2262,27 @@ export const App = (): JSX.Element => {
       : 'args none',
     `timeout ${activeAiAgentProfile?.timeoutMs ?? settings.plannerTimeoutMs}ms`
   ].join(' · ');
+  const mixPlanPrecomputeSummary = summarizeMixPlanCache(
+    mixPlanCache,
+    precomputingMixPlanKeys
+  );
+  const mixPlanPrecomputeSummaryLabel = [
+    `ready ${mixPlanPrecomputeSummary.ready}`,
+    `pending ${mixPlanPrecomputeSummary.pending}`,
+    `failed ${mixPlanPrecomputeSummary.failed}`
+  ].join(' · ');
+  const mixPlanPrecomputeQualityOk =
+    mixPlanPrecomputeSummary.quality.excellent +
+    mixPlanPrecomputeSummary.quality.good +
+    mixPlanPrecomputeSummary.quality.usable;
+  const mixPlanPrecomputeQualityLabel = [
+    `quality ok ${mixPlanPrecomputeQualityOk}`,
+    `weak ${mixPlanPrecomputeSummary.quality.weak}`,
+    `reject-grade ${mixPlanPrecomputeSummary.quality.reject}`,
+    ...(mixPlanPrecomputeSummary.quality.unscored > 0
+      ? [`unscored ${mixPlanPrecomputeSummary.quality.unscored}`]
+      : [])
+  ].join(' · ');
   const harnessCurrentTrack = currentTrack ?? selectedTrack;
   const harnessNextTrack = currentTrack
     ? nextTrack
@@ -1941,7 +2526,7 @@ export const App = (): JSX.Element => {
           <div className="source-summary">
             <span className="panel-tag">Audio Files</span>
             <strong>Local Library</strong>
-            <small>{tracks.length} tracks</small>
+            <small>{libraryTracks.length} library · {tracks.length} set</small>
           </div>
           <div className="device-actions">
               <button
@@ -1976,6 +2561,19 @@ export const App = (): JSX.Element => {
                 <CirclePlus aria-hidden="true" />
                 <span>Add Tracks</span>
               </button>
+              {libraryTracks.length === 0 ? (
+                <button
+                  type="button"
+                  className="secondary-button action-button"
+                  onClick={() => void handleImportLibraryFolder()}
+                  disabled={isLibraryPending}
+                  aria-label="Import music folder"
+                  title={isLibraryPending ? 'Library is importing' : 'Import a music folder'}
+                >
+                  <FolderOpen aria-hidden="true" />
+                  <span>{isLibraryPending ? 'Importing...' : 'Import Folder'}</span>
+                </button>
+              ) : null}
           </div>
           <div className="import-note">
             {isTrackLoadPending ? (
@@ -2003,6 +2601,255 @@ export const App = (): JSX.Element => {
             </div>
             <span className="track-count">{tracks.length} tracks</span>
           </div>
+          <section className="taste-playlist-bar" aria-busy={isUserPlaylistPending}>
+            <div className="taste-playlist-head">
+              <div>
+                <span className="panel-tag">Taste Playlists</span>
+                <strong>{selectedUserPlaylist?.name ?? 'New playlist'}</strong>
+              </div>
+              <span>
+                {userPlaylists.length} saved · {userPlaylistNotice ?? 'Ready'}
+              </span>
+            </div>
+            <div className="taste-playlist-controls">
+              <select
+                value={selectedUserPlaylistId}
+                onChange={(event) => handleUserPlaylistSelect(event.target.value)}
+                aria-label="Saved playlist"
+                disabled={isUserPlaylistPending}
+              >
+                <option value="">New playlist</option>
+                {userPlaylists.map((playlist) => (
+                  <option key={playlist.id} value={playlist.id}>
+                    {playlist.name} ({playlist.trackIds.length})
+                  </option>
+                ))}
+              </select>
+              <input
+                type="text"
+                value={userPlaylistNameDraft}
+                onChange={(event) => setUserPlaylistNameDraft(event.target.value)}
+                placeholder="Playlist name"
+                aria-label="Playlist name"
+                disabled={isUserPlaylistPending}
+              />
+              <button
+                type="button"
+                className="secondary-button action-button"
+                onClick={() => void handleSaveCurrentUserPlaylist()}
+                disabled={isUserPlaylistPending || !canSaveCurrentUserPlaylist}
+                aria-label={selectedUserPlaylist ? 'Save current playlist' : 'Create playlist'}
+                title={
+                  tracks.length === 0
+                    ? 'Load tracks before saving'
+                    : userPlaylistNameDraft.trim().length === 0
+                      ? 'Name the playlist first'
+                      : selectedUserPlaylist
+                        ? 'Save current track order to this playlist'
+                        : 'Create a playlist from the current track order'
+                }
+              >
+                <CirclePlus aria-hidden="true" />
+                <span>{selectedUserPlaylist ? 'Save Current' : 'Create'}</span>
+              </button>
+              {selectedUserPlaylist ? (
+                <>
+                  <button
+                    type="button"
+                    className="secondary-button action-button"
+                    onClick={() => void handleRenameUserPlaylist()}
+                    disabled={isUserPlaylistPending || userPlaylistNameDraft.trim().length === 0}
+                    aria-label="Rename selected playlist"
+                    title="Rename selected playlist"
+                  >
+                    <Settings aria-hidden="true" />
+                    <span>Rename</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary-button action-button"
+                    onClick={() => void handleLoadUserPlaylist()}
+                    disabled={isUserPlaylistPending}
+                    aria-label="Load selected playlist"
+                    title="Load selected playlist"
+                  >
+                    <Play aria-hidden="true" />
+                    <span>Load</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary-button action-button danger"
+                    onClick={() => void handleDeleteUserPlaylist()}
+                    disabled={isUserPlaylistPending}
+                    aria-label="Delete selected playlist"
+                    title="Delete selected playlist"
+                  >
+                    <Trash2 aria-hidden="true" />
+                    <span>Delete</span>
+                  </button>
+                </>
+              ) : null}
+            </div>
+          </section>
+          <section
+            className={`library-drawer ${libraryTracks.length === 0 ? 'empty' : ''}`}
+            aria-busy={isLibraryPending}
+          >
+            <div className="library-drawer-head">
+              <div>
+                <span className="panel-tag">Music Library</span>
+                <strong>
+                  {libraryTracks.length} tracks
+                  {librarySourceCount > 0 ? ` · ${librarySourceCount} folders` : ''}
+                </strong>
+              </div>
+              <div className="library-actions">
+                <button
+                  type="button"
+                  className="secondary-button action-button"
+                  onClick={() => void handleImportLibraryFolder()}
+                  disabled={isLibraryPending}
+                  aria-label="Import music folder"
+                  title={isLibraryPending ? 'Library is importing' : 'Import a music folder'}
+                >
+                  <FolderOpen aria-hidden="true" />
+                  <span>{isLibraryPending ? 'Importing...' : 'Import Folder'}</span>
+                </button>
+                {libraryTracks.length > 0 ? (
+                  <>
+                    <button
+                      type="button"
+                      className="secondary-button action-button"
+                      onClick={() => void handleRescanLibrarySource()}
+                      disabled={isLibraryPending || !rescanLibrarySourcePath}
+                      aria-label="Rescan selected music folder"
+                      title={
+                        rescanLibrarySourcePath
+                          ? 'Rescan the selected music folder'
+                          : 'Select one folder to rescan'
+                      }
+                    >
+                      <RefreshCw aria-hidden="true" />
+                      <span>Rescan</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary-button action-button"
+                      onClick={() => void addSelectedLibraryTracksToPlaylist('append')}
+                      disabled={isLibraryPending || selectedLibraryTrackCount === 0}
+                      aria-label="Add selected library tracks"
+                      title={
+                        selectedLibraryTrackCount === 0
+                          ? 'Select library tracks first'
+                          : 'Add selected library tracks to the playlist'
+                      }
+                    >
+                      <CirclePlus aria-hidden="true" />
+                      <span>Add Selected</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary-button action-button"
+                      onClick={() => void handleAddSelectedLibraryTracksToUserPlaylist()}
+                      disabled={
+                        isLibraryPending || !selectedUserPlaylist || selectedLibraryTrackCount === 0
+                      }
+                      aria-label="Add selected library tracks to saved playlist"
+                      title={
+                        !selectedUserPlaylist
+                          ? 'Select a saved playlist first'
+                          : selectedLibraryTrackCount === 0
+                            ? 'Select library tracks first'
+                            : 'Add selected library tracks to the saved playlist'
+                      }
+                    >
+                      <CirclePlus aria-hidden="true" />
+                      <span>Add to Saved</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary-button action-button"
+                      onClick={() => void addSelectedLibraryTracksToPlaylist('replace')}
+                      disabled={isLibraryPending || selectedLibraryTrackCount === 0}
+                      aria-label="Start set from selected library tracks"
+                      title={
+                        selectedLibraryTrackCount === 0
+                          ? 'Select library tracks first'
+                          : 'Replace the playlist with selected library tracks'
+                      }
+                    >
+                      <Play aria-hidden="true" />
+                      <span>Start Set</span>
+                    </button>
+                  </>
+                ) : null}
+              </div>
+            </div>
+            {libraryTracks.length > 0 ? (
+              <>
+                <div className="library-meta-row">
+                  <span>
+                    {visibleLibraryTracks.length} shown · {selectedLibraryTrackCount} selected
+                    {missingLibraryTrackCount > 0 ? ` · ${missingLibraryTrackCount} missing` : ''}
+                  </span>
+                  <span>{libraryNotice ?? 'Ready'}</span>
+                </div>
+                <div className="library-filter-row">
+                  <input
+                    type="search"
+                    value={librarySearchQuery}
+                    onChange={(event) => setLibrarySearchQuery(event.target.value)}
+                    placeholder="Search library"
+                    aria-label="Search music library"
+                  />
+                  <select
+                    value={selectedLibrarySourcePath}
+                    onChange={(event) => setSelectedLibrarySourcePath(event.target.value)}
+                    aria-label="Filter music library by folder"
+                  >
+                    <option value={ALL_LIBRARY_SOURCES}>All folders</option>
+                    {librarySources.map((source) => (
+                      <option key={source.sourcePath} value={source.sourcePath}>
+                        {source.sourceLabel} ({source.count})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </>
+            ) : null}
+            {libraryTracks.length === 0 ? (
+              <p className="muted library-empty">{libraryNotice ?? 'No library tracks'}</p>
+            ) : visibleLibraryTracks.length === 0 ? (
+              <p className="muted library-empty">No matching library tracks</p>
+            ) : (
+              <ul className="library-track-list" aria-label="Music library tracks">
+                {visibleLibraryTracksCapped.map((track) => (
+                  <li key={track.id} className={track.missing ? 'missing' : ''}>
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={selectedLibraryTrackIds.includes(track.id)}
+                        disabled={track.missing}
+                        onChange={() => toggleLibraryTrackSelection(track.id)}
+                      />
+                      <span className="title" title={track.title}>{track.title}</span>
+                      <span>{formatOptionalBpm(track.bpm)}</span>
+                      <span>{formatDuration(track.durationSec)}</span>
+                      <span title={track.sourcePath}>
+                        {track.sourceLabel}
+                        {track.missing ? ' · Missing' : ''}
+                      </span>
+                    </label>
+                  </li>
+                ))}
+                {visibleLibraryTracks.length > visibleLibraryTrackLimit ? (
+                  <li className="library-limit-note">
+                    Showing first {visibleLibraryTrackLimit} matches. Narrow the search to see more.
+                  </li>
+                ) : null}
+              </ul>
+            )}
+          </section>
           <div className="playlist-toolbar">
             <button
               type="button"
@@ -2170,6 +3017,24 @@ export const App = (): JSX.Element => {
                     <span>Bars {selectedTrackAnalysis?.barGrid.length ?? 0}</span>
                     <span>Out {formatOptionalDuration(selectedTrackAnalysis?.outroCueSec)}</span>
                   </div>
+                  <div className="analysis-signal-strip">
+                    <span>Grid {formatAnalysisPercent(selectedTrackInspector.beatGridQuality)}</span>
+                    <span>Trans {formatAnalysisPercent(selectedTrackInspector.transientQuality)}</span>
+                    <span>
+                      Phrase {formatAnalysisPercent(selectedTrackInspector.phraseAverageConfidence)} /{' '}
+                      {formatAnalysisPercent(selectedTrackInspector.phraseMaxConfidence)}
+                    </span>
+                    <span>Cue {formatAnalysisPercent(selectedTrackInspector.cueConfidenceMin)}</span>
+                  </div>
+                  <small className={`analysis-readiness ${selectedTrackInspector.status}`}>
+                    {selectedTrackInspector.statusLabel}
+                    {selectedTrackInspector.issues.length > 0
+                      ? ` · ${selectedTrackInspector.issues
+                          .slice(0, 2)
+                          .map((issue) => issue.label)
+                          .join(' · ')}`
+                      : ''}
+                  </small>
                 </div>
 
                 <div className="pair-track-line">
@@ -2201,6 +3066,24 @@ export const App = (): JSX.Element => {
                     <span>Bars {selectedPairNextAnalysis?.barGrid.length ?? 0}</span>
                     <span>In {formatOptionalDuration(selectedPairNextAnalysis?.introCueSec)}</span>
                   </div>
+                  <div className="analysis-signal-strip">
+                    <span>Grid {formatAnalysisPercent(selectedPairNextInspector.beatGridQuality)}</span>
+                    <span>Trans {formatAnalysisPercent(selectedPairNextInspector.transientQuality)}</span>
+                    <span>
+                      Phrase {formatAnalysisPercent(selectedPairNextInspector.phraseAverageConfidence)} /{' '}
+                      {formatAnalysisPercent(selectedPairNextInspector.phraseMaxConfidence)}
+                    </span>
+                    <span>Cue {formatAnalysisPercent(selectedPairNextInspector.cueConfidenceMin)}</span>
+                  </div>
+                  <small className={`analysis-readiness ${selectedPairNextInspector.status}`}>
+                    {selectedPairNextInspector.statusLabel}
+                    {selectedPairNextInspector.issues.length > 0
+                      ? ` · ${selectedPairNextInspector.issues
+                          .slice(0, 2)
+                          .map((issue) => issue.label)
+                          .join(' · ')}`
+                      : ''}
+                  </small>
                 </div>
               </article>
 
@@ -2339,8 +3222,9 @@ export const App = (): JSX.Element => {
                     key={`current-phrase-${phrase.index}`}
                     className="supervisor-phrase-marker"
                     style={{
-                      left: `${durationPercent(phrase.startSec, supervisorCurrentDurationSec)}%`
-                    }}
+                      left: `${durationPercent(phrase.startSec, supervisorCurrentDurationSec)}%`,
+                      '--phrase-confidence': phrase.confidence
+                    } as CSSProperties}
                   />
                 ))}
                 {supervisorCurrentAnalysis?.transientMarkers.slice(0, 80).map((marker) => (
@@ -2404,8 +3288,9 @@ export const App = (): JSX.Element => {
                     key={`next-phrase-${phrase.index}`}
                     className="supervisor-phrase-marker"
                     style={{
-                      left: `${durationPercent(phrase.startSec, supervisorNextDurationSec)}%`
-                    }}
+                      left: `${durationPercent(phrase.startSec, supervisorNextDurationSec)}%`,
+                      '--phrase-confidence': phrase.confidence
+                    } as CSSProperties}
                   />
                 ))}
                 {supervisorNextAnalysis?.transientMarkers.slice(0, 80).map((marker) => (
@@ -2714,6 +3599,17 @@ export const App = (): JSX.Element => {
                 <div className="planner-debug-summary">
                   <strong>{MIX_PLAN_PLANNER_PRESET_DESCRIPTIONS[plannerPresetLabel]}</strong>
                   <small>{plannerConfigSummary}</small>
+                </div>
+              </div>
+              <div className="setting-row">
+                <label>Precompute cache</label>
+                <div className="planner-debug-summary">
+                  <strong>{mixPlanPrecomputeSummaryLabel}</strong>
+                  <small>
+                    {settings.aiDjEnabled
+                      ? `Adjacent playlist pairs are prepared in the background. ${mixPlanPrecomputeQualityLabel}.`
+                      : 'AI planner is disabled.'}
+                  </small>
                 </div>
               </div>
               <div className="setting-row">

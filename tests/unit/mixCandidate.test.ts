@@ -1,4 +1,4 @@
-import { sanitizeTrackAnalysis } from '../../src/shared/analysis';
+import { sanitizeTrackAnalysis, TRACK_ANALYSIS_SCHEMA_VERSION } from '../../src/shared/analysis';
 import { buildMixPairContext } from '../../src/shared/mixCandidate';
 import { Track } from '../../src/shared/types';
 
@@ -21,6 +21,7 @@ const nextTrack: Track = {
 describe('buildMixPairContext', () => {
   it('ranks phrase-aware candidates with BPM and energy evidence', () => {
     const currentAnalysis = sanitizeTrackAnalysis('current', {
+      schemaVersion: TRACK_ANALYSIS_SCHEMA_VERSION,
       bpm: 124,
       bpmConfidence: 0.8,
       introCueSec: 0,
@@ -40,6 +41,7 @@ describe('buildMixPairContext', () => {
         { index: 0, timeSec: 159.2, strength: 0.84 }
       ],
       energyProfile: [0.9, 0.6, 0.4],
+      waveformDetail: [{ timeSec: 159.2, peak: 0.8, rms: 0.5, min: -0.4, max: 0.8 }],
       analysisConfidence: 0.86,
       analysisQuality: {
         waveformDetail: 0.8,
@@ -59,6 +61,7 @@ describe('buildMixPairContext', () => {
       ]
     });
     const nextAnalysis = sanitizeTrackAnalysis('next', {
+      schemaVersion: TRACK_ANALYSIS_SCHEMA_VERSION,
       bpm: 126,
       bpmConfidence: 0.82,
       introCueSec: 8,
@@ -76,6 +79,7 @@ describe('buildMixPairContext', () => {
         { index: 0, timeSec: 7.6, strength: 0.84 }
       ],
       energyProfile: [0.2, 0.5, 0.75],
+      waveformDetail: [{ timeSec: 7.6, peak: 0.8, rms: 0.5, min: -0.4, max: 0.8 }],
       analysisConfidence: 0.84,
       analysisQuality: {
         waveformDetail: 0.8,
@@ -135,8 +139,90 @@ describe('buildMixPairContext', () => {
     expect(context.candidates[0]?.confidence).toBeLessThanOrEqual(0.42);
   });
 
+  it('does not promote low-confidence beat grids to analysis candidates', () => {
+    const currentAnalysis = sanitizeTrackAnalysis('current', {
+      schemaVersion: TRACK_ANALYSIS_SCHEMA_VERSION,
+      bpm: 124,
+      bpmConfidence: 0.2,
+      introCueSec: 0,
+      outroCueSec: 160,
+      beatGridSec: [144, 145.9, 147.8, 149.7, 151.6, 153.5, 155.4, 157.3, 159.2],
+      downbeatsSec: [144, 151.6, 159.2],
+      barGrid: [
+        { index: 18, startSec: 144, beatIndex: 72 },
+        { index: 19, startSec: 151.6, beatIndex: 76 },
+        { index: 20, startSec: 159.2, beatIndex: 80 }
+      ],
+      phraseMarkers: [{ index: 0, startSec: 159.2, bars: 8, confidence: 0.82 }],
+      transientMarkers: [{ index: 0, timeSec: 159.2, strength: 0.84 }],
+      energyProfile: [0.9, 0.6, 0.4],
+      waveformDetail: [{ timeSec: 159.2, peak: 0.8, rms: 0.5, min: -0.4, max: 0.8 }],
+      analysisConfidence: 0.86,
+      analysisQuality: {
+        waveformDetail: 0.8,
+        spectralBands: 0.75,
+        transientMarkers: 0.7,
+        beatGrid: 0.8
+      },
+      cueCandidates: [
+        {
+          id: 'outro',
+          type: 'outro',
+          startSec: 160,
+          endSec: 180,
+          confidence: 0.8,
+          label: 'Outro'
+        }
+      ]
+    });
+    const nextAnalysis = sanitizeTrackAnalysis('next', {
+      schemaVersion: TRACK_ANALYSIS_SCHEMA_VERSION,
+      bpm: 126,
+      bpmConfidence: 0.2,
+      introCueSec: 8,
+      beatGridSec: [0, 1.9, 3.8, 5.7, 7.6, 9.5],
+      downbeatsSec: [0, 7.6],
+      barGrid: [
+        { index: 0, startSec: 0, beatIndex: 0 },
+        { index: 1, startSec: 7.6, beatIndex: 4 }
+      ],
+      phraseMarkers: [{ index: 0, startSec: 7.6, bars: 8, confidence: 0.82 }],
+      transientMarkers: [{ index: 0, timeSec: 7.6, strength: 0.84 }],
+      energyProfile: [0.2, 0.5, 0.75],
+      waveformDetail: [{ timeSec: 7.6, peak: 0.8, rms: 0.5, min: -0.4, max: 0.8 }],
+      analysisConfidence: 0.84,
+      analysisQuality: {
+        waveformDetail: 0.8,
+        spectralBands: 0.75,
+        transientMarkers: 0.7,
+        beatGrid: 0.8
+      },
+      cueCandidates: [
+        {
+          id: 'first-downbeat',
+          type: 'first_downbeat',
+          startSec: 8,
+          endSec: 12,
+          confidence: 0.8,
+          label: 'First downbeat'
+        }
+      ]
+    });
+
+    const context = buildMixPairContext({
+      currentTrack,
+      nextTrack,
+      currentAnalysis,
+      nextAnalysis
+    });
+
+    expect(context.candidates[0]?.source).toBe('cue');
+    expect(context.candidates.some((candidate) => candidate.source === 'analysis')).toBe(false);
+  });
+
   it('uses strong cue-only analysis before tail fallback while detailed waveform is pending', () => {
     const currentAnalysis = sanitizeTrackAnalysis('current', {
+      schemaVersion: TRACK_ANALYSIS_SCHEMA_VERSION,
       bpm: 124,
       bpmConfidence: 0.7,
       outroCueSec: 160,
@@ -159,6 +245,7 @@ describe('buildMixPairContext', () => {
       ]
     });
     const nextAnalysis = sanitizeTrackAnalysis('next', {
+      schemaVersion: TRACK_ANALYSIS_SCHEMA_VERSION,
       bpm: 126,
       bpmConfidence: 0.72,
       introCueSec: 8,

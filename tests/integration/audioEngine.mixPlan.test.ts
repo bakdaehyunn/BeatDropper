@@ -199,10 +199,160 @@ describe('AudioEngine mix plan execution', () => {
     const secondSource = contextRef?.sources[1];
 
     expect(applied).toBeDefined();
+    expect(applied?.details?.mixPlanQualityGrade).toEqual(expect.any(String));
+    expect(applied?.details?.mixPlanQualityScore).toEqual(expect.any(Number));
     expect(transitionStarted?.details?.source).toBe('ai');
     expect(transitionStarted?.details?.nextTrackStartOffsetSec).toBe(12);
     expect(secondSource?.startCalls[0]?.offset).toBe(12);
     expect(secondSource?.playbackRate.setCalls[0]?.value).toBeCloseTo(0.97, 5);
+
+    await engine.destroy();
+  });
+
+  it('uses a cached mix plan before requesting a live planner result', async () => {
+    const baseMs = Date.now();
+    const nowProvider = (): number => (Date.now() - baseMs) / 1000;
+    const decodePolicy = new Map<number, { delayMs: number; durationSec: number }>([
+      [1, { delayMs: 0, durationSec: 10 }],
+      [2, { delayMs: 0, durationSec: 24 }]
+    ]);
+
+    let livePlannerCalls = 0;
+    const events: PlayerEvent[] = [];
+    const engine = new AudioEngine({
+      readTrackBuffer: async (trackId: string) => {
+        const marker = trackId === '2' ? 2 : 1;
+        return new Uint8Array([marker]).buffer;
+      },
+      getCachedMixPlan: () => ({
+        source: 'cli',
+        reason: null,
+        request: {} as never,
+        response: null,
+        analysis: {
+          current: null,
+          next: null
+        },
+        plan: {
+          transitionStartSec: 4,
+          transitionEndSec: 7,
+          nextTrackStartOffsetSec: 9,
+          style: 'smooth_blend',
+          confidence: 0.88,
+          reasoningSummary: 'Cached plan',
+          tempoSync: {
+            enabled: false,
+            targetRate: null
+          }
+        }
+      }),
+      requestMixPlan: async () => {
+        livePlannerCalls += 1;
+        throw new Error('live planner should not run');
+      },
+      settings: {
+        fadeDurationSec: 8,
+        masterGain: 1,
+        predecodeLeadSec: 2,
+        repeatAll: false
+      },
+      contextFactory: () => new FakeAudioContext(nowProvider, decodePolicy)
+    });
+
+    engine.onEvent((event) => events.push(event));
+    engine.loadTracks(tracks);
+    await engine.start(0);
+    await flushPromises();
+
+    await vi.advanceTimersByTimeAsync(7_500);
+    await flushPromises();
+
+    const applied = events.find((event) => event.type === 'mix_plan_applied');
+    const transitionStarted = events.find((event) => event.type === 'transition_started');
+
+    expect(livePlannerCalls).toBe(0);
+    expect(applied?.details?.cacheStatus).toBe('hit');
+    expect(transitionStarted?.details?.nextTrackStartOffsetSec).toBe(9);
+
+    await engine.destroy();
+  });
+
+  it('falls back to the rule-based transition when planner timing is reject-grade', async () => {
+    const baseMs = Date.now();
+    const nowProvider = (): number => (Date.now() - baseMs) / 1000;
+    const decodePolicy = new Map<number, { delayMs: number; durationSec: number }>([
+      [1, { delayMs: 0, durationSec: 20 }],
+      [2, { delayMs: 0, durationSec: 24 }]
+    ]);
+    const longCurrentTracks: Track[] = [
+      {
+        ...tracks[0],
+        durationSec: 20
+      },
+      tracks[1]
+    ];
+
+    const events: PlayerEvent[] = [];
+    const engine = new AudioEngine({
+      readTrackBuffer: async (trackId: string) => {
+        const marker = trackId === '2' ? 2 : 1;
+        return new Uint8Array([marker]).buffer;
+      },
+      requestMixPlan: async () => ({
+        source: 'cli',
+        reason: null,
+        request: {} as never,
+        response: null,
+        analysis: {
+          current: null,
+          next: null
+        },
+        plan: {
+          transitionStartSec: 0.1,
+          transitionEndSec: 0.2,
+          nextTrackStartOffsetSec: 0,
+          style: 'smooth_blend',
+          confidence: 0.92,
+          reasoningSummary: 'too late to use this timing',
+          tempoSync: {
+            enabled: false,
+            targetRate: null
+          }
+        }
+      }),
+      settings: {
+        fadeDurationSec: 8,
+        masterGain: 1,
+        predecodeLeadSec: 3,
+        repeatAll: false
+      },
+      contextFactory: () => new FakeAudioContext(nowProvider, decodePolicy)
+    });
+
+    engine.onEvent((event) => events.push(event));
+    engine.loadTracks(longCurrentTracks);
+    await engine.start(0);
+    await flushPromises();
+
+    await vi.advanceTimersByTimeAsync(13_000);
+    await flushPromises();
+
+    const applied = events.find((event) => event.type === 'mix_plan_applied');
+    const fallback = events.find((event) => event.type === 'mix_plan_fallback');
+    const transitionStarted = events.find((event) => event.type === 'transition_started');
+
+    expect(applied).toBeUndefined();
+    expect(fallback?.details?.reason).toBe('mix_plan_quality_reject');
+    expect(fallback?.details?.mixPlanQualityGrade).toBe('reject');
+    expect(fallback?.details?.mixPlanQualityIssues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'transition_before_playhead',
+          severity: 'critical'
+        })
+      ])
+    );
+    expect(transitionStarted?.details?.source).toBe('rule_based');
 
     await engine.destroy();
   });

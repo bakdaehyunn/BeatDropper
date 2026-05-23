@@ -1,5 +1,7 @@
 import {
   BarMarker,
+  PhraseMarker,
+  TRACK_ANALYSIS_SCHEMA_VERSION,
   sanitizeTrackAnalysis,
   SpectralBandPoint,
   TrackAnalysis,
@@ -165,24 +167,69 @@ const buildSpectralBands = (buffer: AudioBufferForBpm): SpectralBandPoint[] => {
 
 const buildTransientMarkers = (
   waveformDetail: WaveformDetailPoint[],
+  spectralBands: SpectralBandPoint[],
   durationSec: number
 ): TransientMarker[] => {
   if (waveformDetail.length < 4 || durationSec <= 0) {
     return [];
   }
 
-  const strengths = waveformDetail.map((point, index) => {
+  const normalizeScores = (values: number[]): number[] => {
+    const max = Math.max(1e-6, ...values);
+    return values.map((value) => clamp(value / max, 0, 1));
+  };
+  const resolveBandAt = (index: number): SpectralBandPoint | null => {
+    if (spectralBands.length === 0) {
+      return null;
+    }
+    if (spectralBands.length === waveformDetail.length) {
+      return spectralBands[index] ?? null;
+    }
+    const spectralIndex = Math.round(
+      (index / Math.max(1, waveformDetail.length - 1)) * (spectralBands.length - 1)
+    );
+    return spectralBands[clamp(spectralIndex, 0, spectralBands.length - 1)] ?? null;
+  };
+
+  const onsetEvidence = waveformDetail.map((point, index) => {
     const previous = waveformDetail[Math.max(0, index - 1)]?.rms ?? 0;
-    return Math.max(0, point.rms - previous);
+    const previousPoint = waveformDetail[Math.max(0, index - 1)] ?? point;
+    const band = resolveBandAt(index);
+    const previousBand = resolveBandAt(Math.max(0, index - 1)) ?? band;
+    const spectralFlux =
+      band && previousBand
+        ? Math.max(0, band.high - previousBand.high) * 0.56 +
+          Math.max(0, band.mid - previousBand.mid) * 0.32 +
+          Math.max(0, band.low - previousBand.low) * 0.12
+        : 0;
+
+    return {
+      rmsRise: Math.max(0, point.rms - previous),
+      peakRise: Math.max(0, point.peak - previousPoint.peak),
+      spectralFlux
+    };
   });
-  const maxStrength = Math.max(1e-6, ...strengths);
-  const normalized = strengths.map((value) => clamp(value / maxStrength, 0, 1));
+  const rmsScores = normalizeScores(onsetEvidence.map((item) => item.rmsRise));
+  const peakScores = normalizeScores(onsetEvidence.map((item) => item.peakRise));
+  const spectralScores = normalizeScores(onsetEvidence.map((item) => item.spectralFlux));
+  const normalized = onsetEvidence.map((_item, index) =>
+    clamp(
+      rmsScores[index] * 0.44 +
+        peakScores[index] * 0.12 +
+        spectralScores[index] * 0.44,
+      0,
+      1
+    )
+  );
   const markers: TransientMarker[] = [];
   let lastTimeSec = -Infinity;
 
   normalized.forEach((strength, index) => {
     const point = waveformDetail[index];
-    if (!point || strength < 0.58 || point.timeSec - lastTimeSec < 0.18) {
+    const previousStrength = normalized[Math.max(0, index - 1)] ?? 0;
+    const nextStrength = normalized[Math.min(normalized.length - 1, index + 1)] ?? 0;
+    const isLocalPeak = strength >= previousStrength && strength >= nextStrength;
+    if (!point || !isLocalPeak || strength < 0.46 || point.timeSec - lastTimeSec < 0.18) {
       return;
     }
     markers.push({
@@ -375,15 +422,19 @@ const buildDownbeatGrid = (
     };
   }
 
-  let bestPhase = 0;
-  let bestScore = scoreDownbeatPhase(beatGridSec, 0, transientMarkers, energyProfile, durationSec);
-  for (let phase = 1; phase < 4; phase += 1) {
-    const score = scoreDownbeatPhase(beatGridSec, phase, transientMarkers, energyProfile, durationSec);
-    if (score > bestScore) {
-      bestScore = score;
-      bestPhase = phase;
-    }
-  }
+  const phaseScores = Array.from({ length: 4 }, (_item, phase) => ({
+    phase,
+    score: scoreDownbeatPhase(beatGridSec, phase, transientMarkers, energyProfile, durationSec)
+  }));
+  const rankedScores = [...phaseScores].sort((left, right) => right.score - left.score);
+  const best = rankedScores[0] ?? { phase: 0, score: 0 };
+  const second = rankedScores[1] ?? { phase: 0, score: 0 };
+  const bestPhase = best.phase;
+  const bestScore = best.score;
+  const phaseSeparation =
+    bestScore > 0 ? clamp((bestScore - second.score) / bestScore, 0, 1) : 0;
+  const evidenceConfidence = clamp(bestScore, 0, 1);
+  const confidence = clamp(evidenceConfidence * 0.45 + phaseSeparation * 0.55, 0, 1);
 
   const downbeatsSec = beatGridSec.filter((_beat, index) => index % 4 === bestPhase);
   const barGrid = downbeatsSec.map((startSec, index) => ({
@@ -395,8 +446,71 @@ const buildDownbeatGrid = (
   return {
     downbeatsSec,
     barGrid,
-    confidence: clamp(bestScore, 0, 1)
+    confidence
   };
+};
+
+const scoreTransientMarkerQuality = (input: {
+  transientMarkers: TransientMarker[];
+  beatGridSec: number[];
+  durationSec: number;
+  beatPhaseConfidence: number;
+  downbeatConfidence: number;
+}): number => {
+  if (input.transientMarkers.length === 0 || input.durationSec <= 0) {
+    return 0;
+  }
+
+  const averageStrength =
+    input.transientMarkers.reduce((sum, marker) => sum + clamp(marker.strength, 0, 1), 0) /
+    input.transientMarkers.length;
+  const markerDensity = input.transientMarkers.length / Math.max(1, input.durationSec);
+  const expectedBeatDensity =
+    input.beatGridSec.length > 0
+      ? input.beatGridSec.length / Math.max(1, input.durationSec)
+      : 2;
+  const densityRatio = markerDensity / Math.max(0.25, expectedBeatDensity);
+  const densityScore = clamp(
+    densityRatio <= 1 ? densityRatio : 1 - (densityRatio - 1) / 3,
+    0,
+    1
+  );
+  const beatAlignmentScore =
+    input.beatGridSec.length > 0
+      ? (() => {
+          const windowSec = 0.14;
+          let score = 0;
+          let weight = 0;
+          for (const marker of input.transientMarkers.slice(0, 256)) {
+            let bestDistance = Infinity;
+            for (const beatSec of input.beatGridSec) {
+              const distance = Math.abs(marker.timeSec - beatSec);
+              if (distance < bestDistance) {
+                bestDistance = distance;
+              }
+              if (beatSec > marker.timeSec + windowSec) {
+                break;
+              }
+            }
+            const markerWeight = clamp(marker.strength, 0, 1);
+            weight += markerWeight;
+            if (bestDistance <= windowSec) {
+              score += markerWeight * (1 - bestDistance / windowSec);
+            }
+          }
+          return weight > 0 ? score / weight : 0;
+        })()
+      : 0;
+
+  return clamp(
+    densityScore * 0.18 +
+      averageStrength * 0.18 +
+      beatAlignmentScore * 0.28 +
+      input.beatPhaseConfidence * 0.2 +
+      input.downbeatConfidence * 0.16,
+    0,
+    1
+  );
 };
 
 const findNearestBar = (barGrid: BarMarker[], timeSec: number): BarMarker | null => {
@@ -467,6 +581,348 @@ const findEnergyTime = (
   return (bestIndex / Math.max(1, energyProfile.length - 1)) * durationSec;
 };
 
+const getEnergyAtTime = (
+  energyProfile: number[],
+  durationSec: number,
+  timeSec: number
+): number | null => {
+  if (energyProfile.length === 0 || durationSec <= 0) {
+    return null;
+  }
+
+  const index = clamp(
+    Math.round((timeSec / durationSec) * (energyProfile.length - 1)),
+    0,
+    energyProfile.length - 1
+  );
+  return energyProfile[index] ?? null;
+};
+
+const getEnergyWindowAverage = (
+  energyProfile: number[],
+  durationSec: number,
+  startSec: number,
+  endSec: number
+): number | null => {
+  if (energyProfile.length === 0 || durationSec <= 0) {
+    return null;
+  }
+
+  const clampedStartSec = clamp(startSec, 0, durationSec);
+  const clampedEndSec = clamp(endSec, 0, durationSec);
+  if (clampedEndSec <= clampedStartSec) {
+    return null;
+  }
+
+  let weightedSum = 0;
+  let weight = 0;
+  for (let index = 0; index < energyProfile.length; index += 1) {
+    const bucketStartSec = (index / energyProfile.length) * durationSec;
+    const bucketEndSec = ((index + 1) / energyProfile.length) * durationSec;
+    const overlapSec =
+      Math.min(bucketEndSec, clampedEndSec) - Math.max(bucketStartSec, clampedStartSec);
+    if (overlapSec <= 0) {
+      continue;
+    }
+    weightedSum += (energyProfile[index] ?? 0) * overlapSec;
+    weight += overlapSec;
+  }
+
+  return weight > 0 ? weightedSum / weight : null;
+};
+
+const getTransientWeightDensity = (
+  transientMarkers: TransientMarker[],
+  durationSec: number,
+  startSec: number,
+  endSec: number
+): number | null => {
+  const clampedStartSec = clamp(startSec, 0, durationSec);
+  const clampedEndSec = clamp(endSec, 0, durationSec);
+  if (durationSec <= 0 || clampedEndSec <= clampedStartSec) {
+    return null;
+  }
+
+  const totalStrength = transientMarkers.reduce((sum, marker) => {
+    return marker.timeSec >= clampedStartSec && marker.timeSec < clampedEndSec
+      ? sum + clamp(marker.strength, 0, 1)
+      : sum;
+  }, 0);
+
+  return totalStrength / Math.max(0.001, clampedEndSec - clampedStartSec);
+};
+
+const scorePhraseMarkerConfidence = (input: {
+  bar: BarMarker;
+  beatIntervalSec: number | null;
+  beatGridQuality: number;
+  bpmConfidence: number;
+  downbeatConfidence: number;
+  durationSec: number;
+  energyProfile: number[];
+  transientMarkers: TransientMarker[];
+}): number => {
+  const phraseLengthSec = input.beatIntervalSec !== null ? input.beatIntervalSec * 32 : 16;
+  const windowSec = clamp(phraseLengthSec * 0.5, 6, 18);
+  const beforeStartSec = input.bar.startSec - windowSec;
+  const beforeEndSec = input.bar.startSec;
+  const afterStartSec = input.bar.startSec;
+  const afterEndSec = input.bar.startSec + windowSec;
+  const beforeEnergy = getEnergyWindowAverage(
+    input.energyProfile,
+    input.durationSec,
+    beforeStartSec,
+    beforeEndSec
+  );
+  const afterEnergy = getEnergyWindowAverage(
+    input.energyProfile,
+    input.durationSec,
+    afterStartSec,
+    afterEndSec
+  );
+  const beforeDensity = getTransientWeightDensity(
+    input.transientMarkers,
+    input.durationSec,
+    beforeStartSec,
+    beforeEndSec
+  );
+  const afterDensity = getTransientWeightDensity(
+    input.transientMarkers,
+    input.durationSec,
+    afterStartSec,
+    afterEndSec
+  );
+  const energyDelta =
+    beforeEnergy !== null && afterEnergy !== null ? Math.abs(afterEnergy - beforeEnergy) : 0;
+  const densityDelta =
+    beforeDensity !== null && afterDensity !== null
+      ? Math.abs(afterDensity - beforeDensity)
+      : 0;
+  const sectionChangeScore =
+    clamp((energyDelta - 0.08) / 0.28, 0, 1) * 0.2 +
+    clamp((densityDelta - 0.12) / 0.42, 0, 1) * 0.1;
+  const startBoundaryScore = input.bar.index === 0 ? 0.03 : 0;
+
+  return clamp(
+    0.16 +
+      input.bpmConfidence * 0.18 +
+      input.beatGridQuality * 0.2 +
+      input.downbeatConfidence * 0.18 +
+      sectionChangeScore +
+      startBoundaryScore,
+    0,
+    0.88
+  );
+};
+
+const resolveOutroCue = (input: {
+  barGrid: BarMarker[];
+  beatIntervalSec: number | null;
+  beatGridQuality: number;
+  downbeatConfidence: number;
+  durationSec: number;
+  energyProfile: number[];
+}): { startSec: number; rawEnergySec: number; confidence: number; phraseAligned: boolean } => {
+  const minRemainingSec = clamp(input.durationSec * 0.14, 8, 24);
+  const earliestSec = Math.max(0, input.durationSec * 0.55);
+  const latestSec = Math.max(earliestSec, input.durationSec - minRemainingSec);
+  const rawEnergySec =
+    findEnergyTime(
+      input.energyProfile,
+      input.durationSec,
+      'min',
+      earliestSec / Math.max(1, input.durationSec),
+      latestSec / Math.max(1, input.durationSec)
+    ) ?? Math.max(0, latestSec);
+  const fallbackSec = snapToBar(
+    input.barGrid,
+    Math.min(rawEnergySec, latestSec),
+    'before',
+    input.beatIntervalSec ?? 4
+  );
+
+  const candidates = input.barGrid.filter(
+    (bar) => bar.startSec >= earliestSec && bar.startSec <= latestSec
+  );
+  if (candidates.length === 0) {
+    const energy = getEnergyAtTime(input.energyProfile, input.durationSec, fallbackSec);
+    return {
+      startSec: fallbackSec,
+      rawEnergySec,
+      confidence: clamp(
+        0.34 +
+          input.beatGridQuality * 0.18 +
+          input.downbeatConfidence * 0.08 +
+          (energy !== null ? (1 - energy) * 0.18 : 0),
+        0,
+        0.68
+      ),
+      phraseAligned: false
+    };
+  }
+
+  const maxDistanceSec = Math.max(input.beatIntervalSec ?? 1, 16);
+  let selected = candidates[0];
+  let selectedScore = -Infinity;
+  for (const candidate of candidates) {
+    const energy = getEnergyAtTime(input.energyProfile, input.durationSec, candidate.startSec);
+    const distanceScore = clamp(1 - Math.abs(candidate.startSec - rawEnergySec) / maxDistanceSec, 0, 1);
+    const lowEnergyScore = energy !== null ? 1 - energy : 0.35;
+    const phraseScore = candidate.index % 8 === 0 ? 1 : candidate.index % 4 === 0 ? 0.55 : 0;
+    const remainingSec = input.durationSec - candidate.startSec;
+    const remainingScore = clamp(remainingSec / Math.max(1, minRemainingSec * 1.5), 0, 1);
+    const score =
+      lowEnergyScore * 0.32 +
+      distanceScore * 0.18 +
+      phraseScore * 0.28 +
+      remainingScore * 0.12 +
+      input.downbeatConfidence * 0.1;
+
+    if (score > selectedScore) {
+      selected = candidate;
+      selectedScore = score;
+    }
+  }
+
+  const selectedEnergy = getEnergyAtTime(input.energyProfile, input.durationSec, selected.startSec);
+  const selectedPhraseAligned = selected.index % 8 === 0;
+  const selectedDistanceScore = clamp(
+    1 - Math.abs(selected.startSec - rawEnergySec) / maxDistanceSec,
+    0,
+    1
+  );
+  const selectedRemainingSec = input.durationSec - selected.startSec;
+  const confidence = clamp(
+    0.28 +
+      input.beatGridQuality * 0.18 +
+      input.downbeatConfidence * 0.16 +
+      (selectedEnergy !== null ? (1 - selectedEnergy) * 0.18 : 0.04) +
+      selectedDistanceScore * 0.1 +
+      (selectedPhraseAligned ? 0.08 : 0) +
+      (selectedRemainingSec >= minRemainingSec ? 0.08 : 0),
+    0,
+    0.86
+  );
+
+  return {
+    startSec: selected.startSec,
+    rawEnergySec,
+    confidence,
+    phraseAligned: selectedPhraseAligned
+  };
+};
+
+const hasNearbyTransient = (
+  transientMarkers: TransientMarker[],
+  timeSec: number,
+  windowSec: number
+): number => {
+  let best = 0;
+  for (const marker of transientMarkers) {
+    const distance = Math.abs(marker.timeSec - timeSec);
+    if (distance <= windowSec) {
+      best = Math.max(best, marker.strength * (1 - distance / windowSec));
+    }
+  }
+  return best;
+};
+
+const resolveIntroCues = (input: {
+  barGrid: BarMarker[];
+  beatIntervalSec: number | null;
+  beatGridQuality: number;
+  downbeatsSec: number[];
+  downbeatConfidence: number;
+  durationSec: number;
+  energyProfile: number[];
+  transientMarkers: TransientMarker[];
+}): {
+  introCueSec: number;
+  firstDownbeatSec: number;
+  introConfidence: number;
+  firstDownbeatConfidence: number;
+} => {
+  const introCueSec = snapToBar(
+    input.barGrid,
+    input.downbeatsSec[0] ?? 0,
+    'nearest',
+    input.beatIntervalSec ?? 4
+  );
+  const latestCandidateSec = Math.min(48, input.durationSec * 0.35);
+  const candidates = input.barGrid.filter(
+    (bar) => bar.startSec >= 0 && bar.startSec <= latestCandidateSec
+  );
+
+  if (candidates.length === 0) {
+    return {
+      introCueSec,
+      firstDownbeatSec: introCueSec,
+      introConfidence: clamp(0.38 + input.beatGridQuality * 0.2, 0, 0.72),
+      firstDownbeatConfidence: input.beatGridQuality > 0
+        ? clamp(0.32 + input.beatGridQuality * 0.22, 0, 0.62)
+        : 0.25
+    };
+  }
+
+  let selected = candidates[0];
+  let selectedScore = -Infinity;
+  for (const candidate of candidates) {
+    const energy = getEnergyAtTime(input.energyProfile, input.durationSec, candidate.startSec);
+    const transientScore = hasNearbyTransient(
+      input.transientMarkers,
+      candidate.startSec,
+      Math.min(0.18, (input.beatIntervalSec ?? 0.5) * 0.4)
+    );
+    const phraseScore = candidate.index % 8 === 0 ? 0.22 : candidate.index % 4 === 0 ? 0.12 : 0;
+    const earlyPenalty = clamp(candidate.startSec / Math.max(1, latestCandidateSec), 0, 1) * 0.14;
+    const score =
+      (energy ?? 0.2) * 0.46 +
+      transientScore * 0.24 +
+      input.downbeatConfidence * 0.18 +
+      phraseScore -
+      earlyPenalty;
+
+    if (score > selectedScore) {
+      selected = candidate;
+      selectedScore = score;
+    }
+  }
+
+  const selectedEnergy = getEnergyAtTime(input.energyProfile, input.durationSec, selected.startSec);
+  const selectedTransient = hasNearbyTransient(
+    input.transientMarkers,
+    selected.startSec,
+    Math.min(0.18, (input.beatIntervalSec ?? 0.5) * 0.4)
+  );
+  const firstDownbeatMaxConfidence = clamp(0.58 + input.downbeatConfidence * 0.3, 0.58, 0.88);
+  const firstDownbeatConfidence = clamp(
+    0.28 +
+      input.beatGridQuality * 0.2 +
+      input.downbeatConfidence * 0.22 +
+      (selectedEnergy ?? 0.2) * 0.18 +
+      selectedTransient * 0.14 +
+      (selected.index % 8 === 0 ? 0.06 : 0),
+    0,
+    firstDownbeatMaxConfidence
+  );
+  const introEnergy = getEnergyAtTime(input.energyProfile, input.durationSec, introCueSec);
+  const introConfidence = clamp(
+    0.34 +
+      input.beatGridQuality * 0.18 +
+      input.downbeatConfidence * 0.1 +
+      (introEnergy ?? 0.2) * 0.08,
+    0,
+    0.8
+  );
+
+  return {
+    introCueSec,
+    firstDownbeatSec: selected.startSec,
+    introConfidence,
+    firstDownbeatConfidence
+  };
+};
+
 export const buildTrackAnalysisFromAudioBuffer = (
   track: Track,
   buffer: AudioBufferForBpm
@@ -479,7 +935,7 @@ export const buildTrackAnalysisFromAudioBuffer = (
   const waveformPeaks = buildWaveformPeaks(buffer);
   const waveformDetail = buildWaveformDetail(buffer);
   const spectralBands = buildSpectralBands(buffer);
-  const transientMarkers = buildTransientMarkers(waveformDetail, durationSec);
+  const transientMarkers = buildTransientMarkers(waveformDetail, spectralBands, durationSec);
   const beatIntervalSec = bpm && bpm > 0 ? 60 / bpm : null;
   const beatPhase =
     beatIntervalSec !== null
@@ -492,32 +948,6 @@ export const buildTrackAnalysisFromAudioBuffer = (
   const downbeatGrid = buildDownbeatGrid(beatGridSec, transientMarkers, energyProfile, durationSec);
   const downbeatsSec = downbeatGrid.downbeatsSec;
   const barGrid = downbeatGrid.barGrid;
-  const phraseMarkers = barGrid
-    .filter((_bar, index) => index % 8 === 0)
-    .map((bar, index) => ({
-      index,
-      startSec: bar.startSec,
-      bars: 8,
-      confidence: clamp(
-        (bpmEstimate.confidence || (track.bpm ? 0.7 : 0.25)) * 0.72 +
-          downbeatGrid.confidence * 0.28,
-        0,
-        1
-      )
-    }));
-  const introCueSec = snapToBar(barGrid, downbeatsSec[0] ?? 0, 'nearest', beatIntervalSec ?? 4);
-  const firstDownbeatSec = snapToBar(
-    barGrid,
-    downbeatsSec.find((timeSec) => timeSec > 0.2) ?? introCueSec,
-    'nearest',
-    beatIntervalSec ?? 4
-  );
-  const rawOutroCueSec = Math.max(
-    0,
-    findEnergyTime(energyProfile, durationSec, 'min', 0.72, 0.95) ??
-      durationSec - Math.min(16, durationSec * 0.12)
-  );
-  const outroCueSec = snapToBar(barGrid, rawOutroCueSec, 'before');
   const lowEnergyBreakSecRaw = findEnergyTime(energyProfile, durationSec, 'min', 0.35, 0.8);
   const lowEnergyBreakSec =
     lowEnergyBreakSecRaw !== null
@@ -536,8 +966,46 @@ export const buildTrackAnalysisFromAudioBuffer = (
         : 0;
   const beatGridQuality =
     beatGridSec.length > 0
-      ? clamp(bpmConfidence * 0.68 + beatPhase.confidence * 0.18 + downbeatGrid.confidence * 0.14, 0, 1)
+      ? clamp(bpmConfidence * 0.48 + beatPhase.confidence * 0.22 + downbeatGrid.confidence * 0.3, 0, 1)
       : 0;
+  const phraseMarkers: PhraseMarker[] = barGrid
+    .filter((bar) => bar.index % 8 === 0)
+    .map((bar, index) => ({
+      index,
+      startSec: bar.startSec,
+      bars: 8,
+      confidence: scorePhraseMarkerConfidence({
+        bar,
+        beatIntervalSec,
+        beatGridQuality,
+        bpmConfidence,
+        downbeatConfidence: downbeatGrid.confidence,
+        durationSec,
+        energyProfile,
+        transientMarkers
+      })
+    }));
+  const outroCue = resolveOutroCue({
+    barGrid,
+    beatIntervalSec,
+    beatGridQuality,
+    downbeatConfidence: downbeatGrid.confidence,
+    durationSec,
+    energyProfile
+  });
+  const outroCueSec = outroCue.startSec;
+  const introCues = resolveIntroCues({
+    barGrid,
+    beatIntervalSec,
+    beatGridQuality,
+    downbeatsSec,
+    downbeatConfidence: downbeatGrid.confidence,
+    durationSec,
+    energyProfile,
+    transientMarkers
+  });
+  const introCueSec = introCues.introCueSec;
+  const firstDownbeatSec = introCues.firstDownbeatSec;
   const analysisConfidence = clamp(
     0.25 +
       (bpm ? 0.25 : 0) +
@@ -551,11 +1019,18 @@ export const buildTrackAnalysisFromAudioBuffer = (
   const analysisQuality = {
     waveformDetail: clamp(waveformDetail.length / WAVEFORM_DETAIL_MAX_BUCKETS, 0, 1),
     spectralBands: clamp(spectralBands.length / WAVEFORM_DETAIL_MAX_BUCKETS, 0, 1),
-    transientMarkers: clamp(transientMarkers.length / Math.max(16, durationSec / 2), 0, 1),
+    transientMarkers: scoreTransientMarkerQuality({
+      transientMarkers,
+      beatGridSec,
+      durationSec,
+      beatPhaseConfidence: beatPhase.confidence,
+      downbeatConfidence: downbeatGrid.confidence
+    }),
     beatGrid: beatGridQuality
   };
 
   return sanitizeTrackAnalysis(track.id, {
+    schemaVersion: TRACK_ANALYSIS_SCHEMA_VERSION,
     generatedAt: new Date().toISOString(),
     source: resolvedBpm.source,
     bpm,
@@ -577,7 +1052,7 @@ export const buildTrackAnalysisFromAudioBuffer = (
         type: 'intro',
         startSec: introCueSec,
         endSec: Math.min(durationSec, introCueSec + 8),
-        confidence: clamp(0.58 + beatGridQuality * 0.24, 0, 0.86),
+        confidence: introCues.introConfidence,
         label: 'Intro'
       },
       {
@@ -585,7 +1060,7 @@ export const buildTrackAnalysisFromAudioBuffer = (
         type: 'first_downbeat',
         startSec: firstDownbeatSec,
         endSec: Math.min(durationSec, firstDownbeatSec + 4),
-        confidence: bpm ? clamp(0.5 + beatGridQuality * 0.34, 0, 0.88) : 0.25,
+        confidence: bpm ? introCues.firstDownbeatConfidence : 0.25,
         label: 'First downbeat'
       },
       {
@@ -593,7 +1068,7 @@ export const buildTrackAnalysisFromAudioBuffer = (
         type: 'outro',
         startSec: outroCueSec,
         endSec: durationSec,
-        confidence: clamp(0.46 + beatGridQuality * 0.2 + (rawOutroCueSec !== outroCueSec ? 0.08 : 0), 0, 0.82),
+        confidence: outroCue.confidence,
         label: 'Outro mix-out'
       },
       ...(lowEnergyBreakSec !== null

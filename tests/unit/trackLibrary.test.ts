@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -102,6 +102,67 @@ describe('loadTracksFromPaths', () => {
         'missing-meta.wav: missing duration metadata',
         'bad.mp3: unreadable or corrupted'
       ]);
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps track ids stable when file content or mtime changes', async () => {
+    const { loadTracksFromPaths } = await import('../../src/main/trackLibrary');
+    const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'beatdropper-tracklib-'));
+    const filePath = path.join(tempRoot, 'stable.mp3');
+
+    try {
+      await writeFile(filePath, 'first');
+      mockParseFile.mockResolvedValue({
+        format: { duration: 120 },
+        common: { title: 'Stable' }
+      });
+
+      const first = await loadTracksFromPaths([filePath]);
+      await writeFile(filePath, 'second with changed size and mtime');
+      const second = await loadTracksFromPaths([filePath]);
+
+      expect(first.tracks).toHaveLength(1);
+      expect(second.tracks).toHaveLength(1);
+      expect(first.tracks[0].track.id).toBe(second.tracks[0].track.id);
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('loads supported audio files from nested folders in stable order', async () => {
+    const { loadTracksFromDirectory } = await import('../../src/main/trackLibrary');
+    const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'beatdropper-tracklib-'));
+    const warmup = path.join(tempRoot, 'warmup');
+    const peak = path.join(tempRoot, 'peak');
+    const filePaths = [
+      path.join(tempRoot, 'alpha.mp3'),
+      path.join(warmup, 'bravo.wav'),
+      path.join(peak, 'charlie.mp3')
+    ];
+
+    await mkdir(warmup, { recursive: true });
+    await mkdir(peak, { recursive: true });
+    for (const filePath of [...filePaths, path.join(tempRoot, 'notes.txt')]) {
+      await writeFile(filePath, 'x');
+    }
+
+    try {
+      mockParseFile.mockImplementation(async (filePath: string) => ({
+        format: { duration: 120 },
+        common: { title: path.basename(filePath).replace(/\.(mp3|wav)$/i, '') }
+      }));
+
+      const result = await loadTracksFromDirectory(tempRoot);
+
+      expect(result.skipped).toEqual([]);
+      expect(result.tracks.map((entry) => entry.track.title)).toEqual([
+        'alpha',
+        'charlie',
+        'bravo'
+      ]);
+      expect(mockParseFile).toHaveBeenCalledTimes(3);
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
     }

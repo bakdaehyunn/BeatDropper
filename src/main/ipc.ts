@@ -6,12 +6,16 @@ import { TrackAnalysisStore } from './analysis/trackAnalysisStore';
 import { AiDjPlannerService } from './aiDj/aiDjPlannerService';
 import { AgentConnectionService } from './aiDj/agentConnectionService';
 import { RequestMixPlanInput } from '../shared/plannerContract';
-import { AiAgentProfile, PlayerSettings, TrackLoadMode } from '../shared/types';
+import { AiAgentProfile, PlayerSettings, TrackLoadMode, TrackLoadResult } from '../shared/types';
 import { readSettings, writeSettings } from './settingsStore';
-import { loadTracksFromPaths } from './trackLibrary';
+import { MusicLibraryStore } from './musicLibraryStore';
+import { loadTracksFromDirectory, loadTracksFromPaths } from './trackLibrary';
 import { TrackRegistry } from './trackRegistry';
+import { UserPlaylistStore, normalizePlaylistName } from './userPlaylistStore';
 
 const trackRegistry = new TrackRegistry();
+const musicLibraryStore = new MusicLibraryStore();
+const userPlaylistStore = new UserPlaylistStore();
 const trackAnalysisStore = new TrackAnalysisStore();
 const trackAnalysisService = new TrackAnalysisService({
   store: trackAnalysisStore,
@@ -101,6 +105,60 @@ const parseTrackIdList = (input: unknown): string[] => {
   }
 
   return input.filter((item) => item.trim().length > 0);
+};
+
+const parsePlaylistId = (input: unknown): string => {
+  if (typeof input !== 'string' || input.trim().length === 0) {
+    throw new Error('Invalid playlist id');
+  }
+
+  return input;
+};
+
+const parsePlaylistName = (input: unknown): string => {
+  if (typeof input !== 'string') {
+    throw new Error('Invalid playlist name');
+  }
+
+  const name = normalizePlaylistName(input);
+  if (name.length === 0) {
+    throw new Error('Invalid playlist name');
+  }
+
+  return name;
+};
+
+const loadLibraryTrackIdsToRegistry = async (
+  trackIds: string[],
+  mode: TrackLoadMode
+): Promise<TrackLoadResult> => {
+  await musicLibraryStore.refreshAvailability();
+  const entries = await musicLibraryStore.getEntriesByIds(trackIds);
+  const foundIds = new Set(entries.map((entry) => entry.id));
+  const missingEntries = entries.filter((entry) => entry.missing);
+  const availableEntries = entries.filter((entry) => !entry.missing);
+  const skipped = [
+    ...trackIds
+      .filter((trackId) => !foundIds.has(trackId))
+      .map((trackId) => `${trackId}: not in library`),
+    ...missingEntries.map((entry) => `${entry.title}: missing file`)
+  ];
+  const registerEntries = musicLibraryStore.toRegisterEntries(availableEntries);
+
+  if (mode === 'replace') {
+    trackRegistry.replace(registerEntries);
+  } else {
+    trackRegistry.append(registerEntries);
+  }
+
+  return {
+    tracks: registerEntries
+      .map((entry) => entry.track)
+      .filter((track): track is NonNullable<typeof track> => track !== undefined),
+    skipped,
+    canceled: false,
+    mode
+  };
 };
 
 const parseTrackCandidate = (input: unknown) => {
@@ -339,6 +397,138 @@ export const registerIpcHandlers = (): void => {
 
   ipcMain.handle('library:clearTracks', async () => {
     trackRegistry.clear();
+  });
+
+  ipcMain.handle('musicLibrary:getTracks', async () => {
+    const refreshed = await musicLibraryStore.refreshAvailability();
+    return refreshed.tracks;
+  });
+
+  ipcMain.handle('musicLibrary:importFolder', async () => {
+    const result = await dialog.showOpenDialog({
+      title: 'Select music folder',
+      properties: ['openDirectory']
+    });
+
+    if (result.canceled || result.filePaths.length === 0) {
+      const refreshed = await musicLibraryStore.refreshAvailability();
+      return {
+        tracks: refreshed.tracks,
+        added: 0,
+        updated: 0,
+        restored: refreshed.restored,
+        missing: refreshed.missing,
+        skipped: [],
+        canceled: true,
+        sourcePath: null
+      };
+    }
+
+    const sourcePath = result.filePaths[0];
+    const loaded = await loadTracksFromDirectory(sourcePath);
+    const saved = await musicLibraryStore.upsertLoadedTracks(loaded.tracks, sourcePath);
+
+    return {
+      tracks: saved.tracks,
+      added: saved.added,
+      updated: saved.updated,
+      restored: saved.restored,
+      missing: saved.missing,
+      skipped: loaded.skipped,
+      canceled: false,
+      sourcePath
+    };
+  });
+
+  ipcMain.handle('musicLibrary:rescanFolder', async (_event, sourcePathInput: unknown) => {
+    if (typeof sourcePathInput !== 'string' || sourcePathInput.trim().length === 0) {
+      throw new Error('Invalid library source path');
+    }
+
+    const sourcePath = sourcePathInput;
+    const loaded = await loadTracksFromDirectory(sourcePath);
+    const saved = await musicLibraryStore.rescanSource(
+      loaded.tracks,
+      sourcePath,
+      loaded.scannedFilePaths
+    );
+
+    return {
+      tracks: saved.tracks,
+      added: saved.added,
+      updated: saved.updated,
+      restored: saved.restored,
+      missing: saved.missing,
+      skipped: loaded.skipped,
+      canceled: false,
+      sourcePath
+    };
+  });
+
+  ipcMain.handle(
+    'musicLibrary:addTracksToPlaylist',
+    async (_event, trackIdsInput: unknown, modeInput: unknown) => {
+      const mode: TrackLoadMode = modeInput === 'replace' ? 'replace' : 'append';
+      const trackIds = parseTrackIdList(trackIdsInput);
+      return loadLibraryTrackIdsToRegistry(trackIds, mode);
+    }
+  );
+
+  ipcMain.handle('userPlaylists:get', async () => {
+    return userPlaylistStore.readPlaylists();
+  });
+
+  ipcMain.handle(
+    'userPlaylists:create',
+    async (_event, nameInput: unknown, trackIdsInput: unknown) => {
+      return userPlaylistStore.createPlaylist(
+        parsePlaylistName(nameInput),
+        parseTrackIdList(trackIdsInput)
+      );
+    }
+  );
+
+  ipcMain.handle(
+    'userPlaylists:rename',
+    async (_event, playlistIdInput: unknown, nameInput: unknown) => {
+      return userPlaylistStore.renamePlaylist(
+        parsePlaylistId(playlistIdInput),
+        parsePlaylistName(nameInput)
+      );
+    }
+  );
+
+  ipcMain.handle('userPlaylists:delete', async (_event, playlistIdInput: unknown) => {
+    return userPlaylistStore.deletePlaylist(parsePlaylistId(playlistIdInput));
+  });
+
+  ipcMain.handle(
+    'userPlaylists:setTracks',
+    async (_event, playlistIdInput: unknown, trackIdsInput: unknown) => {
+      return userPlaylistStore.setPlaylistTracks(
+        parsePlaylistId(playlistIdInput),
+        parseTrackIdList(trackIdsInput)
+      );
+    }
+  );
+
+  ipcMain.handle(
+    'userPlaylists:addLibraryTracks',
+    async (_event, playlistIdInput: unknown, trackIdsInput: unknown) => {
+      return userPlaylistStore.addTrackIds(
+        parsePlaylistId(playlistIdInput),
+        parseTrackIdList(trackIdsInput)
+      );
+    }
+  );
+
+  ipcMain.handle('userPlaylists:load', async (_event, playlistIdInput: unknown) => {
+    const playlist = await userPlaylistStore.getPlaylist(parsePlaylistId(playlistIdInput));
+    if (!playlist) {
+      throw new Error('Playlist not found');
+    }
+
+    return loadLibraryTrackIdsToRegistry(playlist.trackIds, 'replace');
   });
 
   ipcMain.handle('track:readBufferById', async (_event, trackId: unknown) => {
