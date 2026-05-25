@@ -132,10 +132,10 @@ describe('AgentConnectionService', () => {
     const service = new AgentConnectionService(() => child as never);
 
     const promise = service.checkProfile({
-      id: 'custom-cli',
-      name: 'Custom CLI',
+      id: 'test-agent',
+      name: 'Test Agent',
       kind: 'cli',
-      command: 'custom-agent',
+      command: 'test-agent',
       args: [],
       timeoutMs: 4000,
       enabled: true

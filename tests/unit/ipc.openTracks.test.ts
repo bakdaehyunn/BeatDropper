@@ -746,11 +746,11 @@ describe('IPC analysis and planner handlers', () => {
       'Invalid aiAgentProfiles id'
     );
     await expect(agentCheckHandler({}, {
-      id: 'custom-cli',
-      name: 'Custom CLI',
+      id: 'other-agent',
+      name: 'Other Agent',
       kind: 'cli',
       command: 'node',
-      args: ['scripts/custom.cjs'],
+      args: ['scripts/other-agent.cjs'],
       timeoutMs: 2000,
       enabled: true
     })).rejects.toThrow('Only Codex agent connection checks are supported');

@@ -2122,7 +2122,7 @@ export const App = (): JSX.Element => {
         })
       : [];
   const plannerConfigSummary = [
-    activeAiAgentProfile?.name ?? 'No active agent',
+    'Codex planner',
     activeAiAgentProfile?.command ? `command ${activeAiAgentProfile.command}` : 'command missing',
     activeAiAgentProfile && activeAiAgentProfile.args.length > 0
       ? `args ${activeAiAgentProfile.args.join(' ')}`
@@ -3370,8 +3370,8 @@ export const App = (): JSX.Element => {
               </div>
             </section>
 
-            <details className="utility-section utility-details">
-              <summary>Planner Debug</summary>
+            <details className="utility-section utility-details developer-diagnostics">
+              <summary>Developer Diagnostics</summary>
               <input
                 ref={plannerImportInputRef}
                 type="file"
@@ -3389,7 +3389,7 @@ export const App = (): JSX.Element => {
                 onChange={(event) => void onComparisonImportChange(event)}
               />
               <div className="setting-row">
-                <label>Current planner config</label>
+                <label>Codex planner runtime</label>
                 <div className="planner-debug-summary">
                   <strong>{MIX_PLAN_PLANNER_PRESET_DESCRIPTIONS[plannerPresetLabel]}</strong>
                   <small>{plannerConfigSummary}</small>

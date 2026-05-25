@@ -89,6 +89,8 @@ test('renders BeatDropper shell', async ({ page }) => {
   await expect(page.getByLabel('Active agent')).toHaveCount(0);
   await expect(page.getByText('Agent compare')).toHaveCount(0);
   await expect(page.getByText('Advanced CLI')).toHaveCount(0);
+  await expect(page.getByText('Planner Debug')).toHaveCount(0);
+  await expect(page.getByText('Developer Diagnostics')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Check Codex' })).toBeVisible();
 });
 

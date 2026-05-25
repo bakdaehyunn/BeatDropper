@@ -692,6 +692,14 @@ button:disabled {
   padding-top: 12px;
 }
 
+.developer-diagnostics {
+  opacity: 0.82;
+}
+
+.developer-diagnostics[open] {
+  opacity: 1;
+}
+
 .utility-details summary,
 .nested-details summary {
   cursor: pointer;
