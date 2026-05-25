@@ -1,0 +1,48 @@
+# Analysis Benchmark Fixtures
+
+These fixtures evaluate BeatDropper `TrackAnalysis` output against manually chosen timing expectations.
+
+Use two fixture kinds:
+
+- `synthetic`: generated timing cases committed to the repo.
+- `snapshot`: captured analysis from a real private-library track. Do not commit audio files.
+
+Snapshot fixtures should contain:
+
+- `kind: "snapshot"`
+- `trackReference` with a non-sensitive title/artist or private note
+- `expected.bpm`, `expected.firstDownbeatSec`, `expected.outroCueSec`, and enough `barGridSec` / `phraseBoundarySec` checkpoints to catch drift
+- `analysis`, copied from the app's saved `TrackAnalysis` JSON for that track
+
+Create a private snapshot fixture from a saved app analysis cache entry:
+
+```sh
+npm run benchmark:analysis:create -- --list-cache
+npm run benchmark:analysis:create -- --track-id "TRACK_ID_FROM_CACHE" --out-dir ~/beatdropper-analysis-snapshots
+```
+
+Create from an exported/copied analysis JSON file:
+
+```sh
+npm run benchmark:analysis:create -- --analysis-file ./analysis.json --out-dir ~/beatdropper-analysis-snapshots
+```
+
+Run default committed fixtures:
+
+```sh
+npm run benchmark:analysis
+```
+
+Run a private snapshot directory without committing it:
+
+```sh
+npm run build:main
+node scripts/evaluate-analysis-benchmarks.cjs --fixture-dir ~/beatdropper-analysis-snapshots
+```
+
+Run only private snapshots:
+
+```sh
+npm run build:main
+node scripts/evaluate-analysis-benchmarks.cjs --no-default-fixtures --fixture-dir ~/beatdropper-analysis-snapshots
+```

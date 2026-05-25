@@ -124,8 +124,66 @@ const buildModeGuidance = (mode) => {
 };
 
 const buildAnalysisHints = (request) => {
+  const currentSummary = request?.analysisSummary?.current;
+  const nextSummary = request?.analysisSummary?.next;
   const current = request?.analysis?.current;
   const next = request?.analysis?.next;
+
+  if (currentSummary || nextSummary) {
+    const formatCue = (label, cue) =>
+      cue && typeof cue.startSec === 'number'
+        ? `${label} ${cue.startSec.toFixed(2)}s confidence ${typeof cue.confidence === 'number' ? cue.confidence.toFixed(2) : '--'}`
+        : null;
+    const formatTrackSummary = (label, summary) => {
+      if (!summary) {
+        return `- ${label}: no analysis summary available`;
+      }
+
+      const cues = [
+        formatCue('intro', summary.cues?.intro),
+        formatCue('first downbeat', summary.cues?.firstDownbeat),
+        formatCue('outro', summary.cues?.outro)
+      ].filter(Boolean);
+      const energy = summary.energyTrend
+        ? `energy ${summary.energyTrend.direction ?? 'unknown'} early ${summary.energyTrend.early ?? '--'} mid ${summary.energyTrend.mid ?? '--'} late ${summary.energyTrend.late ?? '--'}`
+        : 'energy unknown';
+      const beatStability = summary.beatStability
+        ? `beat stability ${summary.beatStability.label ?? 'unknown'} score ${summary.beatStability.score ?? '--'}`
+        : 'beat stability unknown';
+      const transients = summary.transients
+        ? `transients ${summary.transients.count ?? 0}, strong ${summary.transients.strongCount ?? 0}, density ${summary.transients.densityPerSec ?? 0}/s`
+        : 'transients unknown';
+      const phrases = summary.phrases
+        ? `phrases ${summary.phrases.phraseCount ?? 0}, bars ${summary.phrases.barCount ?? 0}, strongest ${Array.isArray(summary.phrases.strongestBoundaries) ? summary.phrases.strongestBoundaries.map((boundary) => `${boundary.startSec}s/${boundary.confidence}`).join(', ') : 'none'}`
+        : 'phrases unknown';
+      const quality = summary.analysisQuality
+        ? `quality beat ${summary.analysisQuality.beatGrid ?? 0}, spectral ${summary.analysisQuality.spectralBands ?? 0}, transient ${summary.analysisQuality.transientMarkers ?? 0}`
+        : 'quality unknown';
+      const warnings = Array.isArray(summary.analysisWarnings) && summary.analysisWarnings.length > 0
+        ? `warnings ${summary.analysisWarnings.join(', ')}`
+        : 'warnings none';
+
+      return [
+        `- ${label}: plannerReady ${Boolean(summary.plannerReady)}`,
+        `BPM ${typeof summary.bpm === 'number' ? summary.bpm.toFixed(2) : '--'} confidence ${typeof summary.bpmConfidence === 'number' ? summary.bpmConfidence.toFixed(2) : '--'}`,
+        quality,
+        beatStability,
+        cues.length > 0 ? `cues ${cues.join('; ')}` : 'cues none',
+        energy,
+        transients,
+        phrases,
+        warnings
+      ].join('; ');
+    };
+
+    return [
+      'Analysis hints:',
+      'Prefer analysisSummary and pairContext for decisions; use raw TrackAnalysis arrays only as fallback detail.',
+      formatTrackSummary('current', currentSummary),
+      formatTrackSummary('next', nextSummary)
+    ].join('\n');
+  }
+
   const currentHints = [];
   const nextHints = [];
 

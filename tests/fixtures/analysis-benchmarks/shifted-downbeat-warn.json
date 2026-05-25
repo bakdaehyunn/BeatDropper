@@ -1,0 +1,62 @@
+{
+  "id": "shifted-downbeat-warn",
+  "title": "Slightly shifted downbeat and bar-grid synthetic fixture",
+  "kind": "synthetic",
+  "tags": ["bpm", "downbeat", "bar-grid"],
+  "trackReference": {
+    "source": "synthetic",
+    "notes": "Generated timing snapshot with tolerable downbeat drift."
+  },
+  "expectedGrade": "warn",
+  "expected": {
+    "bpm": 124,
+    "firstDownbeatSec": 0,
+    "outroCueSec": 96,
+    "barGridSec": [0, 7.742, 15.484, 23.226, 30.968, 38.71, 46.452, 54.194],
+    "phraseBoundarySec": [0, 61.936],
+    "plannerReady": true
+  },
+  "analysis": {
+    "trackId": "shifted-downbeat-warn",
+    "source": "derived",
+    "bpm": 125.8,
+    "bpmConfidence": 0.82,
+    "beatGridSec": [0.42, 2.356, 4.291, 6.227, 8.162, 10.098, 12.033, 13.969, 15.904],
+    "downbeatsSec": [0.42, 8.162, 15.904, 23.646, 31.388, 39.13, 46.872, 54.614],
+    "barGrid": [
+      { "index": 0, "startSec": 0.42, "beatIndex": 0 },
+      { "index": 1, "startSec": 8.162, "beatIndex": 4 },
+      { "index": 2, "startSec": 15.904, "beatIndex": 8 },
+      { "index": 3, "startSec": 23.646, "beatIndex": 12 },
+      { "index": 4, "startSec": 31.388, "beatIndex": 16 },
+      { "index": 5, "startSec": 39.13, "beatIndex": 20 },
+      { "index": 6, "startSec": 46.872, "beatIndex": 24 },
+      { "index": 7, "startSec": 54.614, "beatIndex": 28 }
+    ],
+    "phraseMarkers": [
+      { "index": 0, "startSec": 0.42, "bars": 8, "confidence": 0.7 },
+      { "index": 1, "startSec": 64.3, "bars": 8, "confidence": 0.68 }
+    ],
+    "introCueSec": 0.42,
+    "outroCueSec": 97.4,
+    "energyProfile": [0.8, 0.7, 0.58, 0.45, 0.35, 0.28],
+    "waveformDetail": [{ "timeSec": 0.42, "peak": 0.8, "rms": 0.4, "min": -0.7, "max": 0.8 }],
+    "spectralBands": [{ "timeSec": 0.42, "low": 0.58, "mid": 0.46, "high": 0.38 }],
+    "transientMarkers": [
+      { "index": 0, "timeSec": 0.42, "strength": 0.78 },
+      { "index": 1, "timeSec": 8.162, "strength": 0.7 }
+    ],
+    "cueCandidates": [
+      { "id": "first-downbeat", "type": "first_downbeat", "startSec": 0.42, "endSec": 4.42, "confidence": 0.78, "label": "First downbeat" },
+      { "id": "outro", "type": "outro", "startSec": 97.4, "endSec": 112, "confidence": 0.72, "label": "Outro mix-out" }
+    ],
+    "analysisConfidence": 0.78,
+    "analysisQuality": {
+      "waveformDetail": 0.82,
+      "spectralBands": 0.78,
+      "transientMarkers": 0.7,
+      "beatGrid": 0.74
+    },
+    "analysisWarnings": []
+  }
+}

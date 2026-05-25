@@ -40,6 +40,30 @@ describe('sanitizeTrackAnalysis', () => {
     expect(analysis.analysisWarnings).toContain('analysis_upgrade_available');
   });
 
+  it('marks v3 heuristic spectral analysis for FFT analyzer upgrade', () => {
+    const analysis = sanitizeTrackAnalysis('track-1', {
+      schemaVersion: 3 as typeof TRACK_ANALYSIS_SCHEMA_VERSION,
+      bpm: 124,
+      bpmConfidence: 0.8,
+      beatGridSec: [0, 0.48, 0.96],
+      downbeatsSec: [0],
+      barGrid: [{ index: 0, startSec: 0, beatIndex: 0 }],
+      energyProfile: [0.4, 0.5, 0.6],
+      waveformDetail: [{ timeSec: 0, peak: 0.6, rms: 0.3, min: -0.2, max: 0.6 }],
+      spectralBands: [{ timeSec: 0, low: 0.5, mid: 0.4, high: 0.3 }],
+      analysisConfidence: 0.8,
+      analysisQuality: {
+        waveformDetail: 0.8,
+        spectralBands: 0.8,
+        transientMarkers: 0.6,
+        beatGrid: 0.8
+      }
+    });
+
+    expect(analysis.schemaVersion).toBe(TRACK_ANALYSIS_SCHEMA_VERSION);
+    expect(analysis.analysisWarnings).toContain('analysis_upgrade_available');
+  });
+
   it('clamps v3 waveform detail and spectral band values', () => {
     const analysis = sanitizeTrackAnalysis('track-1', {
       waveformDetail: [{ timeSec: 1, peak: 2, rms: -1, min: -2, max: 2 }],

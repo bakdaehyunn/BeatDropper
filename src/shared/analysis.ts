@@ -1,4 +1,4 @@
-export const TRACK_ANALYSIS_SCHEMA_VERSION = 3;
+export const TRACK_ANALYSIS_SCHEMA_VERSION = 4;
 
 export type TrackAnalysisSource = 'metadata' | 'derived' | 'external';
 export type CueCandidateType =

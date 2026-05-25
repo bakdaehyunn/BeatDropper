@@ -1,5 +1,5 @@
 import { ChildProcessWithoutNullStreams, spawn } from 'node:child_process';
-import { CODEX_AGENT_PROFILE_ID, HEURISTIC_AGENT_PROFILE_ID } from '../../shared/settings';
+import { CODEX_AGENT_PROFILE_ID } from '../../shared/settings';
 import { AiAgentConnectionResult, AiAgentProfile } from '../../shared/types';
 import { PLANNER_SCHEMA_VERSION, PlannerRequest } from '../../shared/plannerContract';
 import { TRACK_ANALYSIS_SCHEMA_VERSION } from '../../shared/analysis';
@@ -230,11 +230,8 @@ export class AgentConnectionService {
       }
 
       return createResult(profile, {
-        status: profile.id === HEURISTIC_AGENT_PROFILE_ID ? 'local_ready' : 'ready',
-        message:
-          profile.id === HEURISTIC_AGENT_PROFILE_ID
-            ? 'Local heuristic planner is ready.'
-            : `${profile.name} is connected and returned a valid MixPlan response.`,
+        status: 'ready',
+        message: `${profile.name} is connected and returned a valid MixPlan response.`,
         canRunPlanner: true,
         details: {
           command: profile.command,

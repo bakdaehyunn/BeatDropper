@@ -1,9 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { AgentConnectionService } from '../../src/main/aiDj/agentConnectionService';
-import {
-  CODEX_AGENT_PROFILE_ID,
-  HEURISTIC_AGENT_PROFILE_ID
-} from '../../src/shared/settings';
+import { CODEX_AGENT_PROFILE_ID } from '../../src/shared/settings';
 import { PLANNER_SCHEMA_VERSION } from '../../src/shared/plannerContract';
 
 class FakeStream extends EventEmitter {
@@ -45,16 +42,16 @@ const validPlannerResponse = JSON.stringify({
 });
 
 describe('AgentConnectionService', () => {
-  it('marks the local heuristic profile ready when it returns a valid MixPlan response', async () => {
+  it('marks a planner profile ready when it returns a valid MixPlan response', async () => {
     const child = new FakeChildProcess();
     const service = new AgentConnectionService(() => child as never);
 
     const promise = service.checkProfile({
-      id: HEURISTIC_AGENT_PROFILE_ID,
-      name: 'Local Heuristic',
+      id: 'test-planner',
+      name: 'Test Planner',
       kind: 'cli',
       command: 'node',
-      args: ['scripts/heuristic-mix-planner.cjs'],
+      args: ['scripts/test-planner.cjs'],
       timeoutMs: 4000,
       enabled: true
     });
@@ -63,9 +60,9 @@ describe('AgentConnectionService', () => {
     child.emit('close', 0);
 
     await expect(promise).resolves.toMatchObject({
-      status: 'local_ready',
+      status: 'ready',
       canRunPlanner: true,
-      message: 'Local heuristic planner is ready.'
+      message: 'Test Planner is connected and returned a valid MixPlan response.'
     });
   });
 

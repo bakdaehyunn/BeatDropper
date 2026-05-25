@@ -7,6 +7,7 @@ import { AiDjPlannerService } from './aiDj/aiDjPlannerService';
 import { AgentConnectionService } from './aiDj/agentConnectionService';
 import { RequestMixPlanInput } from '../shared/plannerContract';
 import { AiAgentProfile, PlayerSettings, TrackLoadMode, TrackLoadResult } from '../shared/types';
+import { CODEX_AGENT_PROFILE_ID } from '../shared/settings';
 import { readSettings, writeSettings } from './settingsStore';
 import { MusicLibraryStore } from './musicLibraryStore';
 import { loadTracksFromDirectory, loadTracksFromPaths } from './trackLibrary';
@@ -89,6 +90,15 @@ const parseAiAgentProfile = (item: unknown): AiAgentProfile => {
     timeoutMs: item.timeoutMs,
     enabled: item.enabled
   };
+};
+
+const parseCodexAgentProfile = (item: unknown): AiAgentProfile => {
+  const profile = parseAiAgentProfile(item);
+  if (profile.id !== CODEX_AGENT_PROFILE_ID) {
+    throw new Error('Only Codex agent connection checks are supported');
+  }
+
+  return profile;
 };
 
 const parseAiAgentProfiles = (input: unknown): AiAgentProfile[] => {
@@ -568,7 +578,7 @@ export const registerIpcHandlers = (): void => {
   });
 
   ipcMain.handle('agent:checkConnection', async (_event, profileInput: unknown) => {
-    const profile = parseAiAgentProfile(profileInput);
+    const profile = parseCodexAgentProfile(profileInput);
     return agentConnectionService.checkProfile(profile);
   });
 

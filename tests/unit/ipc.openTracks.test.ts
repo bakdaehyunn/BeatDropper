@@ -734,8 +734,8 @@ describe('IPC analysis and planner handlers', () => {
   it('validates and forwards ai agent connection checks', async () => {
     const { agentCheckHandler } = await setupIpcHandlers();
     mockCheckProfile.mockResolvedValue({
-      profileId: 'custom-cli',
-      profileName: 'Custom CLI',
+      profileId: 'codex',
+      profileName: 'Codex',
       status: 'ready',
       message: 'Ready',
       checkedAt: '2026-01-01T00:00:00.000Z',
@@ -745,8 +745,7 @@ describe('IPC analysis and planner handlers', () => {
     await expect(agentCheckHandler({}, { id: '' })).rejects.toThrow(
       'Invalid aiAgentProfiles id'
     );
-
-    await agentCheckHandler({}, {
+    await expect(agentCheckHandler({}, {
       id: 'custom-cli',
       name: 'Custom CLI',
       kind: 'cli',
@@ -754,15 +753,25 @@ describe('IPC analysis and planner handlers', () => {
       args: ['scripts/custom.cjs'],
       timeoutMs: 2000,
       enabled: true
+    })).rejects.toThrow('Only Codex agent connection checks are supported');
+
+    await agentCheckHandler({}, {
+      id: 'codex',
+      name: 'Codex',
+      kind: 'cli',
+      command: 'node',
+      args: ['scripts/codex-mix-planner.cjs'],
+      timeoutMs: 20000,
+      enabled: true
     });
 
     expect(mockCheckProfile).toHaveBeenCalledWith({
-      id: 'custom-cli',
-      name: 'Custom CLI',
+      id: 'codex',
+      name: 'Codex',
       kind: 'cli',
       command: 'node',
-      args: ['scripts/custom.cjs'],
-      timeoutMs: 2000,
+      args: ['scripts/codex-mix-planner.cjs'],
+      timeoutMs: 20000,
       enabled: true
     });
   });

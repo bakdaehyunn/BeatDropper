@@ -13,8 +13,12 @@ import {
   CirclePlus,
   FolderOpen,
   GripVertical,
+  Library,
+  ListMusic,
   ListX,
   Minus,
+  PanelRightClose,
+  PanelRightOpen,
   Pause,
   Play,
   RefreshCw,
@@ -42,7 +46,6 @@ import {
   parseMixPlanExportJson
 } from '../shared/mixPlanExport';
 import { MixCandidate, buildMixPairContext } from '../shared/mixCandidate';
-import { RequestMixPlanResult } from '../shared/plannerContract';
 import {
   createMixPlanCacheEntry,
   MixPlanCacheStore,
@@ -52,16 +55,13 @@ import { evaluateMixPlanQuality } from '../shared/mixPlanQuality';
 import { TrackAnalysis } from '../shared/analysis';
 import {
   CODEX_AGENT_PROFILE_ID,
-  CUSTOM_AGENT_PROFILE_ID,
   DEFAULT_SETTINGS,
-  HEURISTIC_AGENT_PROFILE_ID,
   isAiAgentProfileConfigured,
   resolveActiveAiAgentProfile,
   sanitizeSettings
 } from '../shared/settings';
 import {
   AiAgentConnectionResult,
-  AiAgentProfile,
   MusicLibraryTrack,
   PlayerEvent,
   PlayerSettings,
@@ -94,6 +94,7 @@ import {
 } from './player/musicLibraryFilter';
 
 const MAX_LOG_ITEMS = 100;
+type WorkspaceView = 'playlist' | 'library';
 
 const formatDuration = (sec: number): string => {
   const safeSec = Math.max(0, Math.floor(sec));
@@ -169,15 +170,6 @@ interface MixPlanCompareTargetOption {
   summary: string;
 }
 
-interface AgentHarnessResult {
-  profileId: string;
-  profileName: string;
-  status: 'running' | 'cli' | 'fallback' | 'error';
-  result: RequestMixPlanResult | null;
-  error: string | null;
-}
-
-const formatPlannerArgsDraft = (args: string[]): string => args.join('\n');
 const formatAgentConnectionStatus = (
   result: AiAgentConnectionResult | null | undefined,
   isChecking: boolean
@@ -188,7 +180,7 @@ const formatAgentConnectionStatus = (
   if (!result) {
     return 'Not checked';
   }
-  if (result.status === 'ready' || result.status === 'local_ready') {
+  if (result.status === 'ready') {
     return 'Ready';
   }
   if (result.status === 'cli_not_found') {
@@ -333,6 +325,8 @@ export const App = (): JSX.Element => {
   const [currentTrackDurationSec, setCurrentTrackDurationSec] = useState(0);
   const [elapsedSec, setElapsedSec] = useState(0);
   const [playbackStartedAtMs, setPlaybackStartedAtMs] = useState<number | null>(null);
+  const [workspaceView, setWorkspaceView] = useState<WorkspaceView>('playlist');
+  const [isMixInspectorOpen, setIsMixInspectorOpen] = useState(false);
   const [isUtilityOpen, setIsUtilityOpen] = useState(false);
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
@@ -345,17 +339,6 @@ export const App = (): JSX.Element => {
   const [lastImportAt, setLastImportAt] = useState<number | null>(null);
   const [isTrackLoadPending, setIsTrackLoadPending] = useState(false);
   const [trackLoadNotice, setTrackLoadNotice] = useState<string | null>(null);
-  const [plannerCommandDraft, setPlannerCommandDraft] = useState('');
-  const [plannerArgsDraft, setPlannerArgsDraft] = useState('');
-  const [plannerTimeoutDraft, setPlannerTimeoutDraft] = useState(
-    String(DEFAULT_SETTINGS.plannerTimeoutMs)
-  );
-  const [harnessProfileIds, setHarnessProfileIds] = useState<string[]>([
-    DEFAULT_SETTINGS.activeAiAgentProfileId,
-    HEURISTIC_AGENT_PROFILE_ID
-  ]);
-  const [agentHarnessResults, setAgentHarnessResults] = useState<AgentHarnessResult[]>([]);
-  const [isAgentHarnessRunning, setIsAgentHarnessRunning] = useState(false);
   const [agentConnectionResultsById, setAgentConnectionResultsById] = useState<
     Record<string, AiAgentConnectionResult>
   >({});
@@ -379,6 +362,8 @@ export const App = (): JSX.Element => {
   const tracksRef = useRef<Track[]>([]);
   const settingsRef = useRef<PlayerSettings>(settings);
   const analysisByTrackIdRef = useRef<Record<string, TrackAnalysis>>(analysisByTrackId);
+  const analyzingTrackIdsRef = useRef<string[]>(analyzingTrackIds);
+  const failedAnalysisTrackIdsRef = useRef<string[]>(failedAnalysisTrackIds);
   const mixPlanCacheRef = useRef<MixPlanCacheStore>(mixPlanCache);
   const plannerImportInputRef = useRef<HTMLInputElement | null>(null);
   const comparisonImportInputRef = useRef<HTMLInputElement | null>(null);
@@ -400,6 +385,14 @@ export const App = (): JSX.Element => {
   useEffect(() => {
     analysisByTrackIdRef.current = analysisByTrackId;
   }, [analysisByTrackId]);
+
+  useEffect(() => {
+    analyzingTrackIdsRef.current = analyzingTrackIds;
+  }, [analyzingTrackIds]);
+
+  useEffect(() => {
+    failedAnalysisTrackIdsRef.current = failedAnalysisTrackIds;
+  }, [failedAnalysisTrackIds]);
 
   useEffect(() => {
     mixPlanCacheRef.current = mixPlanCache;
@@ -485,74 +478,99 @@ export const App = (): JSX.Element => {
 
   useEffect(() => {
     let canceled = false;
-    const pendingTrack = pickNextTrackForDetailedAnalysis(
-      tracks,
-      analysisByTrackId,
-      analyzingTrackIds,
-      new Set(failedAnalysisTrackIds)
-    );
 
-    if (!pendingTrack) {
-      return () => {
-        canceled = true;
-      };
-    }
+    const markAnalyzing = (trackId: string): void => {
+      analyzingTrackIdsRef.current = Array.from(new Set([...analyzingTrackIdsRef.current, trackId]));
+      setAnalyzingTrackIds((previous) =>
+        previous.includes(trackId) ? previous : [...previous, trackId]
+      );
+    };
 
-    setAnalyzingTrackIds((previous) =>
-      previous.includes(pendingTrack.id) ? previous : [...previous, pendingTrack.id]
-    );
+    const unmarkAnalyzing = (trackId: string): void => {
+      analyzingTrackIdsRef.current = analyzingTrackIdsRef.current.filter(
+        (currentTrackId) => currentTrackId !== trackId
+      );
+      setAnalyzingTrackIds((previous) =>
+        previous.filter((currentTrackId) => currentTrackId !== trackId)
+      );
+    };
+
+    const markFailed = (trackId: string): void => {
+      failedAnalysisTrackIdsRef.current = Array.from(new Set([...failedAnalysisTrackIdsRef.current, trackId]));
+      setFailedAnalysisTrackIds((previous) =>
+        previous.includes(trackId) ? previous : [...previous, trackId]
+      );
+    };
+
+    const clearFailed = (trackId: string): void => {
+      failedAnalysisTrackIdsRef.current = failedAnalysisTrackIdsRef.current.filter(
+        (currentTrackId) => currentTrackId !== trackId
+      );
+      setFailedAnalysisTrackIds((previous) =>
+        previous.filter((currentTrackId) => currentTrackId !== trackId)
+      );
+    };
+
     void (async () => {
       const AudioContextCtor =
         window.AudioContext ??
         (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
       if (!AudioContextCtor) {
-        setFailedAnalysisTrackIds((previous) =>
-          previous.includes(pendingTrack.id) ? previous : [...previous, pendingTrack.id]
-        );
-        setAnalyzingTrackIds((previous) =>
-          previous.filter((trackId) => trackId !== pendingTrack.id)
-        );
         return;
       }
 
-      const context = new AudioContextCtor();
-      try {
-        const raw = await window.dropperApi.readTrackBufferById(pendingTrack.id);
-        const decoded = await context.decodeAudioData(raw.slice(0));
-        if (canceled) {
-          return;
-        }
-
-        const analysis = buildTrackAnalysisFromAudioBuffer(pendingTrack, decoded);
-        const saved = await window.dropperApi.saveTrackAnalysis(pendingTrack.id, analysis);
-        if (canceled) {
-          return;
-        }
-
-        setAnalysisByTrackId((previous) => ({
-          ...previous,
-          [pendingTrack.id]: saved
-        }));
-        setFailedAnalysisTrackIds((previous) =>
-          previous.filter((trackId) => trackId !== pendingTrack.id)
+      while (!canceled) {
+        const pendingTrack = pickNextTrackForDetailedAnalysis(
+          tracksRef.current,
+          analysisByTrackIdRef.current,
+          analyzingTrackIdsRef.current,
+          new Set(failedAnalysisTrackIdsRef.current)
         );
-        if (typeof saved.bpm === 'number' && Number.isFinite(saved.bpm)) {
-          setResolvedBpmByTrack((previous) => ({
+
+        if (!pendingTrack) {
+          return;
+        }
+
+        markAnalyzing(pendingTrack.id);
+        const context = new AudioContextCtor();
+        try {
+          const raw = await window.dropperApi.readTrackBufferById(pendingTrack.id);
+          const decoded = await context.decodeAudioData(raw.slice(0));
+          if (canceled) {
+            return;
+          }
+
+          const analysis = buildTrackAnalysisFromAudioBuffer(pendingTrack, decoded);
+          const saved = await window.dropperApi.saveTrackAnalysis(pendingTrack.id, analysis);
+          if (canceled) {
+            return;
+          }
+
+          analysisByTrackIdRef.current = {
+            ...analysisByTrackIdRef.current,
+            [pendingTrack.id]: saved
+          };
+          setAnalysisByTrackId((previous) => ({
             ...previous,
-            [pendingTrack.id]: saved.bpm as number
+            [pendingTrack.id]: saved
           }));
-        }
-      } catch {
-        setFailedAnalysisTrackIds((previous) =>
-          previous.includes(pendingTrack.id) ? previous : [...previous, pendingTrack.id]
-        );
-        return;
-      } finally {
-        await context.close().catch(() => undefined);
-        if (!canceled) {
-          setAnalyzingTrackIds((previous) =>
-            previous.filter((trackId) => trackId !== pendingTrack.id)
-          );
+          clearFailed(pendingTrack.id);
+          if (typeof saved.bpm === 'number' && Number.isFinite(saved.bpm)) {
+            setResolvedBpmByTrack((previous) => ({
+              ...previous,
+              [pendingTrack.id]: saved.bpm as number
+            }));
+          }
+        } catch (error) {
+          console.warn('Detailed track analysis failed', {
+            trackId: pendingTrack.id,
+            title: pendingTrack.title,
+            error
+          });
+          markFailed(pendingTrack.id);
+        } finally {
+          await context.close().catch(() => undefined);
+          unmarkAnalyzing(pendingTrack.id);
         }
       }
     })();
@@ -560,7 +578,7 @@ export const App = (): JSX.Element => {
     return () => {
       canceled = true;
     };
-  }, [analysisByTrackId, analyzingTrackIds, failedAnalysisTrackIds, tracks]);
+  }, [tracks]);
 
   useEffect(() => {
     if (precomputingMixPlanKeys.length > 0) {
@@ -840,19 +858,6 @@ export const App = (): JSX.Element => {
       mounted = false;
     };
   }, [audioEngine]);
-
-  useEffect(() => {
-    const activeProfile = resolveActiveAiAgentProfile(settings);
-    setPlannerCommandDraft(activeProfile?.command ?? settings.plannerCommand);
-    setPlannerArgsDraft(formatPlannerArgsDraft(activeProfile?.args ?? settings.plannerArgs));
-    setPlannerTimeoutDraft(String(activeProfile?.timeoutMs ?? settings.plannerTimeoutMs));
-  }, [
-    settings.activeAiAgentProfileId,
-    settings.aiAgentProfiles,
-    settings.plannerArgs,
-    settings.plannerCommand,
-    settings.plannerTimeoutMs
-  ]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
@@ -1639,68 +1644,6 @@ export const App = (): JSX.Element => {
     }
   };
 
-  const updateActiveAiAgentProfile = (patch: Partial<AiAgentProfile>): void => {
-    const activeProfile =
-      resolveActiveAiAgentProfile(settings) ??
-      settings.aiAgentProfiles.find((profile) => profile.id === CUSTOM_AGENT_PROFILE_ID) ??
-      settings.aiAgentProfiles[0];
-    if (!activeProfile) {
-      return;
-    }
-
-    const nextProfiles = settings.aiAgentProfiles.map((profile) =>
-      profile.id === activeProfile.id
-        ? {
-            ...profile,
-            ...patch,
-            id: profile.id,
-            kind: 'cli' as const
-          }
-        : profile
-    );
-
-    void persistSettings({
-      aiAgentProfiles: nextProfiles,
-      activeAiAgentProfileId: activeProfile.id
-    });
-  };
-
-  const onActiveAiAgentProfileChange = (event: ChangeEvent<HTMLSelectElement>): void => {
-    void persistSettings({ activeAiAgentProfileId: event.target.value });
-  };
-
-  const commitPlannerCommandDraft = (): void => {
-    updateActiveAiAgentProfile({ command: plannerCommandDraft });
-  };
-
-  const commitPlannerArgsDraft = (): void => {
-    const plannerArgs = plannerArgsDraft
-      .split('\n')
-      .map((item) => item.trim())
-      .filter((item) => item.length > 0);
-    updateActiveAiAgentProfile({ args: plannerArgs });
-  };
-
-  const commitPlannerTimeoutDraft = (): void => {
-    const nextValue = Number(plannerTimeoutDraft);
-    if (!Number.isFinite(nextValue)) {
-      const activeProfile = resolveActiveAiAgentProfile(settings);
-      setPlannerTimeoutDraft(String(activeProfile?.timeoutMs ?? settings.plannerTimeoutMs));
-      pushLocalErrorEvent('Planner timeout must be a valid number');
-      return;
-    }
-
-    updateActiveAiAgentProfile({ timeoutMs: nextValue });
-  };
-
-  const toggleHarnessProfile = (profileId: string): void => {
-    setHarnessProfileIds((previous) =>
-      previous.includes(profileId)
-        ? previous.filter((id) => id !== profileId)
-        : [...previous, profileId]
-    );
-  };
-
   const checkActiveAiAgentConnection = async (): Promise<void> => {
     const activeProfile = resolveActiveAiAgentProfile(settings);
     if (!activeProfile) {
@@ -1733,76 +1676,6 @@ export const App = (): JSX.Element => {
     } finally {
       setCheckingAgentProfileId(null);
     }
-  };
-
-  const runAgentHarness = async (): Promise<void> => {
-    const currentCandidate = currentTrack ?? selectedTrack;
-    const nextCandidate = currentTrack
-      ? nextTrack
-      : tracks[selectedIndex + 1] ??
-        (settings.repeatAll && tracks.length > 1 ? tracks[0] : null);
-    const profiles = settings.aiAgentProfiles.filter(
-      (profile) => harnessProfileIds.includes(profile.id) && isAiAgentProfileConfigured(profile)
-    );
-
-    if (!currentCandidate || !nextCandidate || currentCandidate.id === nextCandidate.id) {
-      pushLocalErrorEvent('Agent compare needs two playlist tracks');
-      return;
-    }
-    if (profiles.length === 0) {
-      pushLocalErrorEvent('Select at least one configured AI agent');
-      return;
-    }
-
-    setIsAgentHarnessRunning(true);
-    setAgentHarnessResults(
-      profiles.map((profile) => ({
-        profileId: profile.id,
-        profileName: profile.name,
-        status: 'running',
-        result: null,
-        error: null
-      }))
-    );
-
-    const nextResults: AgentHarnessResult[] = [];
-    for (const profile of profiles) {
-      try {
-        const profileSettings: Partial<PlayerSettings> = {
-          aiDjEnabled: true,
-          activeAiAgentProfileId: profile.id,
-          aiAgentProfiles: settings.aiAgentProfiles.map((item) =>
-            item.id === profile.id ? profile : item
-          )
-        };
-        const result = await window.dropperApi.requestMixPlan({
-          currentTrack: currentCandidate,
-          nextTrack: nextCandidate,
-          currentPlayback: {
-            elapsedSec: currentTrack ? elapsedSec : 0
-          },
-          settingsOverride: profileSettings
-        });
-        nextResults.push({
-          profileId: profile.id,
-          profileName: profile.name,
-          status: result.source,
-          result,
-          error: result.reason
-        });
-      } catch (error) {
-        nextResults.push({
-          profileId: profile.id,
-          profileName: profile.name,
-          status: 'error',
-          result: null,
-          error: error instanceof Error ? error.message : String(error)
-        });
-      }
-      setAgentHarnessResults([...nextResults]);
-    }
-
-    setIsAgentHarnessRunning(false);
   };
 
   const reorderTracks = (fromIndex: number, toIndex: number): void => {
@@ -1966,11 +1839,11 @@ export const App = (): JSX.Element => {
     if (hasWaveformPreview(analysis)) {
       return `Ready · ${analysis?.barGrid.length ?? 0} bars`;
     }
-    if (analysis) {
-      return 'Cue only';
-    }
     if (failedAnalysisTrackIds.includes(track.id)) {
       return 'Failed';
+    }
+    if (analysis) {
+      return 'Cue only';
     }
     return 'Pending';
   };
@@ -2015,16 +1888,10 @@ export const App = (): JSX.Element => {
   const plannerStatusLabel = !settings.aiDjEnabled
     ? 'Disabled'
     : isAiAgentProfileConfigured(activeAiAgentProfile)
-      ? `Enabled · ${activeAiAgentProfile?.name ?? 'AI Agent'} · ${settings.aiDjMode}`
-      : 'Enabled · agent command missing';
+      ? `Enabled · Codex · ${settings.aiDjMode}`
+      : 'Enabled · Codex command missing';
   const plannerPresetLabel: MixPlanPlannerPreset =
-    activeAiAgentProfile?.id === CODEX_AGENT_PROFILE_ID
-      ? 'codex'
-      : activeAiAgentProfile?.id === HEURISTIC_AGENT_PROFILE_ID
-        ? 'heuristic'
-        : activeAiAgentProfile?.command
-          ? 'custom'
-          : 'none';
+    activeAiAgentProfile?.id === CODEX_AGENT_PROFILE_ID ? 'codex' : 'none';
   const latestMixPlanApplied = events.find((event) => event.type === 'mix_plan_applied') ?? null;
   const latestMixPlanFallback = events.find((event) => event.type === 'mix_plan_fallback') ?? null;
   const latestTransitionEvent = events.find((event) => event.type === 'transition_started') ?? null;
@@ -2050,13 +1917,13 @@ export const App = (): JSX.Element => {
   const latestTempoRate = formatTempoSyncRate(latestTempoApplied?.details?.targetRate);
   const latestPlannerSourceLabel =
     latestMixPlanApplied && asString(latestMixPlanApplied.details?.source) === 'cli'
-      ? activeAiAgentProfile?.name ?? 'AI Agent'
+      ? 'Codex'
       : latestMixPlanApplied
-        ? asString(latestMixPlanApplied.details?.source) ?? 'AI Agent'
+        ? asString(latestMixPlanApplied.details?.source) ?? 'Codex'
         : latestMixPlanFallback
           ? 'Rule-based'
           : settings.aiDjEnabled
-            ? activeAiAgentProfile?.name ?? 'AI Agent'
+            ? 'Codex'
             : 'Rule-based';
   const latestPlannerFailureReason = asString(latestMixPlanFallback?.details?.reason);
   const mixConfidenceLabel =
@@ -2283,15 +2150,6 @@ export const App = (): JSX.Element => {
       ? [`unscored ${mixPlanPrecomputeSummary.quality.unscored}`]
       : [])
   ].join(' · ');
-  const harnessCurrentTrack = currentTrack ?? selectedTrack;
-  const harnessNextTrack = currentTrack
-    ? nextTrack
-    : tracks[selectedIndex + 1] ??
-      (settings.repeatAll && tracks.length > 1 ? tracks[0] : null);
-  const harnessPairLabel =
-    harnessCurrentTrack && harnessNextTrack && harnessCurrentTrack.id !== harnessNextTrack.id
-      ? `${harnessCurrentTrack.title} -> ${harnessNextTrack.title}`
-      : 'Need two playlist tracks';
   const supervisorCurrentTrack = currentTrack ?? selectedTrack;
   const supervisorNextTrack = currentTrack
     ? nextTrack
@@ -2446,6 +2304,7 @@ export const App = (): JSX.Element => {
         );
       });
   };
+  const isMixInspectorVisible = isMixInspectorOpen && tracks.length > 1;
 
   return (
     <div className="app-shell">
@@ -2521,7 +2380,7 @@ export const App = (): JSX.Element => {
         </div>
       </section>
 
-      <main className={`main-layout ${tracks.length > 1 ? 'has-analysis' : ''}`}>
+      <main className={`main-layout ${isMixInspectorVisible ? 'has-analysis' : ''}`}>
         <section className="source-strip" aria-busy={isTrackLoadPending}>
           <div className="source-summary">
             <span className="panel-tag">Audio Files</span>
@@ -2601,6 +2460,50 @@ export const App = (): JSX.Element => {
             </div>
             <span className="track-count">{tracks.length} tracks</span>
           </div>
+          <div className="workspace-controls" aria-label="Workspace view">
+            <div className="workspace-tabs" role="tablist" aria-label="Library workspace">
+              <button
+                type="button"
+                className={`workspace-tab ${workspaceView === 'playlist' ? 'active' : ''}`}
+                onClick={() => setWorkspaceView('playlist')}
+                role="tab"
+                aria-selected={workspaceView === 'playlist'}
+                title="Show the human-curated set order"
+              >
+                <ListMusic aria-hidden="true" />
+                <span>Set</span>
+              </button>
+              <button
+                type="button"
+                className={`workspace-tab ${workspaceView === 'library' ? 'active' : ''}`}
+                onClick={() => setWorkspaceView('library')}
+                role="tab"
+                aria-selected={workspaceView === 'library'}
+                title="Show the source library"
+              >
+                <Library aria-hidden="true" />
+                <span>Library</span>
+              </button>
+            </div>
+            {tracks.length > 1 ? (
+              <button
+                type="button"
+                className={`workspace-detail-toggle ${isMixInspectorOpen ? 'active' : ''}`}
+                onClick={() => setIsMixInspectorOpen((previous) => !previous)}
+                aria-pressed={isMixInspectorOpen}
+                title={isMixInspectorOpen ? 'Hide mix inspector' : 'Show mix inspector'}
+              >
+                {isMixInspectorOpen ? (
+                  <PanelRightClose aria-hidden="true" />
+                ) : (
+                  <PanelRightOpen aria-hidden="true" />
+                )}
+                <span>{isMixInspectorOpen ? 'Hide Inspector' : 'Inspector'}</span>
+              </button>
+            ) : null}
+          </div>
+          {workspaceView === 'playlist' ? (
+            <>
           <section className="taste-playlist-bar" aria-busy={isUserPlaylistPending}>
             <div className="taste-playlist-head">
               <div>
@@ -2691,6 +2594,9 @@ export const App = (): JSX.Element => {
               ) : null}
             </div>
           </section>
+            </>
+          ) : null}
+          {workspaceView === 'library' ? (
           <section
             className={`library-drawer ${libraryTracks.length === 0 ? 'empty' : ''}`}
             aria-busy={isLibraryPending}
@@ -2850,6 +2756,9 @@ export const App = (): JSX.Element => {
               </ul>
             )}
           </section>
+          ) : null}
+          {workspaceView === 'playlist' ? (
+            <>
           <div className="playlist-toolbar">
             <button
               type="button"
@@ -2977,9 +2886,11 @@ export const App = (): JSX.Element => {
               </ul>
             </div>
           )}
+            </>
+          ) : null}
         </section>
 
-        {tracks.length > 1 && (
+        {isMixInspectorVisible && (
         <section className="panel analysis-panel">
           <div className="panel-head">
             <h2>Mix Pair Inspector</h2>
@@ -3413,7 +3324,7 @@ export const App = (): JSX.Element => {
             </section>
 
             <section className="utility-section">
-              <h3>AI Agent Mixer</h3>
+              <h3>AI Mix Planner</h3>
               <div className="setting-row inline">
                 <label htmlFor="ai-dj-enabled">Enable AI DJ</label>
                 <input
@@ -3436,25 +3347,11 @@ export const App = (): JSX.Element => {
                 </select>
               </div>
               <div className="setting-row">
-                <label htmlFor="active-ai-agent-profile">Active agent</label>
-                <select
-                  id="active-ai-agent-profile"
-                  value={settings.activeAiAgentProfileId}
-                  onChange={onActiveAiAgentProfileChange}
-                >
-                  {settings.aiAgentProfiles.map((profile) => (
-                    <option key={profile.id} value={profile.id}>
-                      {profile.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="setting-row">
-                <label>Agent status: {plannerStatusLabel}</label>
+                <label>Planner status: {plannerStatusLabel}</label>
               </div>
               <div className="agent-connection-panel">
                 <div>
-                  <span>Connection</span>
+                  <span>Codex connection</span>
                   <strong>{activeAgentConnectionLabel}</strong>
                   <small>
                     {activeAgentConnectionResult?.message ??
@@ -3468,111 +3365,8 @@ export const App = (): JSX.Element => {
                   disabled={isCheckingActiveAgent || !activeAiAgentProfile}
                   onClick={() => void checkActiveAiAgentConnection()}
                 >
-                  {isCheckingActiveAgent ? 'Checking...' : 'Check connection'}
+                  {isCheckingActiveAgent ? 'Checking...' : 'Check Codex'}
                 </button>
-              </div>
-              <details className="nested-details">
-                <summary>Advanced CLI</summary>
-                <div className="setting-row">
-                  <label htmlFor="planner-command">Command</label>
-                  <input
-                    id="planner-command"
-                    type="text"
-                    value={plannerCommandDraft}
-                    onChange={(event) => setPlannerCommandDraft(event.target.value)}
-                    onBlur={commitPlannerCommandDraft}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter') {
-                        event.preventDefault();
-                        commitPlannerCommandDraft();
-                      }
-                    }}
-                    placeholder="node"
-                  />
-                </div>
-                <div className="setting-row">
-                  <label htmlFor="planner-args">Args</label>
-                  <textarea
-                    id="planner-args"
-                    rows={4}
-                    value={plannerArgsDraft}
-                    onChange={(event) => setPlannerArgsDraft(event.target.value)}
-                    onBlur={commitPlannerArgsDraft}
-                    placeholder={'scripts/codex-mix-planner.cjs'}
-                  />
-                </div>
-                <div className="setting-row">
-                  <label htmlFor="planner-timeout">Timeout (ms)</label>
-                  <input
-                    id="planner-timeout"
-                    type="number"
-                    min={500}
-                    max={30000}
-                    step={100}
-                    value={plannerTimeoutDraft}
-                    onChange={(event) => setPlannerTimeoutDraft(event.target.value)}
-                    onBlur={commitPlannerTimeoutDraft}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter') {
-                        event.preventDefault();
-                        commitPlannerTimeoutDraft();
-                      }
-                    }}
-                  />
-                </div>
-              </details>
-              <div className="setting-row">
-                <label>Agent compare</label>
-                <small className="setting-hint">{harnessPairLabel}</small>
-                <div className="planner-helper-row">
-                  {settings.aiAgentProfiles.map((profile) => (
-                    <label className="agent-compare-option" key={profile.id}>
-                      <input
-                        type="checkbox"
-                        checked={harnessProfileIds.includes(profile.id)}
-                        onChange={() => toggleHarnessProfile(profile.id)}
-                      />
-                      <span>{profile.name}</span>
-                    </label>
-                  ))}
-                </div>
-                <button
-                  type="button"
-                  className="secondary-button planner-preset-button"
-                  disabled={
-                    isAgentHarnessRunning ||
-                    !harnessCurrentTrack ||
-                    !harnessNextTrack ||
-                    harnessCurrentTrack.id === harnessNextTrack.id
-                  }
-                  onClick={() => void runAgentHarness()}
-                >
-                  {isAgentHarnessRunning ? 'Comparing agents...' : 'Run Agent Compare'}
-                </button>
-                {agentHarnessResults.length > 0 && (
-                  <div className="agent-harness-results">
-                    {agentHarnessResults.map((item) => {
-                      const plan = item.result?.plan ?? null;
-                      return (
-                        <div className="planner-debug-summary" key={item.profileId}>
-                          <strong>
-                            {item.profileName} · {item.status}
-                          </strong>
-                          <small>
-                            {plan
-                              ? [
-                                  `window ${formatDuration(plan.transitionStartSec)} -> ${formatDuration(plan.transitionEndSec)}`,
-                                  `offset ${formatDuration(plan.nextTrackStartOffsetSec)}`,
-                                  `style ${plan.style}`,
-                                  `confidence ${Math.round(plan.confidence * 100)}%`
-                                ].join(' · ')
-                              : item.error ?? 'Waiting for result'}
-                          </small>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
               </div>
             </section>
 

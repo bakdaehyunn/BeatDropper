@@ -8,7 +8,7 @@ import {
   createMixPlanCacheEntry,
   MixPlanCacheStore
 } from '../../src/shared/mixPlanCache';
-import { DEFAULT_SETTINGS, HEURISTIC_AGENT_PROFILE_ID } from '../../src/shared/settings';
+import { DEFAULT_SETTINGS } from '../../src/shared/settings';
 import { Track } from '../../src/shared/types';
 
 const tracks: Track[] = [
@@ -36,8 +36,7 @@ const plannerReadyAnalysis = (trackId: string) =>
 
 const settings = {
   ...DEFAULT_SETTINGS,
-  aiDjEnabled: true,
-  activeAiAgentProfileId: HEURISTIC_AGENT_PROFILE_ID
+  aiDjEnabled: true
 };
 
 describe('mixPlanPrecompute', () => {

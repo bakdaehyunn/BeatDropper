@@ -87,7 +87,7 @@ describe('AiDjPlannerService', () => {
     expect(result.reason).toBe('mix_plan_window_too_small');
   });
 
-  it('executes the active ai agent profile instead of stale legacy planner fields', async () => {
+  it('executes the Codex profile even when settings contain old custom agent fields', async () => {
     const execute = vi.fn().mockResolvedValue({
       schemaVersion: 1,
       mixPlan: {
@@ -145,10 +145,10 @@ describe('AiDjPlannerService', () => {
     expect(execute).toHaveBeenCalledWith(
       expect.objectContaining({
         command: 'node',
-        args: ['scripts/test-agent.cjs'],
-        timeoutMs: 1200,
-        profileId: 'test-agent',
-        profileName: 'Test Agent'
+        args: ['scripts/codex-mix-planner.cjs'],
+        timeoutMs: 20000,
+        profileId: 'codex',
+        profileName: 'Codex'
       }),
       expect.any(Object)
     );

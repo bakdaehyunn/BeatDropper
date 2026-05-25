@@ -1,8 +1,4 @@
-import {
-  CUSTOM_AGENT_PROFILE_ID,
-  DEFAULT_SETTINGS,
-  sanitizeSettings
-} from '../../src/shared/settings';
+import { CODEX_AGENT_PROFILE_ID, DEFAULT_SETTINGS, sanitizeSettings } from '../../src/shared/settings';
 
 describe('sanitizeSettings', () => {
   it('returns defaults when input is empty', () => {
@@ -24,10 +20,10 @@ describe('sanitizeSettings', () => {
     expect(result.predecodeLeadSec).toBe(3);
     expect(result.decodeTimeoutDurationWeightMs).toBe(80);
     expect(result.decodeTimeoutSizeWeightMs).toBe(0);
-    expect(result.plannerTimeoutMs).toBe(30_000);
+    expect(result.plannerTimeoutMs).toBe(DEFAULT_SETTINGS.plannerTimeoutMs);
   });
 
-  it('keeps valid values as-is', () => {
+  it('keeps valid product settings and ignores legacy custom planner fields', () => {
     const result = sanitizeSettings({
       fadeDurationSec: 6,
       masterGain: 0.75,
@@ -51,23 +47,15 @@ describe('sanitizeSettings', () => {
       decodeTimeoutSizeWeightMs: 320,
       aiDjEnabled: true,
       aiDjMode: 'balanced',
-      activeAiAgentProfileId: CUSTOM_AGENT_PROFILE_ID,
-      plannerCommand: 'codex',
-      plannerArgs: ['exec', '--json'],
-      plannerTimeoutMs: 5500
+      activeAiAgentProfileId: CODEX_AGENT_PROFILE_ID,
+      plannerCommand: DEFAULT_SETTINGS.plannerCommand,
+      plannerArgs: DEFAULT_SETTINGS.plannerArgs,
+      plannerTimeoutMs: DEFAULT_SETTINGS.plannerTimeoutMs
     });
-    expect(result.aiAgentProfiles).toContainEqual({
-      id: CUSTOM_AGENT_PROFILE_ID,
-      name: 'Custom CLI',
-      kind: 'cli',
-      command: 'codex',
-      args: ['exec', '--json'],
-      timeoutMs: 5500,
-      enabled: true
-    });
+    expect(result.aiAgentProfiles).toEqual(DEFAULT_SETTINGS.aiAgentProfiles);
   });
 
-  it('keeps the selected ai agent profile in sync with legacy planner fields', () => {
+  it('forces Codex when persisted settings contain old custom profiles', () => {
     const result = sanitizeSettings({
       aiAgentProfiles: [
         ...DEFAULT_SETTINGS.aiAgentProfiles,
@@ -84,9 +72,11 @@ describe('sanitizeSettings', () => {
       activeAiAgentProfileId: 'test-agent'
     });
 
-    expect(result.plannerCommand).toBe('node');
-    expect(result.plannerArgs).toEqual(['scripts/test-agent.cjs']);
-    expect(result.plannerTimeoutMs).toBe(1200);
+    expect(result.activeAiAgentProfileId).toBe(CODEX_AGENT_PROFILE_ID);
+    expect(result.aiAgentProfiles).toEqual(DEFAULT_SETTINGS.aiAgentProfiles);
+    expect(result.plannerCommand).toBe(DEFAULT_SETTINGS.plannerCommand);
+    expect(result.plannerArgs).toEqual(DEFAULT_SETTINGS.plannerArgs);
+    expect(result.plannerTimeoutMs).toBe(DEFAULT_SETTINGS.plannerTimeoutMs);
   });
 
   it('falls back to default repeatAll when payload type is invalid', () => {

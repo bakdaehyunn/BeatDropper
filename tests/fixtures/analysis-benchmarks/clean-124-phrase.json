@@ -1,0 +1,68 @@
+{
+  "id": "clean-124-phrase",
+  "title": "Clean 124 BPM phrase-aligned synthetic fixture",
+  "kind": "synthetic",
+  "tags": ["bpm", "bar-grid", "phrase"],
+  "trackReference": {
+    "source": "synthetic",
+    "notes": "Generated timing snapshot, not a real copyrighted track."
+  },
+  "expectedGrade": "pass",
+  "expected": {
+    "bpm": 124,
+    "firstDownbeatSec": 0,
+    "outroCueSec": 96,
+    "barGridSec": [0, 7.742, 15.484, 23.226, 30.968, 38.71, 46.452, 54.194, 61.936, 69.678, 77.42, 85.162, 92.904],
+    "phraseBoundarySec": [0, 61.936],
+    "plannerReady": true
+  },
+  "analysis": {
+    "trackId": "clean-124-phrase",
+    "source": "derived",
+    "bpm": 124.1,
+    "bpmConfidence": 0.88,
+    "beatGridSec": [0, 1.936, 3.871, 5.807, 7.742, 9.678, 11.613, 13.549, 15.484, 17.42, 19.355, 21.291, 23.226],
+    "downbeatsSec": [0, 7.742, 15.484, 23.226, 30.968, 38.71, 46.452, 54.194, 61.936, 69.678, 77.42, 85.162, 92.904],
+    "barGrid": [
+      { "index": 0, "startSec": 0, "beatIndex": 0 },
+      { "index": 1, "startSec": 7.742, "beatIndex": 4 },
+      { "index": 2, "startSec": 15.484, "beatIndex": 8 },
+      { "index": 3, "startSec": 23.226, "beatIndex": 12 },
+      { "index": 4, "startSec": 30.968, "beatIndex": 16 },
+      { "index": 5, "startSec": 38.71, "beatIndex": 20 },
+      { "index": 6, "startSec": 46.452, "beatIndex": 24 },
+      { "index": 7, "startSec": 54.194, "beatIndex": 28 },
+      { "index": 8, "startSec": 61.936, "beatIndex": 32 },
+      { "index": 9, "startSec": 69.678, "beatIndex": 36 },
+      { "index": 10, "startSec": 77.42, "beatIndex": 40 },
+      { "index": 11, "startSec": 85.162, "beatIndex": 44 },
+      { "index": 12, "startSec": 92.904, "beatIndex": 48 }
+    ],
+    "phraseMarkers": [
+      { "index": 0, "startSec": 0, "bars": 8, "confidence": 0.76 },
+      { "index": 1, "startSec": 61.936, "bars": 8, "confidence": 0.84 }
+    ],
+    "introCueSec": 0,
+    "outroCueSec": 96.2,
+    "energyProfile": [0.82, 0.76, 0.7, 0.58, 0.44, 0.32],
+    "waveformDetail": [{ "timeSec": 0, "peak": 0.84, "rms": 0.42, "min": -0.72, "max": 0.84 }],
+    "spectralBands": [{ "timeSec": 0, "low": 0.6, "mid": 0.44, "high": 0.34 }],
+    "transientMarkers": [
+      { "index": 0, "timeSec": 0, "strength": 0.82 },
+      { "index": 1, "timeSec": 7.742, "strength": 0.74 },
+      { "index": 2, "timeSec": 15.484, "strength": 0.76 }
+    ],
+    "cueCandidates": [
+      { "id": "first-downbeat", "type": "first_downbeat", "startSec": 0, "endSec": 4, "confidence": 0.86, "label": "First downbeat" },
+      { "id": "outro", "type": "outro", "startSec": 96.2, "endSec": 112, "confidence": 0.82, "label": "Outro mix-out" }
+    ],
+    "analysisConfidence": 0.86,
+    "analysisQuality": {
+      "waveformDetail": 0.82,
+      "spectralBands": 0.8,
+      "transientMarkers": 0.78,
+      "beatGrid": 0.86
+    },
+    "analysisWarnings": []
+  }
+}

@@ -1,0 +1,53 @@
+{
+  "id": "weak-ambiguous-fail",
+  "title": "Weak ambiguous analysis synthetic fixture",
+  "kind": "synthetic",
+  "tags": ["bpm", "downbeat", "bar-grid", "phrase"],
+  "trackReference": {
+    "source": "synthetic",
+    "notes": "Generated timing snapshot that should fail production-quality timing checks."
+  },
+  "expectedGrade": "fail",
+  "expected": {
+    "bpm": 124,
+    "firstDownbeatSec": 0,
+    "outroCueSec": 96,
+    "barGridSec": [0, 7.742, 15.484, 23.226, 30.968, 38.71, 46.452, 54.194],
+    "phraseBoundarySec": [0, 61.936],
+    "plannerReady": true
+  },
+  "analysis": {
+    "trackId": "weak-ambiguous-fail",
+    "source": "derived",
+    "bpm": 136,
+    "bpmConfidence": 0.38,
+    "beatGridSec": [3.4, 5.1, 6.8, 8.5, 10.2, 11.9],
+    "downbeatsSec": [3.4, 10.2, 17, 23.8, 30.6],
+    "barGrid": [
+      { "index": 0, "startSec": 3.4, "beatIndex": 0 },
+      { "index": 1, "startSec": 10.2, "beatIndex": 4 },
+      { "index": 2, "startSec": 17, "beatIndex": 8 },
+      { "index": 3, "startSec": 23.8, "beatIndex": 12 },
+      { "index": 4, "startSec": 30.6, "beatIndex": 16 }
+    ],
+    "phraseMarkers": [],
+    "introCueSec": 3.4,
+    "outroCueSec": 83,
+    "energyProfile": [0.44, 0.43, 0.42, 0.41],
+    "waveformDetail": [{ "timeSec": 3.4, "peak": 0.4, "rms": 0.2, "min": -0.3, "max": 0.4 }],
+    "spectralBands": [{ "timeSec": 3.4, "low": 0.3, "mid": 0.3, "high": 0.3 }],
+    "transientMarkers": [{ "index": 0, "timeSec": 3.4, "strength": 0.32 }],
+    "cueCandidates": [
+      { "id": "first-downbeat", "type": "first_downbeat", "startSec": 3.4, "endSec": 7.4, "confidence": 0.35, "label": "First downbeat" },
+      { "id": "outro", "type": "outro", "startSec": 83, "endSec": 112, "confidence": 0.38, "label": "Outro mix-out" }
+    ],
+    "analysisConfidence": 0.42,
+    "analysisQuality": {
+      "waveformDetail": 0.42,
+      "spectralBands": 0.4,
+      "transientMarkers": 0.28,
+      "beatGrid": 0.3
+    },
+    "analysisWarnings": ["bpm_low_confidence"]
+  }
+}

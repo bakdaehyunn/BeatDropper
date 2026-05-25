@@ -17,8 +17,7 @@ export type AiAgentConnectionStatus =
   | 'ready'
   | 'cli_not_found'
   | 'login_required'
-  | 'test_failed'
-  | 'local_ready';
+  | 'test_failed';
 
 export interface AiAgentConnectionResult {
   profileId: string;

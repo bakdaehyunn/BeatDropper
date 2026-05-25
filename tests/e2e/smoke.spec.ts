@@ -64,10 +64,10 @@ test('renders BeatDropper shell', async ({ page }) => {
         throw new Error('No planner request expected in smoke test');
       },
       checkAiAgentConnection: async () => ({
-        profileId: 'local-heuristic',
-        profileName: 'Local Heuristic',
-        status: 'local_ready',
-        message: 'Local heuristic planner is ready.',
+        profileId: 'codex',
+        profileName: 'Codex',
+        status: 'ready',
+        message: 'Codex is connected and returned a valid MixPlan response.',
         checkedAt: new Date().toISOString(),
         canRunPlanner: true
       }),
@@ -85,12 +85,14 @@ test('renders BeatDropper shell', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Add Tracks' })).toBeDisabled();
   await expect(page.getByRole('heading', { level: 2, name: 'Live Mix Monitor' })).toBeVisible();
   await page.getByRole('button', { name: 'Open settings' }).click();
-  await expect(page.getByRole('heading', { level: 3, name: 'AI Agent Mixer' })).toBeVisible();
-  await expect(page.getByLabel('Active agent')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Check connection' })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 3, name: 'AI Mix Planner' })).toBeVisible();
+  await expect(page.getByLabel('Active agent')).toHaveCount(0);
+  await expect(page.getByText('Agent compare')).toHaveCount(0);
+  await expect(page.getByText('Advanced CLI')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Check Codex' })).toBeVisible();
 });
 
-test('keeps playlist and mix inspector visible without internal scrollbars', async ({ page }) => {
+test('keeps playlist and optional mix inspector usable with managed scrolling', async ({ page }) => {
   await page.setViewportSize({ width: 1217, height: 841 });
   await page.addInitScript(() => {
     const settings = {
@@ -248,10 +250,10 @@ test('keeps playlist and mix inspector visible without internal scrollbars', asy
         throw new Error('No planner request expected in layout test');
       },
       checkAiAgentConnection: async () => ({
-        profileId: 'local-heuristic',
-        profileName: 'Local Heuristic',
-        status: 'local_ready',
-        message: 'Local heuristic planner is ready.',
+        profileId: 'codex',
+        profileName: 'Codex',
+        status: 'ready',
+        message: 'Codex is connected and returned a valid MixPlan response.',
         checkedAt: new Date().toISOString(),
         canRunPlanner: true
       }),
@@ -271,6 +273,8 @@ test('keeps playlist and mix inspector visible without internal scrollbars', asy
   await expect(plannerStatus.getByText('Plan')).toBeVisible();
   await expect(plannerStatus.getByText('Tempo')).toBeVisible();
   await expect(page.getByRole('heading', { level: 2, name: 'Playlist' })).toBeVisible();
+  await page.getByRole('button', { name: 'Inspector' }).click();
+  await expect(page.getByRole('button', { name: 'Hide Inspector' })).toBeVisible();
   await expect(page.getByRole('heading', { level: 2, name: 'Mix Pair Inspector' })).toBeVisible();
   await expect(page.locator('.supervisor-waveform.current')).toBeVisible();
   await expect(page.locator('.supervisor-waveform.next')).toBeVisible();
@@ -320,9 +324,12 @@ test('keeps playlist and mix inspector visible without internal scrollbars', asy
     });
   });
 
+  const managedVerticalScroll = new Set(['.playlist-table-body', '.analysis-grid']);
   for (const item of overflow) {
     expect(item.horizontal, `${item.selector} horizontal overflow`).toBeLessThanOrEqual(1);
-    expect(item.vertical, `${item.selector} vertical overflow`).toBeLessThanOrEqual(1);
+    if (!managedVerticalScroll.has(item.selector)) {
+      expect(item.vertical, `${item.selector} vertical overflow`).toBeLessThanOrEqual(1);
+    }
   }
 });
 
@@ -443,10 +450,10 @@ test('contains long playlist scrolling inside the playlist table', async ({ page
         throw new Error('No planner request expected in long playlist layout test');
       },
       checkAiAgentConnection: async () => ({
-        profileId: 'local-heuristic',
-        profileName: 'Local Heuristic',
-        status: 'local_ready',
-        message: 'Local heuristic planner is ready.',
+        profileId: 'codex',
+        profileName: 'Codex',
+        status: 'ready',
+        message: 'Codex is connected and returned a valid MixPlan response.',
         checkedAt: new Date().toISOString(),
         canRunPlanner: true
       }),
@@ -460,7 +467,7 @@ test('contains long playlist scrolling inside the playlist table', async ({ page
 
   await page.goto('/');
   const playlist = page.getByLabel('Playlist tracks');
-  await expect(playlist).toBeVisible();
+  await expect(playlist.getByText('Set track 01.wav')).toBeVisible();
 
   const metrics = await page.evaluate(() => {
     const list = document.querySelector('.playlist-table-body');

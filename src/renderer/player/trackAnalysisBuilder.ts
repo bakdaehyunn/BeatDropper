@@ -10,6 +10,7 @@ import {
 } from '../../shared/analysis';
 import { Track } from '../../shared/types';
 import { AudioBufferForBpm, estimateTrackBpm } from './bpmEstimator';
+import { buildSpectralBandsFromAudioBuffer } from './spectralAnalysis';
 
 const WAVEFORM_BUCKETS = 160;
 const WAVEFORM_DETAIL_MAX_BUCKETS = 1200;
@@ -113,89 +114,66 @@ const buildWaveformDetail = (buffer: AudioBufferForBpm): WaveformDetailPoint[] =
   });
 };
 
-const normalizeBandPoints = (points: SpectralBandPoint[]): SpectralBandPoint[] => {
-  const maxLow = Math.max(1e-6, ...points.map((point) => point.low));
-  const maxMid = Math.max(1e-6, ...points.map((point) => point.mid));
-  const maxHigh = Math.max(1e-6, ...points.map((point) => point.high));
+interface OnsetEnvelopePoint {
+  timeSec: number;
+  strength: number;
+}
 
-  return points.map((point) => ({
-    timeSec: point.timeSec,
-    low: clamp(point.low / maxLow, 0, 1),
-    mid: clamp(point.mid / maxMid, 0, 1),
-    high: clamp(point.high / maxHigh, 0, 1)
-  }));
+const normalizeScores = (values: number[]): number[] => {
+  const max = Math.max(1e-6, ...values);
+  return values.map((value) => clamp(value / max, 0, 1));
 };
 
-const buildSpectralBands = (buffer: AudioBufferForBpm): SpectralBandPoint[] => {
-  const totalSamples = Math.max(0, Math.floor(buffer.duration * buffer.sampleRate));
-  const bucketCount = Math.min(
-    WAVEFORM_DETAIL_MAX_BUCKETS,
-    Math.max(WAVEFORM_BUCKETS, Math.floor(buffer.duration * WAVEFORM_DETAIL_BUCKETS_PER_SEC))
-  );
-  const samplesPerBucket = Math.max(1, Math.floor(totalSamples / bucketCount));
-  const points = Array.from({ length: bucketCount }, (_, bucketIndex) => {
-    const start = bucketIndex * samplesPerBucket;
-    const end = Math.min(totalSamples, start + samplesPerBucket);
-    let low = 0;
-    let mid = 0;
-    let high = 0;
-    let previous = readMonoSample(buffer, start);
+const smoothScores = (values: number[], radius = 1): number[] => {
+  if (values.length <= 2 || radius <= 0) {
+    return values;
+  }
+
+  return values.map((_value, index) => {
+    let sum = 0;
     let count = 0;
-
-    for (let sampleIndex = start; sampleIndex < end; sampleIndex += 1) {
-      const sample = readMonoSample(buffer, sampleIndex);
-      const delta = sample - previous;
-      const abs = Math.abs(sample);
-      const highComponent = Math.abs(delta);
-      low += abs * abs;
-      mid += Math.abs(sample - delta * 0.5);
-      high += highComponent * highComponent;
-      previous = sample;
-      count += 1;
+    for (let offset = -radius; offset <= radius; offset += 1) {
+      const value = values[index + offset];
+      if (typeof value === 'number') {
+        sum += value;
+        count += 1;
+      }
     }
-
-    return {
-      timeSec: (start / Math.max(1, totalSamples)) * buffer.duration,
-      low: count > 0 ? Math.sqrt(low / count) : 0,
-      mid: count > 0 ? mid / count : 0,
-      high: count > 0 ? Math.sqrt(high / count) : 0
-    };
+    return count > 0 ? sum / count : values[index];
   });
-
-  return normalizeBandPoints(points);
 };
 
-const buildTransientMarkers = (
+const resolveBandAt = (
+  spectralBands: SpectralBandPoint[],
+  waveformLength: number,
+  index: number
+): SpectralBandPoint | null => {
+  if (spectralBands.length === 0) {
+    return null;
+  }
+  if (spectralBands.length === waveformLength) {
+    return spectralBands[index] ?? null;
+  }
+  const spectralIndex = Math.round(
+    (index / Math.max(1, waveformLength - 1)) * (spectralBands.length - 1)
+  );
+  return spectralBands[clamp(spectralIndex, 0, spectralBands.length - 1)] ?? null;
+};
+
+const buildOnsetEnvelope = (
   waveformDetail: WaveformDetailPoint[],
   spectralBands: SpectralBandPoint[],
   durationSec: number
-): TransientMarker[] => {
+): OnsetEnvelopePoint[] => {
   if (waveformDetail.length < 4 || durationSec <= 0) {
     return [];
   }
 
-  const normalizeScores = (values: number[]): number[] => {
-    const max = Math.max(1e-6, ...values);
-    return values.map((value) => clamp(value / max, 0, 1));
-  };
-  const resolveBandAt = (index: number): SpectralBandPoint | null => {
-    if (spectralBands.length === 0) {
-      return null;
-    }
-    if (spectralBands.length === waveformDetail.length) {
-      return spectralBands[index] ?? null;
-    }
-    const spectralIndex = Math.round(
-      (index / Math.max(1, waveformDetail.length - 1)) * (spectralBands.length - 1)
-    );
-    return spectralBands[clamp(spectralIndex, 0, spectralBands.length - 1)] ?? null;
-  };
-
   const onsetEvidence = waveformDetail.map((point, index) => {
     const previous = waveformDetail[Math.max(0, index - 1)]?.rms ?? 0;
     const previousPoint = waveformDetail[Math.max(0, index - 1)] ?? point;
-    const band = resolveBandAt(index);
-    const previousBand = resolveBandAt(Math.max(0, index - 1)) ?? band;
+    const band = resolveBandAt(spectralBands, waveformDetail.length, index);
+    const previousBand = resolveBandAt(spectralBands, waveformDetail.length, Math.max(0, index - 1)) ?? band;
     const spectralFlux =
       band && previousBand
         ? Math.max(0, band.high - previousBand.high) * 0.56 +
@@ -204,6 +182,7 @@ const buildTransientMarkers = (
         : 0;
 
     return {
+      timeSec: point.timeSec,
       rmsRise: Math.max(0, point.rms - previous),
       peakRise: Math.max(0, point.peak - previousPoint.peak),
       spectralFlux
@@ -212,24 +191,43 @@ const buildTransientMarkers = (
   const rmsScores = normalizeScores(onsetEvidence.map((item) => item.rmsRise));
   const peakScores = normalizeScores(onsetEvidence.map((item) => item.peakRise));
   const spectralScores = normalizeScores(onsetEvidence.map((item) => item.spectralFlux));
-  const normalized = onsetEvidence.map((_item, index) =>
+  const rawEnvelope = onsetEvidence.map((item, index) =>
     clamp(
-      rmsScores[index] * 0.44 +
-        peakScores[index] * 0.12 +
-        spectralScores[index] * 0.44,
+      rmsScores[index] * 0.34 +
+        peakScores[index] * 0.1 +
+        spectralScores[index] * 0.56,
       0,
       1
     )
   );
+  const smoothedEnvelope = smoothScores(rawEnvelope, 1);
+
+  return onsetEvidence.map((item, index) => ({
+    timeSec: item.timeSec,
+    strength: clamp(Math.max(rawEnvelope[index], smoothedEnvelope[index] * 0.92), 0, 1)
+  }));
+};
+
+const buildTransientMarkers = (
+  onsetEnvelope: OnsetEnvelopePoint[],
+  durationSec: number
+): TransientMarker[] => {
+  if (onsetEnvelope.length < 4 || durationSec <= 0) {
+    return [];
+  }
+
   const markers: TransientMarker[] = [];
   let lastTimeSec = -Infinity;
+  const strengths = onsetEnvelope.map((point) => point.strength);
+  const localAverage = smoothScores(strengths, 3);
 
-  normalized.forEach((strength, index) => {
-    const point = waveformDetail[index];
-    const previousStrength = normalized[Math.max(0, index - 1)] ?? 0;
-    const nextStrength = normalized[Math.min(normalized.length - 1, index + 1)] ?? 0;
+  onsetEnvelope.forEach((point, index) => {
+    const strength = point.strength;
+    const previousStrength = strengths[Math.max(0, index - 1)] ?? 0;
+    const nextStrength = strengths[Math.min(strengths.length - 1, index + 1)] ?? 0;
     const isLocalPeak = strength >= previousStrength && strength >= nextStrength;
-    if (!point || !isLocalPeak || strength < 0.46 || point.timeSec - lastTimeSec < 0.18) {
+    const adaptiveThreshold = Math.max(0.38, (localAverage[index] ?? 0) + 0.08);
+    if (!isLocalPeak || strength < adaptiveThreshold || point.timeSec - lastTimeSec < 0.18) {
       return;
     }
     markers.push({
@@ -511,6 +509,68 @@ const scoreTransientMarkerQuality = (input: {
     0,
     1
   );
+};
+
+const scoreBeatGridStability = (input: {
+  beatGridSec: number[];
+  onsetEnvelope: OnsetEnvelopePoint[];
+  beatPhaseConfidence: number;
+  durationSec: number;
+}): { score: number; coverage: number; drift: number } => {
+  if (input.beatGridSec.length === 0 || input.onsetEnvelope.length === 0 || input.durationSec <= 0) {
+    return { score: 0, coverage: 0, drift: 1 };
+  }
+
+  const onsetByTime = input.onsetEnvelope;
+  const windowSec = 0.16;
+  const sampleBeats = input.beatGridSec.filter(
+    (beatSec) => beatSec >= 0 && beatSec <= input.durationSec
+  );
+  let covered = 0;
+  let weightedDistance = 0;
+  let weight = 0;
+
+  for (const beatSec of sampleBeats.slice(0, 512)) {
+    let bestStrength = 0;
+    let bestDistance = windowSec;
+    for (const onset of onsetByTime) {
+      const distance = Math.abs(onset.timeSec - beatSec);
+      if (distance > windowSec) {
+        if (onset.timeSec > beatSec + windowSec) {
+          break;
+        }
+        continue;
+      }
+      const weightedStrength = onset.strength * (1 - distance / windowSec);
+      if (weightedStrength > bestStrength) {
+        bestStrength = weightedStrength;
+        bestDistance = distance;
+      }
+    }
+
+    if (bestStrength >= 0.2) {
+      covered += 1;
+      weightedDistance += bestDistance * bestStrength;
+      weight += bestStrength;
+    }
+  }
+
+  const coverage = sampleBeats.length > 0 ? covered / sampleBeats.length : 0;
+  const averageDistance = weight > 0 ? weightedDistance / weight : windowSec;
+  const drift = clamp(averageDistance / windowSec, 0, 1);
+  const score = clamp(
+    coverage * 0.46 +
+      (1 - drift) * 0.28 +
+      input.beatPhaseConfidence * 0.26,
+    0,
+    1
+  );
+
+  return {
+    score,
+    coverage: clamp(coverage, 0, 1),
+    drift
+  };
 };
 
 const findNearestBar = (barGrid: BarMarker[], timeSec: number): BarMarker | null => {
@@ -934,8 +994,11 @@ export const buildTrackAnalysisFromAudioBuffer = (
   const energyProfile = buildEnergyProfile(buffer);
   const waveformPeaks = buildWaveformPeaks(buffer);
   const waveformDetail = buildWaveformDetail(buffer);
-  const spectralBands = buildSpectralBands(buffer);
-  const transientMarkers = buildTransientMarkers(waveformDetail, spectralBands, durationSec);
+  const spectralBands = buildSpectralBandsFromAudioBuffer(buffer, {
+    bucketCount: waveformDetail.length
+  });
+  const onsetEnvelope = buildOnsetEnvelope(waveformDetail, spectralBands, durationSec);
+  const transientMarkers = buildTransientMarkers(onsetEnvelope, durationSec);
   const beatIntervalSec = bpm && bpm > 0 ? 60 / bpm : null;
   const beatPhase =
     beatIntervalSec !== null
@@ -946,6 +1009,12 @@ export const buildTrackAnalysisFromAudioBuffer = (
       ? buildBeatGrid(durationSec, beatIntervalSec, beatPhase.offsetSec)
       : [];
   const downbeatGrid = buildDownbeatGrid(beatGridSec, transientMarkers, energyProfile, durationSec);
+  const beatGridStability = scoreBeatGridStability({
+    beatGridSec,
+    onsetEnvelope,
+    beatPhaseConfidence: beatPhase.confidence,
+    durationSec
+  });
   const downbeatsSec = downbeatGrid.downbeatsSec;
   const barGrid = downbeatGrid.barGrid;
   const lowEnergyBreakSecRaw = findEnergyTime(energyProfile, durationSec, 'min', 0.35, 0.8);
@@ -966,7 +1035,14 @@ export const buildTrackAnalysisFromAudioBuffer = (
         : 0;
   const beatGridQuality =
     beatGridSec.length > 0
-      ? clamp(bpmConfidence * 0.48 + beatPhase.confidence * 0.22 + downbeatGrid.confidence * 0.3, 0, 1)
+      ? clamp(
+          bpmConfidence * 0.38 +
+            beatPhase.confidence * 0.16 +
+            downbeatGrid.confidence * 0.22 +
+            beatGridStability.score * 0.24,
+          0,
+          1
+        )
       : 0;
   const phraseMarkers: PhraseMarker[] = barGrid
     .filter((bar) => bar.index % 8 === 0)

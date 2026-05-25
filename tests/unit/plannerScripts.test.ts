@@ -83,6 +83,106 @@ describe('planner scripts', () => {
     expect(prompt).toContain('tempoSync.targetRate is a playback-rate ratio');
   });
 
+  it('prefers compact analysis summary evidence when present', () => {
+    const prompt = buildPrompt({
+      ...baseRequest,
+      analysisSummary: {
+        current: {
+          plannerReady: true,
+          bpm: 124,
+          bpmConfidence: 0.86,
+          analysisQuality: {
+            beatGrid: 0.82,
+            spectralBands: 0.78,
+            transientMarkers: 0.72
+          },
+          analysisWarnings: [],
+          beatStability: {
+            score: 0.8,
+            label: 'stable',
+            beatGridQuality: 0.82,
+            transientQuality: 0.72
+          },
+          cues: {
+            intro: null,
+            firstDownbeat: null,
+            outro: {
+              type: 'outro',
+              startSec: 188,
+              confidence: 0.82,
+              label: 'Outro mix-out'
+            }
+          },
+          energyTrend: {
+            early: 0.82,
+            mid: 0.48,
+            late: 0.24,
+            direction: 'falling'
+          },
+          transients: {
+            count: 120,
+            strongCount: 44,
+            densityPerSec: 0.57
+          },
+          phrases: {
+            phraseCount: 8,
+            barCount: 32,
+            strongestBoundaries: [{ startSec: 188, confidence: 0.82 }]
+          }
+        },
+        next: {
+          plannerReady: true,
+          bpm: 126,
+          bpmConfidence: 0.84,
+          analysisQuality: {
+            beatGrid: 0.8,
+            spectralBands: 0.76,
+            transientMarkers: 0.7
+          },
+          analysisWarnings: [],
+          beatStability: {
+            score: 0.77,
+            label: 'stable',
+            beatGridQuality: 0.8,
+            transientQuality: 0.7
+          },
+          cues: {
+            intro: null,
+            firstDownbeat: {
+              type: 'first_downbeat',
+              startSec: 12,
+              confidence: 0.8,
+              label: 'First downbeat'
+            },
+            outro: null
+          },
+          energyTrend: {
+            early: 0.32,
+            mid: 0.5,
+            late: 0.72,
+            direction: 'rising'
+          },
+          transients: {
+            count: 100,
+            strongCount: 38,
+            densityPerSec: 0.5
+          },
+          phrases: {
+            phraseCount: 7,
+            barCount: 30,
+            strongestBoundaries: [{ startSec: 12, confidence: 0.8 }]
+          }
+        }
+      }
+    });
+
+    expect(prompt).toContain('Prefer analysisSummary and pairContext');
+    expect(prompt).toContain('current: plannerReady true');
+    expect(prompt).toContain('beat stability stable score 0.8');
+    expect(prompt).toContain('energy falling early 0.82 mid 0.48 late 0.24');
+    expect(prompt).toContain('first downbeat 12.00s confidence 0.80');
+  });
+
   it('keeps the codex output schema strict-compatible for nullable mix plan fields', () => {
     const mixPlanObjectSchema = plannerSchema.properties.mixPlan.anyOf.find(
       (entry) => entry.type === 'object'

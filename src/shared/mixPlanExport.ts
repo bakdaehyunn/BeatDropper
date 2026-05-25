@@ -10,7 +10,7 @@ export const MIX_PLAN_PLANNER_PRESET_DESCRIPTIONS: Record<
   MixPlanPlannerPreset,
   string
 > = {
-  codex: 'Codex sample wrapper',
+  codex: 'Codex planner',
   heuristic: 'Local heuristic wrapper',
   custom: 'Custom planner command',
   none: 'No preset'
