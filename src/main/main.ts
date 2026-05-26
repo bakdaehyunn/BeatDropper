@@ -1,5 +1,6 @@
 import { app, BrowserWindow } from 'electron';
 import path from 'node:path';
+import { installAppMenu } from './appMenu';
 import { registerIpcHandlers } from './ipc';
 
 const isDev = !app.isPackaged;
@@ -8,8 +9,15 @@ const appIconPath = path.join(__dirname, '../../public/icons/dropper-icon.png');
 const devServerUrl = process.env.VITE_DEV_SERVER_URL;
 const shouldOpenDevTools = process.env.BEATDROPPER_OPEN_DEVTOOLS !== '0';
 const shouldDisableGpu = process.env.BEATDROPPER_DISABLE_GPU === '1';
+const userDataDirOverride = process.env.BEATDROPPER_USER_DATA_DIR;
 
 let mainWindow: BrowserWindow | null = null;
+
+app.setName(appName);
+
+if (userDataDirOverride) {
+  app.setPath('userData', userDataDirOverride);
+}
 
 if (shouldDisableGpu) {
   app.disableHardwareAcceleration();
@@ -45,6 +53,7 @@ const isAllowedAppNavigationUrl = (targetUrl: string): boolean => {
 };
 
 const createMainWindow = (): BrowserWindow => {
+  const isMac = process.platform === 'darwin';
   const window = new BrowserWindow({
     title: appName,
     icon: appIconPath,
@@ -52,8 +61,15 @@ const createMainWindow = (): BrowserWindow => {
     height: 840,
     minWidth: 960,
     minHeight: 680,
-    frame: false,
-    autoHideMenuBar: true,
+    ...(isMac
+      ? {
+          titleBarStyle: 'hiddenInset' as const,
+          trafficLightPosition: { x: 18, y: 16 }
+        }
+      : {
+          frame: false
+        }),
+    autoHideMenuBar: !isMac,
     backgroundColor: '#050505',
     webPreferences: {
       preload: path.join(__dirname, '../preload/preload.js'),
@@ -89,12 +105,15 @@ const createMainWindow = (): BrowserWindow => {
 };
 
 app.whenReady().then(() => {
-  app.setName(appName);
   if (process.platform === 'darwin' && app.dock) {
     app.dock.setIcon(appIconPath);
   }
 
   registerIpcHandlers();
+  installAppMenu({
+    getMainWindow: () => mainWindow,
+    isDev
+  });
   mainWindow = createMainWindow();
 
   app.on('activate', () => {

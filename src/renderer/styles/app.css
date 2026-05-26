@@ -1160,16 +1160,24 @@ body {
   color: #f4f4f4;
 }
 
-.window-titlebar {
+.window-titlebar,
+.mac-titlebar-region {
   height: 34px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
   margin: 0 -20px;
-  padding: 0 8px 0 14px;
   background: #050505;
   border-bottom: 1px solid #1d1d1d;
   -webkit-app-region: drag;
+}
+
+.window-titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 8px 0 14px;
+}
+
+.mac-titlebar-region {
+  display: block;
 }
 
 .window-titlebar-brand {
@@ -2885,7 +2893,7 @@ input[type='range'] {
 .live-mix-panel {
   grid-row: 2;
   display: grid;
-  grid-template-rows: auto 50px minmax(150px, 1fr) 42px;
+  grid-template-rows: auto 50px minmax(150px, 1fr) 48px;
   gap: 6px;
   padding: 10px;
   overflow: hidden;
@@ -2909,25 +2917,21 @@ input[type='range'] {
   font-size: 18px;
 }
 
-.live-ai-statusbar {
+.live-planner-summary {
   min-width: 0;
-  display: grid;
-  grid-template-columns: repeat(3, minmax(104px, 1fr));
-  gap: 6px;
-  flex: 0 1 520px;
-}
-
-.live-ai-statusbar article {
-  min-width: 0;
-  display: grid;
-  gap: 1px;
-  padding: 5px 8px;
+  max-width: 360px;
+  display: inline-grid;
+  grid-template-columns: auto minmax(0, auto) auto;
+  align-items: center;
+  gap: 8px;
+  flex: 0 1 auto;
+  padding: 6px 9px;
   border: 1px solid #333;
   border-radius: 8px;
   background: #101010;
 }
 
-.live-ai-statusbar span,
+.live-planner-summary span,
 .live-deck-strip span,
 .supervisor-wave-label span,
 .live-mix-reason span {
@@ -2937,7 +2941,8 @@ input[type='range'] {
   text-transform: uppercase;
 }
 
-.live-ai-statusbar strong {
+.live-planner-summary strong,
+.live-planner-summary small {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2946,6 +2951,11 @@ input[type='range'] {
   font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
     monospace;
   font-size: 12px;
+}
+
+.live-planner-summary small {
+  color: #9d9d9d;
+  font-size: 11px;
 }
 
 .live-deck-strip {
@@ -2987,6 +2997,40 @@ input[type='range'] {
 .mix-supervisor-card {
   border-color: #4a3a2c;
   box-shadow: inset 0 0 0 1px rgba(236, 159, 99, 0.12);
+}
+
+.mix-supervisor-head {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.mix-evidence-toggle {
+  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 3px 7px;
+  border: 1px solid #3a3a3a;
+  border-radius: 999px;
+  background: #151515;
+  color: #bdbdbd;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.mix-evidence-toggle svg {
+  width: 12px;
+  height: 12px;
+}
+
+.mix-evidence-toggle.active,
+.mix-evidence-toggle:hover:not(:disabled) {
+  border-color: #f4f4f4;
+  color: #f4f4f4;
 }
 
 .supervisor-wave-stack {
@@ -3232,13 +3276,15 @@ input[type='range'] {
 }
 
 .live-mix-footer {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 170px;
+  display: flex;
+  justify-content: flex-end;
   gap: 10px;
   align-items: center;
+  min-width: 0;
 }
 
 .live-mix-reason {
+  flex: 1 1 auto;
   min-width: 0;
   display: grid;
   gap: 2px;
@@ -3294,19 +3340,47 @@ input[type='range'] {
 /* Workspace UX pass: stable deck above, optional detail panel beside the human-curated set. */
 .main-layout {
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: auto minmax(318px, 42vh) minmax(0, 1fr);
+  grid-template-rows: auto minmax(318px, 42vh) minmax(220px, 1fr);
   gap: 12px;
   overflow: hidden;
 }
 
 .main-layout.has-analysis {
   grid-template-columns: minmax(0, 1fr) minmax(300px, 360px);
-  grid-template-rows: auto minmax(318px, 42vh) minmax(0, 1fr);
+  grid-template-rows: auto minmax(318px, 42vh) minmax(220px, 1fr);
 }
 
 .source-strip {
   grid-column: 1 / -1;
   grid-row: 1;
+  grid-template-columns: minmax(180px, 1fr) auto;
+  min-height: 54px;
+  padding: 8px 14px;
+  border-radius: 8px;
+  background: #080808;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+.source-strip.has-import-status {
+  grid-template-columns: minmax(180px, 1fr) auto minmax(220px, 0.75fr);
+}
+
+.source-strip .source-summary {
+  gap: 8px;
+}
+
+.source-strip .source-summary strong {
+  font-size: 15px;
+}
+
+.source-strip .device-actions {
+  align-items: center;
+}
+
+.source-strip .action-button {
+  min-height: 36px;
+  border-radius: 8px;
+  padding: 8px 11px;
 }
 
 .live-mix-panel {
@@ -3332,6 +3406,14 @@ input[type='range'] {
   justify-content: space-between;
   gap: 10px;
   margin-bottom: 10px;
+  min-width: 0;
+}
+
+.workspace-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
   min-width: 0;
 }
 
@@ -3386,14 +3468,57 @@ input[type='range'] {
   color: #f4f4f4;
 }
 
+.playlist-head {
+  order: 1;
+}
+
+.workspace-controls {
+  order: 2;
+}
+
 .playlist-panel > .taste-playlist-bar,
 .playlist-panel > .playlist-toolbar {
   flex: 0 0 auto;
 }
 
+.playlist-panel > .playlist-toolbar {
+  order: 3;
+}
+
+.playlist-table-wrap,
+.playlist-panel > .muted {
+  order: 4;
+}
+
+.playlist-panel > .library-drawer {
+  order: 5;
+}
+
+.playlist-panel > .taste-playlist-bar {
+  order: 6;
+  grid-template-columns: minmax(136px, auto) minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 6px;
+  margin-top: 8px;
+  margin-bottom: 0;
+}
+
+.playlist-panel > .taste-playlist-bar .taste-playlist-head {
+  justify-content: flex-start;
+}
+
+.playlist-panel > .taste-playlist-bar .taste-playlist-head > span {
+  display: none;
+}
+
+.playlist-panel > .taste-playlist-bar .taste-playlist-controls {
+  flex-wrap: nowrap;
+}
+
 .playlist-table-wrap {
   flex: 1 1 auto;
-  min-height: 0;
+  min-height: 132px;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -3401,7 +3526,7 @@ input[type='range'] {
 
 .playlist-table-body {
   flex: 1 1 auto;
-  min-height: 0;
+  min-height: 72px;
   overflow-x: hidden;
   overflow-y: auto;
 }

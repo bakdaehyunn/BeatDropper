@@ -1,4 +1,5 @@
 import { TrackAnalysis } from './analysis';
+import { AppCommand } from './appCommand';
 import { RequestMixPlanInput, RequestMixPlanResult } from './plannerContract';
 import {
   AiAgentConnectionResult,
@@ -39,6 +40,7 @@ export interface DropperApi {
   checkAiAgentConnection(profile: AiAgentProfile): Promise<AiAgentConnectionResult>;
   getSettings(): Promise<PlayerSettings>;
   saveSettings(candidate: Partial<PlayerSettings>): Promise<PlayerSettings>;
+  onAppCommand(listener: (command: AppCommand) => void): () => void;
   minimizeWindow(): Promise<void>;
   toggleMaximizeWindow(): Promise<void>;
   closeWindow(): Promise<void>;

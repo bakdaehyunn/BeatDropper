@@ -1,16 +1,22 @@
 import { expect, test } from '@playwright/test';
 import { _electron as electron } from 'playwright';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { DEFAULT_SETTINGS } from '../../src/shared/settings';
 
 test('exposes preload API and executes IPC settings flow in Electron', async () => {
-  const tempConfigHome = await mkdtemp(path.join(os.tmpdir(), 'beatdropper-e2e-'));
+  const tempHome = await mkdtemp(path.join(os.tmpdir(), 'beatdropper-e2e-'));
+  const userDataDir = path.join(tempHome, 'user-data');
+  await mkdir(userDataDir, { recursive: true });
   const electronApp = await electron.launch({
     args: ['.'],
     env: {
       ...process.env,
-      XDG_CONFIG_HOME: tempConfigHome,
+      HOME: tempHome,
+      USERPROFILE: tempHome,
+      XDG_CONFIG_HOME: path.join(tempHome, '.config'),
+      BEATDROPPER_USER_DATA_DIR: userDataDir,
       VITE_DEV_SERVER_URL: 'http://127.0.0.1:4173',
       BEATDROPPER_OPEN_DEVTOOLS: '0'
     }
@@ -50,10 +56,33 @@ test('exposes preload API and executes IPC settings flow in Electron', async () 
         'requestMixPlan',
         'getSettings',
         'saveSettings',
+        'onAppCommand',
         'minimizeWindow',
         'toggleMaximizeWindow',
         'closeWindow'
       ])
+    );
+
+    const applicationMenu = await electronApp.evaluate(({ Menu }) => {
+      const menu = Menu.getApplicationMenu();
+      return {
+        topLevel: menu?.items.map((item) => item.label) ?? [],
+        fileItems: menu?.items
+          .find((item) => item.label === 'File')
+          ?.submenu?.items.map((item) => item.label) ?? [],
+        playbackItems: menu?.items
+          .find((item) => item.label === 'Playback')
+          ?.submenu?.items.map((item) => item.label) ?? []
+      };
+    });
+    expect(applicationMenu.topLevel).toEqual(
+      expect.arrayContaining(['BeatDropper', 'File', 'View', 'Playback', 'Window', 'Help'])
+    );
+    expect(applicationMenu.fileItems).toEqual(
+      expect.arrayContaining(['New Set...', 'Add Tracks...', 'Import Music Folder...'])
+    );
+    expect(applicationMenu.playbackItems).toEqual(
+      expect.arrayContaining(['Play/Pause', 'Previous Track', 'Next Track'])
     );
 
     const defaultSettings = await page.evaluate(async () => {
@@ -103,7 +132,7 @@ test('exposes preload API and executes IPC settings flow in Electron', async () 
       aiDjMode: 'balanced',
       plannerCommand: 'node',
       plannerArgs: ['scripts/codex-mix-planner.cjs'],
-      plannerTimeoutMs: 9000
+      plannerTimeoutMs: DEFAULT_SETTINGS.plannerTimeoutMs
     });
 
     const readBufferError = await page.evaluate(async () => {
@@ -127,6 +156,6 @@ test('exposes preload API and executes IPC settings flow in Electron', async () 
     expect(readBufferError).toContain('Track is not authorized');
   } finally {
     await electronApp.close();
-    await rm(tempConfigHome, { recursive: true, force: true });
+    await rm(tempHome, { recursive: true, force: true });
   }
 });

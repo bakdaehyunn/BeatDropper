@@ -1,6 +1,25 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import { DropperApi } from '../shared/api';
+import type { AppCommand } from '../shared/appCommand';
 import { PlayerSettings, TrackLoadMode, TrackLoadResult } from '../shared/types';
+
+const APP_COMMANDS = new Set<string>([
+  'new-set',
+  'add-tracks',
+  'import-folder',
+  'show-set',
+  'show-library',
+  'toggle-saved-sets',
+  'toggle-inspector',
+  'open-settings',
+  'play-pause',
+  'previous-track',
+  'next-track'
+]);
+
+const isPreloadAppCommand = (value: unknown): value is AppCommand => {
+  return typeof value === 'string' && APP_COMMANDS.has(value);
+};
 
 const toArrayBuffer = (payload: unknown): ArrayBuffer => {
   if (payload instanceof ArrayBuffer) {
@@ -106,6 +125,15 @@ const dropperApi: DropperApi = {
     candidate: Partial<PlayerSettings>
   ): Promise<PlayerSettings> => {
     return ipcRenderer.invoke('settings:save', candidate);
+  },
+  onAppCommand: (listener) => {
+    const wrapped = (_event: unknown, command: unknown): void => {
+      if (isPreloadAppCommand(command)) {
+        listener(command);
+      }
+    };
+    ipcRenderer.on('app:command', wrapped);
+    return () => ipcRenderer.removeListener('app:command', wrapped);
   },
   minimizeWindow: async (): Promise<void> => {
     await ipcRenderer.invoke('window:minimize');

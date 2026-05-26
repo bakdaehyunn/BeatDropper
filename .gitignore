@@ -1,6 +1,10 @@
 node_modules
 dist
 dist-electron
+native/.build
+native/.xcode-derived
+native/dist
+native/native/.xcode-derived
 playwright-report
 test-results
 .DS_Store

@@ -13,6 +13,7 @@ import {
   CirclePlus,
   FolderOpen,
   GripVertical,
+  Info,
   Library,
   ListMusic,
   ListX,
@@ -86,6 +87,7 @@ import {
   buildMixPlanPrecomputePairs,
   findCachedMixPlanResult
 } from './player/mixPlanPrecompute';
+import { AppCommand } from '../shared/appCommand';
 import { buildAnalysisInspectorSummary } from './player/analysisInspector';
 import {
   ALL_LIBRARY_SOURCES,
@@ -313,6 +315,8 @@ export const App = (): JSX.Element => {
   const [userPlaylistNameDraft, setUserPlaylistNameDraft] = useState('');
   const [isUserPlaylistPending, setIsUserPlaylistPending] = useState(false);
   const [userPlaylistNotice, setUserPlaylistNotice] = useState<string | null>(null);
+  const [isPlaylistManagerOpen, setIsPlaylistManagerOpen] = useState(false);
+  const [isMixEvidenceOpen, setIsMixEvidenceOpen] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [settings, setSettings] = useState<PlayerSettings>(DEFAULT_SETTINGS);
   const [skippedItems, setSkippedItems] = useState<string[]>([]);
@@ -365,6 +369,7 @@ export const App = (): JSX.Element => {
   const analyzingTrackIdsRef = useRef<string[]>(analyzingTrackIds);
   const failedAnalysisTrackIdsRef = useRef<string[]>(failedAnalysisTrackIds);
   const mixPlanCacheRef = useRef<MixPlanCacheStore>(mixPlanCache);
+  const appCommandHandlersRef = useRef<Partial<Record<AppCommand, () => void>>>({});
   const plannerImportInputRef = useRef<HTMLInputElement | null>(null);
   const comparisonImportInputRef = useRef<HTMLInputElement | null>(null);
   const audioEngine = useMemo(() => getSharedAudioEngine(), []);
@@ -1573,6 +1578,54 @@ export const App = (): JSX.Element => {
     setIsPaused(audioEngine.isPaused());
   };
 
+  appCommandHandlersRef.current = {
+    'new-set': () => {
+      if (!isTrackLoadPending) {
+        void handleLoadTracks('replace');
+      }
+    },
+    'add-tracks': () => {
+      if (!isTrackLoadPending) {
+        void handleLoadTracks(tracks.length === 0 ? 'replace' : 'append');
+      }
+    },
+    'import-folder': () => {
+      if (!isLibraryPending) {
+        void handleImportLibraryFolder();
+      }
+    },
+    'show-set': () => {
+      setWorkspaceView('playlist');
+    },
+    'show-library': () => {
+      setWorkspaceView('library');
+    },
+    'toggle-saved-sets': () => {
+      setIsPlaylistManagerOpen((previous) => !previous);
+    },
+    'toggle-inspector': () => {
+      setIsMixInspectorOpen((previous) => (tracks.length > 1 ? !previous : false));
+    },
+    'open-settings': () => {
+      setIsUtilityOpen(true);
+    },
+    'play-pause': () => {
+      void handlePlayPause();
+    },
+    'previous-track': () => {
+      void handlePrevious();
+    },
+    'next-track': () => {
+      void handleNext();
+    }
+  };
+
+  useEffect(() => {
+    return window.dropperApi.onAppCommand((command) => {
+      appCommandHandlersRef.current[command]?.();
+    });
+  }, []);
+
   const moveSelectedTrack = (direction: -1 | 1): void => {
     const targetIndex = selectedIndex + direction;
     reorderTracks(selectedIndex, targetIndex);
@@ -1787,6 +1840,14 @@ export const App = (): JSX.Element => {
   const currentPlaylistTrackIds = tracks.map((track) => track.id);
   const canSaveCurrentUserPlaylist =
     currentPlaylistTrackIds.length > 0 && userPlaylistNameDraft.trim().length > 0;
+  const sourceImportStatusLabel = isTrackLoadPending
+    ? 'Importing...'
+    : trackLoadNotice ??
+      (lastImportAt && lastImportMode
+        ? `Last: ${lastImportMode === 'replace' ? 'new set' : 'append'} · ${new Date(
+            lastImportAt
+          ).toLocaleTimeString()}`
+        : null);
 
   const queueStartIndex =
     currentTrackIndex !== null
@@ -1915,16 +1976,6 @@ export const App = (): JSX.Element => {
         )}`
       : null;
   const latestTempoRate = formatTempoSyncRate(latestTempoApplied?.details?.targetRate);
-  const latestPlannerSourceLabel =
-    latestMixPlanApplied && asString(latestMixPlanApplied.details?.source) === 'cli'
-      ? 'Codex'
-      : latestMixPlanApplied
-        ? asString(latestMixPlanApplied.details?.source) ?? 'Codex'
-        : latestMixPlanFallback
-          ? 'Rule-based'
-          : settings.aiDjEnabled
-            ? 'Codex'
-            : 'Rule-based';
   const latestPlannerFailureReason = asString(latestMixPlanFallback?.details?.reason);
   const mixConfidenceLabel =
     latestSuccessfulMixPlan?.confidence !== undefined
@@ -1946,6 +1997,7 @@ export const App = (): JSX.Element => {
     latestSuccessfulMixPlan?.tempoSync.enabled && latestSuccessfulMixPlan.tempoSync.targetRate
       ? formatTempoSyncRate(latestSuccessfulMixPlan.tempoSync.targetRate) ?? '--'
       : latestTempoRate ?? '--';
+  const liveTempoStatusLabel = liveTempoLabel === '--' ? 'Tempo --' : `Tempo ${liveTempoLabel}`;
   const latestPlannerRequestJson = prettyJson(
     latestPlannerDebugEvent?.details?.plannerRequest ?? null
   );
@@ -2305,44 +2357,49 @@ export const App = (): JSX.Element => {
       });
   };
   const isMixInspectorVisible = isMixInspectorOpen && tracks.length > 1;
+  const isMacWindow = /^Mac/.test(navigator.platform);
 
   return (
-    <div className="app-shell">
-      <div className="window-titlebar">
-        <div className="window-titlebar-brand">
-          <span className="window-dot" />
-          <strong>BeatDropper</strong>
+    <div className={`app-shell ${isMacWindow ? 'mac-window-shell' : 'custom-window-shell'}`}>
+      {isMacWindow ? (
+        <div className="mac-titlebar-region" aria-hidden="true" />
+      ) : (
+        <div className="window-titlebar">
+          <div className="window-titlebar-brand">
+            <span className="window-dot" />
+            <strong>BeatDropper</strong>
+          </div>
+          <div className="window-controls">
+            <button
+              type="button"
+              className="window-control"
+              aria-label="Minimize"
+              title="Minimize"
+              onClick={() => void window.dropperApi.minimizeWindow()}
+            >
+              <Minus aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              className="window-control"
+              aria-label="Maximize"
+              title="Maximize"
+              onClick={() => void window.dropperApi.toggleMaximizeWindow()}
+            >
+              <SquareIcon aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              className="window-control close"
+              aria-label="Close"
+              title="Close"
+              onClick={() => void window.dropperApi.closeWindow()}
+            >
+              <X aria-hidden="true" />
+            </button>
+          </div>
         </div>
-        <div className="window-controls">
-          <button
-            type="button"
-            className="window-control"
-            aria-label="Minimize"
-            title="Minimize"
-            onClick={() => void window.dropperApi.minimizeWindow()}
-          >
-            <Minus aria-hidden="true" />
-          </button>
-          <button
-            type="button"
-            className="window-control"
-            aria-label="Maximize"
-            title="Maximize"
-            onClick={() => void window.dropperApi.toggleMaximizeWindow()}
-          >
-            <SquareIcon aria-hidden="true" />
-          </button>
-          <button
-            type="button"
-            className="window-control close"
-            aria-label="Close"
-            title="Close"
-            onClick={() => void window.dropperApi.closeWindow()}
-          >
-            <X aria-hidden="true" />
-          </button>
-        </div>
-      </div>
+      )}
       <header className="app-header">
         <div className="brand-block">
           <span className="brand-chip">AUTO DJ / USB FLOW</span>
@@ -2381,9 +2438,11 @@ export const App = (): JSX.Element => {
       </section>
 
       <main className={`main-layout ${isMixInspectorVisible ? 'has-analysis' : ''}`}>
-        <section className="source-strip" aria-busy={isTrackLoadPending}>
+        <section
+          className={`source-strip ${sourceImportStatusLabel ? 'has-import-status' : ''}`}
+          aria-busy={isTrackLoadPending}
+        >
           <div className="source-summary">
-            <span className="panel-tag">Audio Files</span>
             <strong>Local Library</strong>
             <small>{libraryTracks.length} library · {tracks.length} set</small>
           </div>
@@ -2434,20 +2493,11 @@ export const App = (): JSX.Element => {
                 </button>
               ) : null}
           </div>
-          <div className="import-note">
-            {isTrackLoadPending ? (
-              <p>Importing...</p>
-            ) : trackLoadNotice ? (
-              <p>{trackLoadNotice}</p>
-            ) : lastImportAt && lastImportMode ? (
-              <p>
-                Last: {lastImportMode === 'replace' ? 'new set' : 'append'} ·{' '}
-                {new Date(lastImportAt).toLocaleTimeString()}
-              </p>
-            ) : (
-              <p>Ready</p>
-            )}
-          </div>
+          {sourceImportStatusLabel ? (
+            <div className="import-note">
+              <p>{sourceImportStatusLabel}</p>
+            </div>
+          ) : null}
         </section>
 
         <section className="panel playlist-panel">
@@ -2458,7 +2508,6 @@ export const App = (): JSX.Element => {
                 {tracks.length} tracks · {formatDuration(totalSetDurationSec)} total
               </small>
             </div>
-            <span className="track-count">{tracks.length} tracks</span>
           </div>
           <div className="workspace-controls" aria-label="Workspace view">
             <div className="workspace-tabs" role="tablist" aria-label="Library workspace">
@@ -2485,116 +2534,127 @@ export const App = (): JSX.Element => {
                 <span>Library</span>
               </button>
             </div>
-            {tracks.length > 1 ? (
+            <div className="workspace-actions">
               <button
                 type="button"
-                className={`workspace-detail-toggle ${isMixInspectorOpen ? 'active' : ''}`}
-                onClick={() => setIsMixInspectorOpen((previous) => !previous)}
-                aria-pressed={isMixInspectorOpen}
-                title={isMixInspectorOpen ? 'Hide mix inspector' : 'Show mix inspector'}
+                className={`workspace-detail-toggle ${isPlaylistManagerOpen ? 'active' : ''}`}
+                onClick={() => setIsPlaylistManagerOpen((previous) => !previous)}
+                aria-pressed={isPlaylistManagerOpen}
+                title={isPlaylistManagerOpen ? 'Hide saved set controls' : 'Manage saved sets'}
               >
-                {isMixInspectorOpen ? (
-                  <PanelRightClose aria-hidden="true" />
-                ) : (
-                  <PanelRightOpen aria-hidden="true" />
-                )}
-                <span>{isMixInspectorOpen ? 'Hide Inspector' : 'Inspector'}</span>
+                <ListMusic aria-hidden="true" />
+                <span>{isPlaylistManagerOpen ? 'Hide Saved Sets' : 'Saved Sets'}</span>
               </button>
-            ) : null}
-          </div>
-          {workspaceView === 'playlist' ? (
-            <>
-          <section className="taste-playlist-bar" aria-busy={isUserPlaylistPending}>
-            <div className="taste-playlist-head">
-              <div>
-                <span className="panel-tag">Taste Playlists</span>
-                <strong>{selectedUserPlaylist?.name ?? 'New playlist'}</strong>
-              </div>
-              <span>
-                {userPlaylists.length} saved · {userPlaylistNotice ?? 'Ready'}
-              </span>
-            </div>
-            <div className="taste-playlist-controls">
-              <select
-                value={selectedUserPlaylistId}
-                onChange={(event) => handleUserPlaylistSelect(event.target.value)}
-                aria-label="Saved playlist"
-                disabled={isUserPlaylistPending}
-              >
-                <option value="">New playlist</option>
-                {userPlaylists.map((playlist) => (
-                  <option key={playlist.id} value={playlist.id}>
-                    {playlist.name} ({playlist.trackIds.length})
-                  </option>
-                ))}
-              </select>
-              <input
-                type="text"
-                value={userPlaylistNameDraft}
-                onChange={(event) => setUserPlaylistNameDraft(event.target.value)}
-                placeholder="Playlist name"
-                aria-label="Playlist name"
-                disabled={isUserPlaylistPending}
-              />
-              <button
-                type="button"
-                className="secondary-button action-button"
-                onClick={() => void handleSaveCurrentUserPlaylist()}
-                disabled={isUserPlaylistPending || !canSaveCurrentUserPlaylist}
-                aria-label={selectedUserPlaylist ? 'Save current playlist' : 'Create playlist'}
-                title={
-                  tracks.length === 0
-                    ? 'Load tracks before saving'
-                    : userPlaylistNameDraft.trim().length === 0
-                      ? 'Name the playlist first'
-                      : selectedUserPlaylist
-                        ? 'Save current track order to this playlist'
-                        : 'Create a playlist from the current track order'
-                }
-              >
-                <CirclePlus aria-hidden="true" />
-                <span>{selectedUserPlaylist ? 'Save Current' : 'Create'}</span>
-              </button>
-              {selectedUserPlaylist ? (
-                <>
-                  <button
-                    type="button"
-                    className="secondary-button action-button"
-                    onClick={() => void handleRenameUserPlaylist()}
-                    disabled={isUserPlaylistPending || userPlaylistNameDraft.trim().length === 0}
-                    aria-label="Rename selected playlist"
-                    title="Rename selected playlist"
-                  >
-                    <Settings aria-hidden="true" />
-                    <span>Rename</span>
-                  </button>
-                  <button
-                    type="button"
-                    className="secondary-button action-button"
-                    onClick={() => void handleLoadUserPlaylist()}
-                    disabled={isUserPlaylistPending}
-                    aria-label="Load selected playlist"
-                    title="Load selected playlist"
-                  >
-                    <Play aria-hidden="true" />
-                    <span>Load</span>
-                  </button>
-                  <button
-                    type="button"
-                    className="secondary-button action-button danger"
-                    onClick={() => void handleDeleteUserPlaylist()}
-                    disabled={isUserPlaylistPending}
-                    aria-label="Delete selected playlist"
-                    title="Delete selected playlist"
-                  >
-                    <Trash2 aria-hidden="true" />
-                    <span>Delete</span>
-                  </button>
-                </>
+              {tracks.length > 1 ? (
+                <button
+                  type="button"
+                  className={`workspace-detail-toggle ${isMixInspectorOpen ? 'active' : ''}`}
+                  onClick={() => setIsMixInspectorOpen((previous) => !previous)}
+                  aria-pressed={isMixInspectorOpen}
+                  title={isMixInspectorOpen ? 'Hide mix inspector' : 'Show mix inspector'}
+                >
+                  {isMixInspectorOpen ? (
+                    <PanelRightClose aria-hidden="true" />
+                  ) : (
+                    <PanelRightOpen aria-hidden="true" />
+                  )}
+                  <span>{isMixInspectorOpen ? 'Hide Inspector' : 'Inspector'}</span>
+                </button>
               ) : null}
             </div>
-          </section>
-            </>
+          </div>
+          {isPlaylistManagerOpen ? (
+            <section className="taste-playlist-bar" aria-busy={isUserPlaylistPending}>
+              <div className="taste-playlist-head">
+                <div>
+                  <span className="panel-tag">Taste Playlists</span>
+                  <strong>{selectedUserPlaylist?.name ?? 'New playlist'}</strong>
+                </div>
+                <span>
+                  {userPlaylists.length} saved
+                  {userPlaylistNotice ? ` · ${userPlaylistNotice}` : ''}
+                </span>
+              </div>
+              <div className="taste-playlist-controls">
+                <select
+                  value={selectedUserPlaylistId}
+                  onChange={(event) => handleUserPlaylistSelect(event.target.value)}
+                  aria-label="Saved playlist"
+                  disabled={isUserPlaylistPending}
+                >
+                  <option value="">New playlist</option>
+                  {userPlaylists.map((playlist) => (
+                    <option key={playlist.id} value={playlist.id}>
+                      {playlist.name} ({playlist.trackIds.length})
+                    </option>
+                  ))}
+                </select>
+                <input
+                  type="text"
+                  value={userPlaylistNameDraft}
+                  onChange={(event) => setUserPlaylistNameDraft(event.target.value)}
+                  placeholder="Playlist name"
+                  aria-label="Playlist name"
+                  disabled={isUserPlaylistPending}
+                />
+                <button
+                  type="button"
+                  className="secondary-button action-button"
+                  onClick={() => void handleSaveCurrentUserPlaylist()}
+                  disabled={isUserPlaylistPending || !canSaveCurrentUserPlaylist}
+                  aria-label={selectedUserPlaylist ? 'Save current playlist' : 'Create playlist'}
+                  title={
+                    tracks.length === 0
+                      ? 'Load tracks before saving'
+                      : userPlaylistNameDraft.trim().length === 0
+                        ? 'Name the playlist first'
+                        : selectedUserPlaylist
+                          ? 'Save current track order to this playlist'
+                          : 'Create a playlist from the current track order'
+                  }
+                >
+                  <CirclePlus aria-hidden="true" />
+                  <span>{selectedUserPlaylist ? 'Save Current' : 'Create'}</span>
+                </button>
+                {selectedUserPlaylist ? (
+                  <>
+                    <button
+                      type="button"
+                      className="secondary-button action-button"
+                      onClick={() => void handleRenameUserPlaylist()}
+                      disabled={isUserPlaylistPending || userPlaylistNameDraft.trim().length === 0}
+                      aria-label="Rename selected playlist"
+                      title="Rename selected playlist"
+                    >
+                      <Settings aria-hidden="true" />
+                      <span>Rename</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary-button action-button"
+                      onClick={() => void handleLoadUserPlaylist()}
+                      disabled={isUserPlaylistPending}
+                      aria-label="Load selected playlist"
+                      title="Load selected playlist"
+                    >
+                      <Play aria-hidden="true" />
+                      <span>Load</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary-button action-button danger"
+                      onClick={() => void handleDeleteUserPlaylist()}
+                      disabled={isUserPlaylistPending}
+                      aria-label="Delete selected playlist"
+                      title="Delete selected playlist"
+                    >
+                      <Trash2 aria-hidden="true" />
+                      <span>Delete</span>
+                    </button>
+                  </>
+                ) : null}
+              </div>
+            </section>
           ) : null}
           {workspaceView === 'library' ? (
           <section
@@ -2757,8 +2817,6 @@ export const App = (): JSX.Element => {
             )}
           </section>
           ) : null}
-          {workspaceView === 'playlist' ? (
-            <>
           <div className="playlist-toolbar">
             <button
               type="button"
@@ -2886,8 +2944,6 @@ export const App = (): JSX.Element => {
               </ul>
             </div>
           )}
-            </>
-          ) : null}
         </section>
 
         {isMixInspectorVisible && (
@@ -3042,19 +3098,14 @@ export const App = (): JSX.Element => {
             <div>
               <h2>Live Mix Monitor</h2>
             </div>
-            <div className="live-ai-statusbar" aria-label="AI mix planner status">
-              <article title={latestPlannerSourceLabel}>
-                <span>Agent</span>
-                <strong>{latestPlannerSourceLabel}</strong>
-              </article>
-              <article title={livePlanStateLabel}>
-                <span>Plan</span>
-                <strong>{livePlanStateLabel}</strong>
-              </article>
-              <article title={liveTempoLabel}>
-                <span>Tempo</span>
-                <strong>{liveTempoLabel}</strong>
-              </article>
+            <div
+              className="live-planner-summary"
+              aria-label="AI mix planner status"
+              title={`${livePlanStateLabel} · ${liveTempoStatusLabel}`}
+            >
+              <span>AI Mix</span>
+              <strong>{livePlanStateLabel}</strong>
+              <small>{liveTempoStatusLabel}</small>
             </div>
           </div>
 
@@ -3074,7 +3125,20 @@ export const App = (): JSX.Element => {
               </small>
             </article>
             <article className="mix-supervisor-card">
-              <span>AI Mix Point</span>
+              <div className="mix-supervisor-head">
+                <span>AI Mix Point</span>
+                <button
+                  type="button"
+                  className={`mix-evidence-toggle ${isMixEvidenceOpen ? 'active' : ''}`}
+                  onClick={() => setIsMixEvidenceOpen((previous) => !previous)}
+                  aria-pressed={isMixEvidenceOpen}
+                  aria-label={isMixEvidenceOpen ? 'Hide mix evidence' : 'Show mix evidence'}
+                  title={isMixEvidenceOpen ? 'Hide mix evidence' : 'Show why this mix point was chosen'}
+                >
+                  <Info aria-hidden="true" />
+                  <span>Why?</span>
+                </button>
+              </div>
               <strong>
                 {formatOptionalDuration(supervisorMixOutSec)} {'->'}{' '}
                 {formatOptionalDuration(supervisorNextInSec)}
@@ -3233,10 +3297,12 @@ export const App = (): JSX.Element => {
           </section>
 
           <div className="live-mix-footer">
-            <div className="live-mix-reason" title={liveEvidenceLabel}>
-              <span>Evidence</span>
-              <strong>{liveEvidenceLabel}</strong>
-            </div>
+            {isMixEvidenceOpen ? (
+              <div className="live-mix-reason" title={liveEvidenceLabel}>
+                <span>Evidence</span>
+                <strong>{liveEvidenceLabel}</strong>
+              </div>
+            ) : null}
             <div className="transport-shell main-buttons">
               <div className="transport-row">
                 <button

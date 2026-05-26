@@ -73,6 +73,7 @@ test('renders BeatDropper shell', async ({ page }) => {
       }),
       getSettings: async () => settings,
       saveSettings: async () => settings,
+      onAppCommand: () => () => undefined,
       minimizeWindow: async () => undefined,
       toggleMaximizeWindow: async () => undefined,
       closeWindow: async () => undefined
@@ -80,6 +81,13 @@ test('renders BeatDropper shell', async ({ page }) => {
   });
 
   await page.goto('/');
+  const isMacPlatform = await page.evaluate(() => /^Mac/.test(navigator.platform));
+  if (isMacPlatform) {
+    await expect(page.locator('.mac-titlebar-region')).toBeVisible();
+    await expect(page.locator('.window-controls')).toHaveCount(0);
+  } else {
+    await expect(page.locator('.window-controls')).toBeVisible();
+  }
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('BeatDropper');
   await expect(page.getByRole('button', { name: 'New Set' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Add Tracks' })).toBeDisabled();
@@ -261,6 +269,7 @@ test('keeps playlist and optional mix inspector usable with managed scrolling', 
       }),
       getSettings: async () => settings,
       saveSettings: async () => settings,
+      onAppCommand: () => () => undefined,
       minimizeWindow: async () => undefined,
       toggleMaximizeWindow: async () => undefined,
       closeWindow: async () => undefined
@@ -271,13 +280,68 @@ test('keeps playlist and optional mix inspector usable with managed scrolling', 
   await expect(page.getByRole('heading', { level: 2, name: 'Live Mix Monitor' })).toBeVisible();
   const plannerStatus = page.getByLabel('AI mix planner status');
   await expect(plannerStatus).toBeVisible();
-  await expect(plannerStatus.getByText('Agent')).toBeVisible();
-  await expect(plannerStatus.getByText('Plan')).toBeVisible();
-  await expect(plannerStatus.getByText('Tempo')).toBeVisible();
+  await expect(plannerStatus.getByText('AI Mix')).toBeVisible();
+  await expect(plannerStatus.getByText('Agent')).toHaveCount(0);
+  await expect(plannerStatus.getByText('Plan')).toHaveCount(0);
   await expect(page.getByRole('heading', { level: 2, name: 'Playlist' })).toBeVisible();
+  const playlist = page.getByLabel('Playlist tracks');
+  const expectPlaylistRowsUsable = async () => {
+    const metrics = await page.evaluate(() => {
+      const wrap = document.querySelector('.playlist-table-wrap');
+      const body = document.querySelector('.playlist-table-body') as HTMLElement | null;
+      const wrapRect = wrap?.getBoundingClientRect();
+      const bodyRect = body?.getBoundingClientRect();
+      const rows = Array.from(document.querySelectorAll('.playlist-table-body > li')).map((row) =>
+        row.getBoundingClientRect()
+      );
+      const visibleRowCount = rows.filter(
+        (row) =>
+          wrapRect &&
+          row.height >= 32 &&
+          row.top >= wrapRect.top - 1 &&
+          row.bottom <= wrapRect.bottom + 1
+      ).length;
+
+      return {
+        wrapHeight: wrapRect?.height ?? 0,
+        bodyHeight: bodyRect?.height ?? 0,
+        firstRowHeight: rows[0]?.height ?? 0,
+        secondRowHeight: rows[1]?.height ?? 0,
+        visibleRowCount,
+        bodyOverflowY: body ? window.getComputedStyle(body).overflowY : ''
+      };
+    });
+
+    expect(metrics.wrapHeight).toBeGreaterThanOrEqual(132);
+    expect(metrics.bodyHeight).toBeGreaterThanOrEqual(72);
+    expect(metrics.firstRowHeight).toBeGreaterThanOrEqual(32);
+    expect(metrics.secondRowHeight).toBeGreaterThanOrEqual(32);
+    expect(metrics.visibleRowCount).toBeGreaterThanOrEqual(2);
+    expect(['auto', 'scroll']).toContain(metrics.bodyOverflowY);
+  };
+  await expect(page.getByRole('heading', { level: 2, name: 'Mix Pair Inspector' })).toHaveCount(0);
+  await expect(playlist).toBeVisible();
+  await expect(playlist.getByText('rezonate - underground finished.wav')).toBeVisible();
+  await expect(playlist.getByText('_Mix and Master_ DREAMSTATE rezonated211.wav')).toBeVisible();
+  await expect(page.getByLabel('Saved playlist')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Saved Sets' }).click();
+  await expect(page.getByLabel('Saved playlist')).toBeVisible();
+  await expectPlaylistRowsUsable();
+  await page.getByRole('button', { name: 'Hide Saved Sets' }).click();
+  await expect(page.getByLabel('Saved playlist')).toHaveCount(0);
+  await expectPlaylistRowsUsable();
+  await expect(page.getByText('Evidence')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Show mix evidence' }).click();
+  await expect(page.getByText('Evidence')).toBeVisible();
+  await page.getByRole('button', { name: 'Hide mix evidence' }).click();
+  await expect(page.getByText('Evidence')).toHaveCount(0);
   await page.getByRole('button', { name: 'Inspector' }).click();
   await expect(page.getByRole('button', { name: 'Hide Inspector' })).toBeVisible();
   await expect(page.getByRole('heading', { level: 2, name: 'Mix Pair Inspector' })).toBeVisible();
+  await expect(playlist).toBeVisible();
+  await expect(playlist.getByText('rezonate - underground finished.wav')).toBeVisible();
+  await expect(playlist.getByText('_Mix and Master_ DREAMSTATE rezonated211.wav')).toBeVisible();
+  await expectPlaylistRowsUsable();
   await expect(page.locator('.supervisor-waveform.current')).toBeVisible();
   await expect(page.locator('.supervisor-waveform.next')).toBeVisible();
   await expect(page.locator('.supervisor-cursor.mix-out')).toBeVisible();
@@ -306,7 +370,7 @@ test('keeps playlist and optional mix inspector usable with managed scrolling', 
     const selectors = [
       '.app-shell',
       '.live-mix-panel',
-      '.live-ai-statusbar',
+      '.live-planner-summary',
       '.supervisor-wave-stack',
       '.supervisor-waveform.current',
       '.supervisor-waveform.next',
@@ -461,6 +525,7 @@ test('contains long playlist scrolling inside the playlist table', async ({ page
       }),
       getSettings: async () => settings,
       saveSettings: async () => settings,
+      onAppCommand: () => () => undefined,
       minimizeWindow: async () => undefined,
       toggleMaximizeWindow: async () => undefined,
       closeWindow: async () => undefined
