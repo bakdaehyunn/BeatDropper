@@ -121,7 +121,7 @@ const checks = [
   {
     label: 'workspace commands expose pane shortcuts',
     source: sources.app,
-    pattern: /Hide Library Browser" : "Show Library Browser"[\s\S]*keyboardShortcut\("2", modifiers: \[\.command\]\)[\s\S]*Hide Inspector" : "Show Inspector"[\s\S]*keyboardShortcut\("3", modifiers: \[\.command\]\)/
+    pattern: /Button\("Playing Workspace"[\s\S]*keyboardShortcut\("1", modifiers: \[\.command\]\)[\s\S]*Button\("Creative Workspace"[\s\S]*keyboardShortcut\("2", modifiers: \[\.command\]\)[\s\S]*Hide Inspector" : "Show Inspector"[\s\S]*keyboardShortcut\("3", modifiers: \[\.command\]\)/
   },
   {
     label: 'settings view uses native form sections',

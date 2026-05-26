@@ -27,21 +27,12 @@ struct ContentView: View {
     var body: some View {
         VStack(spacing: 0) {
             toolbar
-            Divider()
-            mixMonitor
-            Divider()
-            HSplitView {
-                playlistPane
-                    .frame(minWidth: 520)
-                if model.isLibraryBrowserVisible {
-                    libraryPane
-                        .frame(minWidth: 300, idealWidth: 360, maxWidth: 460)
-                }
-                if model.isInspectorVisible {
-                    inspectorPane
-                        .frame(minWidth: 280, idealWidth: 320, maxWidth: 420)
-                }
+            if model.workspaceMode == .playing {
+                Divider()
+                mixMonitor
             }
+            Divider()
+            workspaceContent
             Divider()
             transportBar
         }
@@ -66,10 +57,21 @@ struct ContentView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("BeatDropper")
                     .font(.title2.weight(.semibold))
-                Text(model.analysisQueueStatus ?? "Local library · AI mix automation")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                if let analysisQueueStatus = model.analysisQueueStatus {
+                    Text(analysisQueueStatus)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
+
+            Picker("Mode", selection: $model.workspaceMode) {
+                ForEach(NativeWorkspaceMode.allCases) { mode in
+                    Text(mode.rawValue).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 190)
+            .accessibilityLabel("Workspace mode")
 
             Spacer()
 
@@ -92,29 +94,11 @@ struct ContentView: View {
             .keyboardShortcut("i", modifiers: [.command, .shift])
             .help("Import a music folder into the library")
 
-            if model.hasLibrarySourceFolders {
-                Button("Rescan", systemImage: "arrow.triangle.2.circlepath") {
-                    model.rescanLibraryFolders()
-                }
-                .help("Rescan imported library folders")
-            }
-
-            if model.hasMissingSourceFolders {
-                Menu("Relink", systemImage: "link") {
-                    ForEach(model.missingSourceFolders) { folder in
-                        Button(folder.displayName, systemImage: "folder.badge.questionmark") {
-                            model.relinkMissingSourceFolder(folder)
-                        }
-                    }
-                }
-                .help("Relink missing library folders")
-            }
-
             Button("Library", systemImage: "rectangle.stack") {
-                model.isLibraryBrowserVisible.toggle()
+                model.workspaceMode = .creative
+                model.isLibraryBrowserVisible = true
             }
-            .keyboardShortcut("2", modifiers: [.command])
-            .help(model.isLibraryBrowserVisible ? "Hide library browser" : "Show library browser")
+            .help("Show library browser")
 
             Button("Inspector", systemImage: model.isInspectorVisible ? "sidebar.right" : "sidebar.right") {
                 model.isInspectorVisible.toggle()
@@ -126,6 +110,27 @@ struct ContentView: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
         .accessibilityLabel("Primary toolbar")
+    }
+
+    @ViewBuilder
+    private var workspaceContent: some View {
+        HSplitView {
+            playlistPane
+                .frame(minWidth: model.workspaceMode == .playing ? 620 : 460)
+
+            if model.workspaceMode == .creative {
+                if model.isLibraryBrowserVisible {
+                    libraryPane
+                        .frame(minWidth: 300, idealWidth: 360, maxWidth: 500)
+                }
+
+                creativePane
+                    .frame(minWidth: 300, idealWidth: 340, maxWidth: 440)
+            } else if model.isInspectorVisible {
+                inspectorPane
+                    .frame(minWidth: 280, idealWidth: 320, maxWidth: 420)
+            }
+        }
     }
 
     private var mixMonitor: some View {
@@ -227,7 +232,7 @@ struct ContentView: View {
             }
 
             if let plan = model.currentMixPlan {
-                Text(model.scheduledMixCountdownSec.map { "Scheduled in \(formatDuration($0))" } ?? "Plan ready")
+                Text(model.scheduledMixCountdownSec.map { "In \(formatDuration($0))" } ?? "Ready")
                     .font(.headline)
                     .lineLimit(1)
                 HStack(spacing: 14) {
@@ -235,17 +240,9 @@ struct ContentView: View {
                     metric("In", formatDuration(plan.nextTrackStartOffsetSec))
                     metric("Conf", "\(Int((plan.confidence * 100).rounded()))%")
                 }
-                Text(plan.reasoningSummary ?? model.plannerStatus)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
             } else {
-                Text(model.isPlanningMix ? "Planning..." : "No plan")
+                Text(model.isPlanningMix ? "Planning" : "--")
                     .font(.headline)
-                Text(model.plannerStatus)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
                 Spacer(minLength: 0)
             }
         }
@@ -280,14 +277,6 @@ struct ContentView: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-            Button("Saved Sets", systemImage: "music.note.list") {
-                model.isSavedSetsVisible.toggle()
-            }
-            .help(model.isSavedSetsVisible ? "Hide saved sets" : "Show saved sets")
-            }
-
-            if model.isSavedSetsVisible {
-                savedSetsPanel
             }
 
             HStack {
@@ -327,13 +316,6 @@ struct ContentView: View {
                 }
                 .width(44)
 
-                TableColumn("Status") { imported in
-                    Text(model.availabilityStatus(for: imported))
-                        .foregroundStyle(model.isTrackAvailable(imported) ? Color.secondary : Color.red)
-                        .lineLimit(1)
-                }
-                .width(88)
-
                 TableColumn("Track") { imported in
                     HStack(spacing: 6) {
                         if !model.isTrackAvailable(imported) {
@@ -352,36 +334,75 @@ struct ContentView: View {
                 }
                 .width(60)
 
-                TableColumn("Analysis") { imported in
-                    Text(model.analysisStatus(for: imported))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-                .width(96)
-
                 TableColumn("Length") { imported in
                     Text(formatDuration(imported.track.durationSec))
                         .monospacedDigit()
                 }
                 .width(78)
-
-                TableColumn("Format") { imported in
-                    Text(imported.track.format.rawValue.uppercased())
-                }
-                .width(70)
             }
             .overlay {
                 if model.playlist.isEmpty {
                     ContentUnavailableView(
                         "No Tracks",
-                        systemImage: "music.note",
-                        description: Text("Use New Set or Import Folder to start.")
+                        systemImage: "music.note"
                     )
                 }
             }
             .accessibilityLabel("Current playlist")
         }
         .padding(16)
+    }
+
+    private var creativePane: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("Creative")
+                    .font(.title3.weight(.semibold))
+
+                savedSetsPanel
+
+                maintenancePanel
+
+                if model.isInspectorVisible {
+                    Divider()
+                    inspectorContent
+                }
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+        }
+        .background(Color(nsColor: .controlBackgroundColor))
+        .accessibilityLabel("Creative workspace")
+    }
+
+    private var maintenancePanel: some View {
+        GroupBox("Library") {
+            VStack(alignment: .leading, spacing: 10) {
+                Button("Rescan", systemImage: "arrow.triangle.2.circlepath") {
+                    model.rescanLibraryFolders()
+                }
+                .disabled(!model.hasLibrarySourceFolders)
+                .help("Rescan imported library folders")
+
+                if model.hasMissingSourceFolders {
+                    Menu("Relink", systemImage: "link") {
+                        ForEach(model.missingSourceFolders) { folder in
+                            Button(folder.displayName, systemImage: "folder.badge.questionmark") {
+                                model.relinkMissingSourceFolder(folder)
+                            }
+                        }
+                    }
+                    .help("Relink missing library folders")
+                }
+
+                if model.selectedTrackNeedsRelink {
+                    Button("Relink File", systemImage: "link") {
+                        model.relinkSelectedTrack()
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 
     private var libraryPane: some View {
@@ -414,13 +435,6 @@ struct ContentView: View {
             .help("Add selected library track to the current set")
 
             Table(model.filteredLibraryTracks, selection: $model.selectedLibraryTrackID) {
-                TableColumn("Status") { row in
-                    Text(model.availabilityStatus(for: row))
-                        .foregroundStyle(model.isTrackAvailable(row) ? Color.secondary : Color.red)
-                        .lineLimit(1)
-                }
-                .width(82)
-
                 TableColumn("Track") { row in
                     HStack(spacing: 6) {
                         if !model.isTrackAvailable(row) {
@@ -450,8 +464,7 @@ struct ContentView: View {
                 if model.filteredLibraryTracks.isEmpty {
                     ContentUnavailableView(
                         "No Library Tracks",
-                        systemImage: "rectangle.stack",
-                        description: Text("Import a folder or add audio files.")
+                        systemImage: "rectangle.stack"
                     )
                 }
             }
@@ -473,19 +486,18 @@ struct ContentView: View {
                     .foregroundStyle(.secondary)
             }
 
-            HStack(spacing: 10) {
-                Picker("Saved Set", selection: savedSetSelection) {
-                    Text("New Saved Set").tag("")
-                    ForEach(model.userPlaylists) { playlist in
-                        Text(playlist.name).tag(playlist.id)
-                    }
+            Picker("Saved Set", selection: savedSetSelection) {
+                Text("New Saved Set").tag("")
+                ForEach(model.userPlaylists) { playlist in
+                    Text(playlist.name).tag(playlist.id)
                 }
-                .labelsHidden()
-                .frame(minWidth: 180, maxWidth: 280)
+            }
+            .labelsHidden()
 
-                TextField("Set name", text: $model.userPlaylistNameDraft)
-                    .textFieldStyle(.roundedBorder)
+            TextField("Set name", text: $model.userPlaylistNameDraft)
+                .textFieldStyle(.roundedBorder)
 
+            HStack(spacing: 8) {
                 Button("Save Current", systemImage: "square.and.arrow.down") {
                     model.saveCurrentSet()
                 }
@@ -497,7 +509,9 @@ struct ContentView: View {
                 }
                 .disabled(!model.canLoadSelectedSet)
                 .help("Load the selected saved set")
+            }
 
+            HStack(spacing: 8) {
                 Button("Rename", systemImage: "pencil") {
                     model.renameSelectedSavedSet()
                 }
@@ -523,6 +537,12 @@ struct ContentView: View {
     }
 
     private var inspectorPane: some View {
+        inspectorContent
+            .padding(16)
+            .background(Color(nsColor: .controlBackgroundColor))
+    }
+
+    private var inspectorContent: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Mix Pair Inspector")
                 .font(.title3.weight(.semibold))
@@ -567,26 +587,23 @@ struct ContentView: View {
 
             Spacer()
         }
-        .padding(16)
-        .background(Color(nsColor: .controlBackgroundColor))
     }
 
     @ViewBuilder
     private func analysisSummary(for selectedTrack: ImportedTrack) -> some View {
         if !model.isTrackAvailable(selectedTrack) {
-            Text("Analysis paused until the file is available.")
+            Text("--")
                 .foregroundStyle(.secondary)
         } else if model.analyzingTrackIds.contains(selectedTrack.id) {
-            ProgressView("Analyzing local DSP evidence...")
+            ProgressView("Analyzing")
                 .controlSize(.small)
         } else if let analysis = model.selectedTrackAnalysis {
             VStack(alignment: .leading, spacing: 8) {
-                LabeledContent("Confidence", value: "\(Int((analysis.analysisConfidence * 100).rounded()))%")
+                LabeledContent("Ready", value: analysis.analysisConfidence >= 0.65 ? "Yes" : "Low")
                 LabeledContent("BPM", value: analysis.bpm.map { String(Int($0.rounded())) } ?? "--")
-                LabeledContent("Waveform", value: "\(analysis.waveformDetail.count) pts")
-                LabeledContent("Spectrum", value: "\(analysis.spectralBands.count) pts")
-                LabeledContent("Transients", value: "\(analysis.transientMarkers.count)")
-                LabeledContent("Bars", value: "\(analysis.barGrid.count)")
+                LabeledContent("Conf", value: "\(Int((analysis.analysisConfidence * 100).rounded()))%")
+                LabeledContent("Grid", value: "\(Int((analysis.analysisQuality.beatGrid * 100).rounded()))%")
+                LabeledContent("Cue", value: cueSummary(for: analysis))
                 if let intro = analysis.introCueSec {
                     LabeledContent("Intro", value: formatDuration(intro))
                 }
@@ -595,7 +612,7 @@ struct ContentView: View {
                 }
             }
         } else {
-            Text("Analysis pending")
+            Text("--")
                 .foregroundStyle(.secondary)
         }
     }
@@ -603,7 +620,7 @@ struct ContentView: View {
     @ViewBuilder
     private var mixPlanSummary: some View {
         if model.isPlanningMix {
-            ProgressView("Planning mix...")
+            ProgressView("Planning")
                 .controlSize(.small)
         } else if let plan = model.currentMixPlan {
             VStack(alignment: .leading, spacing: 8) {
@@ -612,16 +629,11 @@ struct ContentView: View {
                 LabeledContent("Style", value: plan.style.rawValue.replacingOccurrences(of: "_", with: " "))
                 LabeledContent("Confidence", value: "\(Int((plan.confidence * 100).rounded()))%")
                 if let countdown = model.scheduledMixCountdownSec {
-                    LabeledContent("Scheduled", value: "in \(formatDuration(countdown))")
-                }
-                if let reasoning = plan.reasoningSummary {
-                    Text(reasoning)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(3)
+                    LabeledContent("Starts", value: formatDuration(countdown))
                 }
             }
         } else {
-            Text(model.plannerStatus)
+            Text("--")
                 .foregroundStyle(.secondary)
         }
     }
@@ -722,6 +734,11 @@ struct ContentView: View {
         .frame(height: 32)
         .accessibilityLabel("\(label.capitalized) output level")
         .accessibilityValue(meter.clipped ? "clipping" : "\(Int(meter.peakDb.rounded())) decibels")
+    }
+
+    private func cueSummary(for analysis: TrackAnalysis) -> String {
+        let cueConfidence = analysis.cueCandidates.map(\.confidence).max() ?? 0
+        return "\(Int((cueConfidence * 100).rounded()))%"
     }
 
     private func rowNumber(for imported: ImportedTrack) -> String {

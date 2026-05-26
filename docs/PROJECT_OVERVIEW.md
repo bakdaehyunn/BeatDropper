@@ -30,6 +30,34 @@ BeatDropper는 사용자가 직접 고른 로컬 음악 라이브러리와 세�
 - `src/main`, `src/preload`, `src/renderer`, `src/shared`, and Electron tests remain only as reference material during migration.
 - Electron source, scripts, dependencies, and docs are removed only after notarized native release verification, normal and quarantine-simulated Gatekeeper evidence, pre-retirement parity, and `native:retire:check` all pass.
 
+## UI/UX 모드 원칙
+
+BeatDropper native UI는 같은 기능을 한 화면에 모두 노출하는 구조가 아니라, 사용자의 작업 맥락에 따라 두 가지 관점을 분리한다.
+
+### 1) Playing Mode
+- 목적: DJ가 지금 재생 중인 세트와 다음 전환에 집중하는 모드.
+- 메인 화면에 항상 보여야 하는 것:
+  - current deck, next deck, transition/mix point, playback state, meters
+  - 현재 세트의 playlist 순서와 최소한의 mix-ready 정보
+  - AI mix timing 결과와 confidence 같은 즉시 판단 가능한 값
+- 메인 화면에서 피해야 하는 것:
+  - raw DSP point counts, JSON/debug evidence, long reasoning text
+  - saved-set 관리 form, library maintenance, relink/rescan bulk actions
+  - 사용법 설명 문장이나 기능 홍보성 문구
+
+### 2) Creative Mode
+- 목적: 사용자가 자신의 취향대로 라이브러리와 플레이리스트를 구성하고, AI가 나중에 playing할 때 참고할 준비 데이터를 세팅하는 모드.
+- 다뤄야 하는 것:
+  - folder/library browsing, saved taste playlist 구성, playlist ordering
+  - BPM/beat grid 확인과 향후 BPM 맞추기 보정
+  - hot cue, intro/outro, phrase boundary, energy/cue preference 같은 user-authored hints
+  - missing file relink, folder rescan, analysis refresh 같은 maintenance
+- AI의 역할:
+  - 취향이나 playlist 선택을 대신하지 않는다.
+  - 사용자가 만든 set과 cue/hint/DSP evidence를 참고해서 transition timing, fade style, tempo sync, energy strategy를 결정한다.
+
+이 원칙상 Playing Mode의 메인 화면은 performance surface이고, Creative Mode는 preparation surface다. 패널, sheet, inspector, settings는 Creative Mode와 세부 검증을 위한 공간으로 우선 배치한다.
+
 ## 실행 및 검증 루틴
 1. `npm run native:build`
 2. `npm run native:test`

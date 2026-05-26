@@ -141,15 +141,21 @@ struct BeatDropperNativeApp: App {
             }
 
             CommandMenu("Workspace") {
-                Button(model.isLibraryBrowserVisible ? "Hide Library Browser" : "Show Library Browser") {
-                    model.isLibraryBrowserVisible.toggle()
+                Button("Playing Workspace") {
+                    model.workspaceMode = .playing
+                }
+                .keyboardShortcut("1", modifiers: [.command])
+
+                Button("Creative Workspace") {
+                    model.workspaceMode = .creative
                 }
                 .keyboardShortcut("2", modifiers: [.command])
 
-                Button(model.isSavedSetsVisible ? "Hide Saved Sets" : "Show Saved Sets") {
-                    model.isSavedSetsVisible.toggle()
+                Button(model.isLibraryBrowserVisible ? "Hide Library Browser" : "Show Library Browser") {
+                    model.workspaceMode = .creative
+                    model.isLibraryBrowserVisible.toggle()
                 }
-                .keyboardShortcut("s", modifiers: [.command, .shift])
+                .keyboardShortcut("2", modifiers: [.command, .shift])
 
                 Button("Save Current Set") {
                     model.saveCurrentSet()

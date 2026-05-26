@@ -82,6 +82,10 @@ const checks = [
     pattern: /accessibilityLabel\("Primary toolbar"\)/
   },
   {
+    label: 'workspace mode picker label',
+    pattern: /accessibilityLabel\("Workspace mode"\)/
+  },
+  {
     label: 'live mix monitor label',
     pattern: /accessibilityLabel\("Live mix monitor"\)/
   },
@@ -92,6 +96,10 @@ const checks = [
   {
     label: 'library browser table label',
     pattern: /accessibilityLabel\("Library browser"\)/
+  },
+  {
+    label: 'creative workspace label',
+    pattern: /accessibilityLabel\("Creative workspace"\)/
   },
   {
     label: 'search library label',

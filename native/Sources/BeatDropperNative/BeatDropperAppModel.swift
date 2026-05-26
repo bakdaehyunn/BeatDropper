@@ -2,6 +2,13 @@ import AppKit
 import BeatDropperCore
 import Foundation
 
+enum NativeWorkspaceMode: String, CaseIterable, Identifiable {
+    case playing = "Playing"
+    case creative = "Creative"
+
+    var id: String { rawValue }
+}
+
 @MainActor
 final class BeatDropperAppModel: ObservableObject {
     @Published private(set) var playlist: [ImportedTrack] = []
@@ -28,8 +35,8 @@ final class BeatDropperAppModel: ObservableObject {
     @Published var selectedUserPlaylistId: String = ""
     @Published var userPlaylistNameDraft: String = ""
     @Published var notice: String = "Ready"
+    @Published var workspaceMode: NativeWorkspaceMode = .playing
     @Published var isInspectorVisible: Bool = false
-    @Published var isSavedSetsVisible: Bool = false
     @Published var isLibraryBrowserVisible: Bool = true
     @Published var selectedLibraryTrackID: ImportedTrack.ID?
     @Published var librarySearchText: String = "" {
