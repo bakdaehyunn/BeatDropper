@@ -59,6 +59,30 @@ struct NativeLibraryStoreTests {
         #expect(loaded.selectedUserPlaylistId == "set-1")
     }
 
+    @Test func savesAndLoadsTrackPreparationMetadata() throws {
+        let fileURL = temporaryLibraryURL()
+        defer { try? FileManager.default.removeItem(at: fileURL.deletingLastPathComponent()) }
+
+        var record = trackRecord(id: "track-1", title: "Prepared Track", path: "/Music/prepared.wav")
+        record.preparation = TrackPreparation(
+            bpmOverride: 126.44,
+            hotCues: [
+                TrackPreparationCue(id: "cue-drop", kind: .drop, timeSec: 64.2, label: "Drop"),
+                TrackPreparationCue(id: "cue-intro", kind: .intro, timeSec: 4.8, label: "Intro")
+            ]
+        )
+        let state = NativeLibraryState(trackRecords: [record], currentPlaylistTrackIds: ["track-1"])
+
+        let store = NativeLibraryStore(fileURL: fileURL)
+        try store.save(state)
+        let loaded = try store.load()
+
+        let preparation = try #require(loaded.trackRecords.first?.preparation)
+        #expect(preparation.bpmOverride == 126.4)
+        #expect(preparation.hotCues.map(\.id) == ["cue-intro", "cue-drop"])
+        #expect(preparation.hotCues.map(\.kind) == [.intro, .drop])
+    }
+
     @Test func saveRemovesPlaylistReferencesToMissingLibraryTracks() throws {
         let fileURL = temporaryLibraryURL()
         defer { try? FileManager.default.removeItem(at: fileURL.deletingLastPathComponent()) }
@@ -123,6 +147,7 @@ struct NativeLibraryStoreTests {
         #expect(loaded.trackRecords.first?.id == "track-1")
         #expect(loaded.trackRecords.first?.missing == false)
         #expect(loaded.trackRecords.first?.sourceFolderPath == nil)
+        #expect(loaded.trackRecords.first?.preparation == .empty)
         #expect(loaded.sourceFolders.isEmpty)
         #expect(loaded.currentPlaylistTrackIds == ["track-1"])
     }

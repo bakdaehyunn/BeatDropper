@@ -2,6 +2,65 @@ import Foundation
 
 public let nativeLibraryStateSchemaVersion = 1
 
+public enum TrackPreparationCueKind: String, Codable, CaseIterable, Identifiable, Sendable {
+    case intro
+    case drop
+    case breakdown = "break"
+    case outro
+    case custom
+
+    public var id: String { rawValue }
+
+    public var displayName: String {
+        switch self {
+        case .intro:
+            return "Intro"
+        case .drop:
+            return "Drop"
+        case .breakdown:
+            return "Break"
+        case .outro:
+            return "Outro"
+        case .custom:
+            return "Custom"
+        }
+    }
+}
+
+public struct TrackPreparationCue: Codable, Hashable, Identifiable, Sendable {
+    public var id: String
+    public var kind: TrackPreparationCueKind
+    public var timeSec: Double
+    public var label: String
+
+    public init(
+        id: String = UUID().uuidString,
+        kind: TrackPreparationCueKind,
+        timeSec: Double,
+        label: String
+    ) {
+        self.id = id
+        self.kind = kind
+        self.timeSec = timeSec
+        self.label = label
+    }
+}
+
+public struct TrackPreparation: Codable, Hashable, Sendable {
+    public static let empty = TrackPreparation()
+
+    public var bpmOverride: Double?
+    public var hotCues: [TrackPreparationCue]
+
+    public init(
+        bpmOverride: Double? = nil,
+        hotCues: [TrackPreparationCue] = []
+    ) {
+        self.bpmOverride = bpmOverride
+        self.hotCues = hotCues
+    }
+}
+
 public struct NativeTrackRecord: Codable, Hashable, Identifiable, Sendable {
     public var id: String { track.id }
     public var track: Track
@@ -12,6 +71,7 @@ public struct NativeTrackRecord: Codable, Hashable, Identifiable, Sendable {
     public var missingAt: String?
     public var addedAt: String
     public var updatedAt: String
+    public var preparation: TrackPreparation
 
     public init(
         track: Track,
@@ -21,7 +81,8 @@ public struct NativeTrackRecord: Codable, Hashable, Identifiable, Sendable {
         missing: Bool = false,
         missingAt: String? = nil,
         addedAt: String,
-        updatedAt: String
+        updatedAt: String,
+        preparation: TrackPreparation = .empty
     ) {
         self.track = track
         self.filePath = filePath
@@ -31,6 +92,7 @@ public struct NativeTrackRecord: Codable, Hashable, Identifiable, Sendable {
         self.missingAt = missingAt
         self.addedAt = addedAt
         self.updatedAt = updatedAt
+        self.preparation = preparation
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -42,6 +104,7 @@ public struct NativeTrackRecord: Codable, Hashable, Identifiable, Sendable {
         case missingAt
         case addedAt
         case updatedAt
+        case preparation
     }
 
     public init(from decoder: Decoder) throws {
@@ -54,6 +117,7 @@ public struct NativeTrackRecord: Codable, Hashable, Identifiable, Sendable {
         self.missingAt = try container.decodeIfPresent(String.self, forKey: .missingAt)
         self.addedAt = try container.decode(String.self, forKey: .addedAt)
         self.updatedAt = try container.decode(String.self, forKey: .updatedAt)
+        self.preparation = try container.decodeIfPresent(TrackPreparation.self, forKey: .preparation) ?? .empty
     }
 }
 
@@ -247,7 +311,8 @@ public final class NativeLibraryStore: @unchecked Sendable {
     private func sanitized(_ state: NativeLibraryState) -> NativeLibraryState {
         var recordsById: [String: NativeTrackRecord] = [:]
         var records: [NativeTrackRecord] = []
-        for record in state.trackRecords where !record.id.isEmpty && !record.filePath.isEmpty {
+        for var record in state.trackRecords where !record.id.isEmpty && !record.filePath.isEmpty {
+            record.preparation = sanitizedPreparation(record.preparation, durationSec: record.track.durationSec)
             if recordsById[record.id] == nil {
                 records.append(record)
             }
@@ -294,6 +359,37 @@ public final class NativeLibraryStore: @unchecked Sendable {
             userPlaylists: playlists,
             selectedUserPlaylistId: selectedId
         )
+    }
+
+    private func sanitizedPreparation(_ preparation: TrackPreparation, durationSec: Double) -> TrackPreparation {
+        let safeDuration = durationSec.isFinite ? max(0, durationSec) : 0
+        let bpmOverride = preparation.bpmOverride.flatMap { bpm -> Double? in
+            guard bpm.isFinite, bpm >= 40, bpm <= 260 else {
+                return nil
+            }
+            return (bpm * 10).rounded() / 10
+        }
+
+        var seenCueIds = Set<String>()
+        let hotCues = preparation.hotCues.compactMap { cue -> TrackPreparationCue? in
+            guard cue.timeSec.isFinite else {
+                return nil
+            }
+            let id = cue.id.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !id.isEmpty, !seenCueIds.contains(id) else {
+                return nil
+            }
+            seenCueIds.insert(id)
+            let label = cue.label.trimmingCharacters(in: .whitespacesAndNewlines)
+            return TrackPreparationCue(
+                id: id,
+                kind: cue.kind,
+                timeSec: min(max(0, cue.timeSec), safeDuration),
+                label: label.isEmpty ? cue.kind.displayName : label
+            )
+        }
+
+        return TrackPreparation(bpmOverride: bpmOverride, hotCues: hotCues.sorted { $0.timeSec < $1.timeSec })
     }
 }
 

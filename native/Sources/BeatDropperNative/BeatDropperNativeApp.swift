@@ -113,13 +113,13 @@ struct BeatDropperNativeApp: App {
 
                 Divider()
 
-                Button("Plan Mix With AI") {
-                    model.requestMixPlanForNextTrack()
+                Button(model.isAIMixEnabled ? "Turn Off AI Mix" : "Turn On AI Mix") {
+                    model.setAIMixEnabled(!model.isAIMixEnabled)
                 }
                 .keyboardShortcut("m", modifiers: [.command])
-                .disabled(!model.canRequestMixPlan)
+                .disabled(!model.isAIMixEnabled && !model.canEnableAIMix)
 
-                Button("Cancel AI Mix Plan") {
+                Button("Cancel AI Mix") {
                     model.cancelMixPlan()
                 }
                 .keyboardShortcut(".", modifiers: [.command])
@@ -151,9 +151,17 @@ struct BeatDropperNativeApp: App {
                 }
                 .keyboardShortcut("2", modifiers: [.command])
 
-                Button(model.isLibraryBrowserVisible ? "Hide Library Browser" : "Show Library Browser") {
-                    model.workspaceMode = .creative
-                    model.isLibraryBrowserVisible.toggle()
+                Button(
+                    model.workspaceMode == .creative && model.isLibraryBrowserVisible
+                        ? "Hide Library Browser"
+                        : "Show Library Browser"
+                ) {
+                    if model.workspaceMode == .creative && model.isLibraryBrowserVisible {
+                        model.isLibraryBrowserVisible = false
+                    } else {
+                        model.workspaceMode = .creative
+                        model.isLibraryBrowserVisible = true
+                    }
                 }
                 .keyboardShortcut("2", modifiers: [.command, .shift])
 
@@ -170,8 +178,17 @@ struct BeatDropperNativeApp: App {
 
                 Divider()
 
-                Button(model.isInspectorVisible ? "Hide Inspector" : "Show Inspector") {
-                    model.isInspectorVisible.toggle()
+                Button(
+                    model.workspaceMode == .playing && model.isInspectorVisible
+                        ? "Hide Inspector"
+                        : "Show Inspector"
+                ) {
+                    if model.workspaceMode == .playing && model.isInspectorVisible {
+                        model.isInspectorVisible = false
+                    } else {
+                        model.workspaceMode = .playing
+                        model.isInspectorVisible = true
+                    }
                 }
                 .keyboardShortcut("3", modifiers: [.command])
             }

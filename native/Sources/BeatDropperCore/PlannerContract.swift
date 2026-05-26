@@ -46,6 +46,16 @@ public struct PlannerAnalysisPair: Codable, Hashable, Sendable {
     }
 }
 
+public struct PlannerPreparationPair: Codable, Hashable, Sendable {
+    public var current: TrackPreparation?
+    public var next: TrackPreparation?
+
+    public init(current: TrackPreparation?, next: TrackPreparation?) {
+        self.current = current
+        self.next = next
+    }
+}
+
 public struct PlannerRequest: Codable, Hashable, Sendable {
     public var schemaVersion: Int
     public var currentTrack: PlannerTrackSnapshot
@@ -54,6 +64,7 @@ public struct PlannerRequest: Codable, Hashable, Sendable {
     public var analysis: PlannerAnalysisPair
     public var analysisSummary: PlannerAnalysisSummary?
     public var pairContext: MixPairContext?
+    public var preparation: PlannerPreparationPair?
     public var settings: PlannerSettingsSnapshot
 
     public init(
@@ -64,6 +75,7 @@ public struct PlannerRequest: Codable, Hashable, Sendable {
         analysis: PlannerAnalysisPair,
         analysisSummary: PlannerAnalysisSummary? = nil,
         pairContext: MixPairContext? = nil,
+        preparation: PlannerPreparationPair? = nil,
         settings: PlannerSettingsSnapshot
     ) {
         self.schemaVersion = schemaVersion
@@ -73,6 +85,7 @@ public struct PlannerRequest: Codable, Hashable, Sendable {
         self.analysis = analysis
         self.analysisSummary = analysisSummary
         self.pairContext = pairContext
+        self.preparation = preparation
         self.settings = settings
     }
 }
@@ -100,6 +113,8 @@ public enum PlannerRequestBuilder {
         elapsedSec: Double,
         currentAnalysis: TrackAnalysis?,
         nextAnalysis: TrackAnalysis?,
+        currentPreparation: TrackPreparation? = nil,
+        nextPreparation: TrackPreparation? = nil,
         settings: PlannerSettingsSnapshot
     ) -> PlannerRequest {
         let safeElapsed = min(max(0, elapsedSec.isFinite ? elapsedSec : 0), max(0, currentTrack.durationSec))
@@ -123,6 +138,7 @@ public enum PlannerRequestBuilder {
                 currentAnalysis: currentAnalysis,
                 nextAnalysis: nextAnalysis
             ),
+            preparation: PlannerPreparationPair(current: currentPreparation, next: nextPreparation),
             settings: settings
         )
     }

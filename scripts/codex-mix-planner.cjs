@@ -245,6 +245,39 @@ const buildPairContextHints = (request) => {
   ].join('\n');
 };
 
+const buildPreparationHints = (request) => {
+  const formatPreparation = (label, preparation) => {
+    if (!preparation) {
+      return `- ${label}: no user prep`;
+    }
+    const bpm = typeof preparation.bpmOverride === 'number'
+      ? `prep BPM ${preparation.bpmOverride.toFixed(1)}`
+      : 'prep BPM --';
+    const cues = Array.isArray(preparation.hotCues) && preparation.hotCues.length > 0
+      ? preparation.hotCues
+        .slice()
+        .sort((left, right) => (left.timeSec ?? 0) - (right.timeSec ?? 0))
+        .slice(0, 8)
+        .map((cue) => `${cue.label ?? cue.kind ?? 'cue'} ${typeof cue.timeSec === 'number' ? cue.timeSec.toFixed(2) : '--'}s`)
+        .join('; ')
+      : 'hot cues none';
+    return `- ${label}: ${bpm}; ${cues}`;
+  };
+
+  const current = request?.preparation?.current;
+  const next = request?.preparation?.next;
+  if (!current && !next) {
+    return 'Preparation hints: none';
+  }
+
+  return [
+    'Preparation hints:',
+    'Treat user prep BPM and hot cues as human intent; prefer them when they are plausible and do not violate safety rules.',
+    formatPreparation('current', current),
+    formatPreparation('next', next)
+  ].join('\n');
+};
+
 const buildPrompt = (request) => {
   const requestJson = JSON.stringify(request, null, 2);
   return [
@@ -278,6 +311,8 @@ const buildPrompt = (request) => {
     buildAnalysisHints(request),
     '',
     buildPairContextHints(request),
+    '',
+    buildPreparationHints(request),
     '',
     'Planner request JSON:',
     requestJson
@@ -356,6 +391,7 @@ module.exports = {
   buildModeGuidance,
   buildAnalysisHints,
   buildPairContextHints,
+  buildPreparationHints,
   buildPrompt,
   plannerSchema
 };

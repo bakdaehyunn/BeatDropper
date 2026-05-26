@@ -15,6 +15,13 @@ struct PlannerEvidenceTests {
             elapsedSec: 130,
             currentAnalysis: currentAnalysis,
             nextAnalysis: nextAnalysis,
+            currentPreparation: TrackPreparation(
+                bpmOverride: 123.8,
+                hotCues: [TrackPreparationCue(id: "prep-out", kind: .outro, timeSec: 158, label: "Prep outro")]
+            ),
+            nextPreparation: TrackPreparation(
+                hotCues: [TrackPreparationCue(id: "prep-drop", kind: .drop, timeSec: 32, label: "Drop")]
+            ),
             settings: PlannerSettingsSnapshot(fadeDurationSec: 8, aiDjMode: .balanced)
         )
 
@@ -22,11 +29,14 @@ struct PlannerEvidenceTests {
         #expect(request.analysisSummary?.next?.cues.firstDownbeat != nil)
         #expect(request.pairContext?.readiness == .ready)
         #expect(request.pairContext?.recommendedCandidateId != nil)
+        #expect(request.preparation?.current?.bpmOverride == 123.8)
+        #expect(request.preparation?.next?.hotCues.first?.kind == .drop)
 
         let encoded = try JSONEncoder().encode(request)
         let object = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
         #expect(object["analysisSummary"] != nil)
         #expect(object["pairContext"] != nil)
+        #expect(object["preparation"] != nil)
     }
 
     @Test func pairContextFallsBackWhenAnalysisIsMissing() {

@@ -640,7 +640,7 @@ const main = () => {
     checks,
     'DSP parity',
     'native/Sources/BeatDropperNative/ContentView.swift',
-    /analysisQueueStatus[\s\S]*Local library/,
+    /analysisQueueStatus[\s\S]*Text\(analysisQueueStatus\)/,
     'native UI surfaces DSP analysis queue progress without adding another panel'
   );
   addContainsCheck(
@@ -731,8 +731,8 @@ const main = () => {
     checks,
     'planner parity',
     'scripts/codex-mix-planner.cjs',
-    /Prefer analysisSummary and pairContext/,
-    'planner prompt prefers summary and pair context'
+    /Prefer analysisSummary and pairContext[\s\S]*Preparation hints:[\s\S]*human intent/,
+    'planner prompt prefers summary, pair context, and user prep evidence'
   );
   addContainsCheck(
     checks,

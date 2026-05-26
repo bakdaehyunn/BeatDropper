@@ -30,15 +30,39 @@ final class BeatDropperAppModel: ObservableObject {
     @Published private(set) var currentMixPlanPair: PlannedMixPair?
     @Published private(set) var isPlanningMix: Bool = false
     @Published private(set) var plannerStatus: String = "No AI mix plan"
+    @Published private(set) var isAIMixEnabled: Bool = false
     @Published private(set) var scheduledMixCountdownSec: Double?
-    @Published var selectedTrackID: ImportedTrack.ID?
+    @Published private(set) var creativePreparationTrackID: ImportedTrack.ID? {
+        didSet {
+            if oldValue != creativePreparationTrackID {
+                creativePreviewPositionSec = 0
+                resetBPMTapState()
+            }
+        }
+    }
+    @Published private(set) var creativePreviewPositionSec: Double = 0
+    @Published private(set) var bpmTapEstimate: Double?
+    @Published private(set) var bpmTapCount: Int = 0
+    @Published var selectedTrackID: ImportedTrack.ID? {
+        didSet {
+            if let selectedTrackID {
+                creativePreparationTrackID = selectedTrackID
+            }
+        }
+    }
     @Published var selectedUserPlaylistId: String = ""
     @Published var userPlaylistNameDraft: String = ""
     @Published var notice: String = "Ready"
     @Published var workspaceMode: NativeWorkspaceMode = .playing
     @Published var isInspectorVisible: Bool = false
     @Published var isLibraryBrowserVisible: Bool = true
-    @Published var selectedLibraryTrackID: ImportedTrack.ID?
+    @Published var selectedLibraryTrackID: ImportedTrack.ID? {
+        didSet {
+            if let selectedLibraryTrackID {
+                creativePreparationTrackID = selectedLibraryTrackID
+            }
+        }
+    }
     @Published var librarySearchText: String = "" {
         didSet { rebuildFilteredLibraryTracks() }
     }
@@ -57,6 +81,7 @@ final class BeatDropperAppModel: ObservableObject {
     private var mixPlanTimer: Timer?
     private var isExecutingScheduledMix = false
     private var activePlannerRequestID: UUID?
+    private var bpmTapDates: [Date] = []
 
     init(
         store: NativeLibraryStore = .applicationSupport(),
@@ -84,6 +109,62 @@ final class BeatDropperAppModel: ObservableObject {
             return nil
         }
         return importedTrack(from: row)
+    }
+
+    var creativePreparationTrack: ImportedTrack? {
+        guard let creativePreparationTrackID else {
+            return selectedTrack ?? selectedLibraryTrack
+        }
+        if let playlistTrack = playlist.first(where: { $0.id == creativePreparationTrackID }) {
+            return playlistTrack
+        }
+        if let row = libraryBrowserTracks.first(where: { $0.id == creativePreparationTrackID }) {
+            return importedTrack(from: row)
+        }
+        return libraryRecords.first(where: { $0.id == creativePreparationTrackID }).map(ImportedTrack.init(record:))
+    }
+
+    var creativePreparationAnalysis: TrackAnalysis? {
+        guard let trackId = creativePreparationTrack?.id else {
+            return nil
+        }
+        return trackAnalysesById[trackId]
+    }
+
+    var creativeTrackPreparation: TrackPreparation {
+        guard let trackId = creativePreparationTrack?.id else {
+            return .empty
+        }
+        return preparation(forTrackId: trackId)
+    }
+
+    var creativeEffectiveBPM: Double? {
+        guard let track = creativePreparationTrack else {
+            return nil
+        }
+        return effectiveBPM(forTrackId: track.id, trackBPM: track.track.bpm, analysis: trackAnalysesById[track.id])
+    }
+
+    var canPreviewCreativeTrack: Bool {
+        creativePreparationTrack.map(isTrackAvailableForImmediateUse) ?? false
+    }
+
+    var isCreativePreviewTrackLoaded: Bool {
+        guard let track = creativePreparationTrack else {
+            return false
+        }
+        return audioEngine.currentTrack?.id == track.id
+    }
+
+    var isCreativePreviewPlaying: Bool {
+        isCreativePreviewTrackLoaded && audioEngine.isPlaybackActive
+    }
+
+    var creativePlaybackPositionSec: Double {
+        guard isCreativePreviewTrackLoaded else {
+            return creativePreviewPositionSec
+        }
+        return audioEngine.elapsedSec
     }
 
     var currentDeckDisplayTrack: Track? {
@@ -245,8 +326,16 @@ final class BeatDropperAppModel: ObservableObject {
             isTrackAvailableForImmediateUse(nextTrackAfterSelection)
     }
 
+    var canEnableAIMix: Bool {
+        guard let selectedTrack, let nextTrackAfterSelection else {
+            return false
+        }
+        return isTrackAvailableForImmediateUse(selectedTrack) &&
+            isTrackAvailableForImmediateUse(nextTrackAfterSelection)
+    }
+
     var canCancelMixPlan: Bool {
-        currentMixPlan != nil || isPlanningMix
+        currentMixPlan != nil || isPlanningMix || isAIMixEnabled
     }
 
     var isPlaybackActive: Bool {
@@ -332,6 +421,258 @@ final class BeatDropperAppModel: ObservableObject {
             return "Pending"
         }
         return "Quality \(Int((analysis.analysisConfidence * 100).rounded()))%"
+    }
+
+    func analysis(for imported: ImportedTrack) -> TrackAnalysis? {
+        trackAnalysesById[imported.id]
+    }
+
+    func displayBPM(for imported: ImportedTrack) -> String {
+        guard let bpm = effectiveBPM(
+            forTrackId: imported.id,
+            trackBPM: imported.track.bpm,
+            analysis: trackAnalysesById[imported.id]
+        ) else {
+            return "--"
+        }
+        return String(Int(bpm.rounded()))
+    }
+
+    func displayBPM(for browserTrack: NativeLibraryBrowserTrack) -> String {
+        guard let bpm = effectiveBPM(
+            forTrackId: browserTrack.id,
+            trackBPM: browserTrack.track.bpm,
+            analysis: trackAnalysesById[browserTrack.id]
+        ) else {
+            return "--"
+        }
+        return String(Int(bpm.rounded()))
+    }
+
+    func preparation(for imported: ImportedTrack) -> TrackPreparation {
+        preparation(forTrackId: imported.id)
+    }
+
+    func previewCreativeTrack(at timeSec: Double) {
+        guard let track = creativePreparationTrack else {
+            notice = "Select a track first"
+            return
+        }
+        guard markTrackMissingIfUnavailable(track) else {
+            notice = "Track file is missing. Rescan or relink the source folder."
+            return
+        }
+
+        let safeTime = PlaybackPositionMath.clampedElapsed(timeSec, durationSec: track.track.durationSec)
+        creativePreviewPositionSec = safeTime
+        do {
+            try audioEngine.playPreview(url: track.url, track: track.track, startOffsetSec: safeTime)
+            notice = "Preview \(track.track.title) at \(formatDurationLabel(safeTime))"
+        } catch {
+            notice = error.localizedDescription
+        }
+    }
+
+    func toggleCreativePreviewPlayback() {
+        guard let track = creativePreparationTrack else {
+            notice = "Select a track first"
+            return
+        }
+        guard markTrackMissingIfUnavailable(track) else {
+            notice = "Track file is missing. Rescan or relink the source folder."
+            return
+        }
+
+        do {
+            if isCreativePreviewTrackLoaded, audioEngine.isPlaybackActive {
+                creativePreviewPositionSec = audioEngine.elapsedSec
+                audioEngine.pause()
+                notice = "Preview paused"
+                return
+            }
+
+            if isCreativePreviewTrackLoaded, audioEngine.state == .paused {
+                try audioEngine.resume()
+                notice = "Preview \(track.track.title)"
+                return
+            }
+
+            previewCreativeTrack(at: creativePreviewPositionSec)
+        } catch {
+            notice = error.localizedDescription
+        }
+    }
+
+    func seekCreativePreview(by deltaSec: Double) {
+        let nextPosition = creativePlaybackPositionSec + deltaSec
+        previewCreativeTrack(at: nextPosition)
+    }
+
+    func stopCreativePreview() {
+        if isCreativePreviewTrackLoaded {
+            audioEngine.stop()
+        }
+        creativePreviewPositionSec = 0
+        notice = "Preview stopped"
+    }
+
+    func tapBPMForCreativeTrack() {
+        guard creativePreparationTrack != nil else {
+            notice = "Select a track first"
+            return
+        }
+
+        let now = Date()
+        if let last = bpmTapDates.last, now.timeIntervalSince(last) > 2 {
+            bpmTapDates.removeAll()
+        }
+        bpmTapDates.append(now)
+        bpmTapDates = Array(bpmTapDates.suffix(8))
+        bpmTapCount = bpmTapDates.count
+
+        guard bpmTapDates.count >= 2 else {
+            bpmTapEstimate = nil
+            notice = "Tap BPM"
+            return
+        }
+
+        let intervals = zip(bpmTapDates.dropFirst(), bpmTapDates).map { later, earlier in
+            later.timeIntervalSince(earlier)
+        }
+        let averageInterval = intervals.reduce(0, +) / Double(intervals.count)
+        guard averageInterval > 0 else {
+            return
+        }
+
+        var bpm = 60 / averageInterval
+        while bpm < 90 {
+            bpm *= 2
+        }
+        while bpm > 180 {
+            bpm /= 2
+        }
+        bpmTapEstimate = (bpm * 10).rounded() / 10
+        notice = "Tap BPM \(String(format: "%.1f", bpmTapEstimate ?? bpm))"
+    }
+
+    func applyTappedBPMToCreativeTrack() {
+        guard let track = creativePreparationTrack else {
+            notice = "Select a track first"
+            return
+        }
+        guard let bpmTapEstimate else {
+            notice = "Tap BPM first"
+            return
+        }
+
+        updatePreparation(forTrackId: track.id) { preparation in
+            preparation.bpmOverride = bpmTapEstimate
+        }
+        notice = "Set prep BPM \(String(format: "%.1f", bpmTapEstimate))"
+    }
+
+    func setCreativeBPMOverride(_ bpm: Double) {
+        guard let track = creativePreparationTrack else {
+            notice = "Select a track first"
+            return
+        }
+        guard bpm.isFinite, (40...260).contains(bpm) else {
+            notice = "BPM must be 40-260"
+            return
+        }
+
+        let preparedBPM = (bpm * 10).rounded() / 10
+        updatePreparation(forTrackId: track.id) { preparation in
+            preparation.bpmOverride = preparedBPM
+        }
+        resetBPMTapState()
+        notice = "Set prep BPM \(String(format: "%.1f", preparedBPM))"
+    }
+
+    func clearCreativeBPMOverride() {
+        guard let track = creativePreparationTrack else {
+            notice = "Select a track first"
+            return
+        }
+        updatePreparation(forTrackId: track.id) { preparation in
+            preparation.bpmOverride = nil
+        }
+        resetBPMTapState()
+        notice = "Cleared prep BPM"
+    }
+
+    func addCreativeHotCue(kind: TrackPreparationCueKind) {
+        guard let track = creativePreparationTrack else {
+            notice = "Select a track first"
+            return
+        }
+        let safeTime = PlaybackPositionMath.clampedElapsed(
+            creativePlaybackPositionSec,
+            durationSec: track.track.durationSec
+        )
+        updatePreparation(forTrackId: track.id) { preparation in
+            preparation.hotCues.append(TrackPreparationCue(
+                kind: kind,
+                timeSec: safeTime,
+                label: kind.displayName
+            ))
+        }
+        notice = "Added \(kind.displayName) cue at \(formatDurationLabel(safeTime))"
+    }
+
+    func removeCreativeHotCue(_ cue: TrackPreparationCue) {
+        guard let track = creativePreparationTrack else {
+            return
+        }
+        updatePreparation(forTrackId: track.id) { preparation in
+            preparation.hotCues.removeAll { $0.id == cue.id }
+        }
+        notice = "Removed cue"
+    }
+
+    private func preparation(forTrackId trackId: String) -> TrackPreparation {
+        libraryRecords.first { $0.id == trackId }?.preparation ?? .empty
+    }
+
+    private func effectiveBPM(
+        forTrackId trackId: String,
+        trackBPM: Double?,
+        analysis: TrackAnalysis?
+    ) -> Double? {
+        preparation(forTrackId: trackId).bpmOverride ?? analysis?.bpm ?? trackBPM
+    }
+
+    private func updatePreparation(
+        forTrackId trackId: String,
+        mutate: (inout TrackPreparation) -> Void
+    ) {
+        guard let index = libraryRecords.firstIndex(where: { $0.id == trackId }) else {
+            notice = "Track is not in the library"
+            return
+        }
+
+        var record = libraryRecords[index]
+        var preparation = record.preparation
+        mutate(&preparation)
+        record.preparation = preparation
+        record.updatedAt = timestamp()
+        libraryRecords[index] = record
+        refreshPlaylistFromLibraryRecords()
+        persistLibraryState()
+    }
+
+    private func resetBPMTapState() {
+        bpmTapDates.removeAll()
+        bpmTapEstimate = nil
+        bpmTapCount = 0
+    }
+
+    private func formatDurationLabel(_ seconds: Double) -> String {
+        guard seconds.isFinite else {
+            return "--"
+        }
+        let safeSeconds = max(0, Int(seconds.rounded(.down)))
+        return "\(safeSeconds / 60):\(String(format: "%02d", safeSeconds % 60))"
     }
 
     func newSet() {
@@ -455,6 +796,7 @@ final class BeatDropperAppModel: ObservableObject {
         clearCurrentMixPlan()
         persistLibraryState()
         refreshAnalyses(for: analysisTracks)
+        syncAIMixAfterPlaylistMutation()
 
         let suffix = skippedCount > 0 ? " · \(skippedCount) skipped" : ""
         notice = "Opened \(resolvedTracks.count) tracks from \(sourceName)\(suffix)"
@@ -513,6 +855,7 @@ final class BeatDropperAppModel: ObservableObject {
             selectFirstAvailableTrackIfNeeded()
             persistLibraryState()
             refreshAnalyses(for: tracksForAnalysis)
+            syncAIMixAfterPlaylistMutation()
             notice = missingFolders.isEmpty
                 ? "Rescanned \(totalImported) tracks"
                 : "Rescanned \(totalImported) tracks · \(missingFolders.count) folder missing"
@@ -574,6 +917,7 @@ final class BeatDropperAppModel: ObservableObject {
             persistLibraryState()
             trackAnalysesById[relinked.id] = nil
             refreshAnalyses(for: [relinked])
+            syncAIMixAfterPlaylistMutation()
             notice = "Relinked \(relinked.track.title)"
         }
     }
@@ -623,6 +967,7 @@ final class BeatDropperAppModel: ObservableObject {
             clearCurrentMixPlan()
             persistLibraryState()
             refreshAnalyses(for: resolved)
+            syncAIMixAfterPlaylistMutation()
             notice = "Relinked \(folder.displayName) with \(resolved.count) tracks"
         }
     }
@@ -713,6 +1058,7 @@ final class BeatDropperAppModel: ObservableObject {
         clearCurrentMixPlan()
         persistLibraryState()
         refreshAnalyses(for: resolved)
+        syncAIMixAfterPlaylistMutation()
         notice = "Loaded \(resolved.count) tracks"
     }
 
@@ -727,6 +1073,7 @@ final class BeatDropperAppModel: ObservableObject {
         selectedTrackID = selectedTrackID ?? resolved.first?.id
         persistLibraryState()
         refreshAnalyses(for: resolved)
+        syncAIMixAfterPlaylistMutation()
         notice = "Added \(resolved.count) tracks"
     }
 
@@ -750,6 +1097,7 @@ final class BeatDropperAppModel: ObservableObject {
         clearCurrentMixPlan()
         persistLibraryState()
         refreshAnalyses(for: [imported])
+        syncAIMixAfterPlaylistMutation()
         notice = "Added \(imported.track.title) to set"
     }
 
@@ -762,6 +1110,7 @@ final class BeatDropperAppModel: ObservableObject {
         self.selectedTrackID = playlist.first?.id
         clearCurrentMixPlan()
         persistLibraryState()
+        syncAIMixAfterPlaylistMutation()
         notice = "Removed track"
     }
 
@@ -771,6 +1120,7 @@ final class BeatDropperAppModel: ObservableObject {
         playlist.removeAll()
         selectedTrackID = nil
         clearCurrentMixPlan()
+        isAIMixEnabled = false
         persistLibraryState()
         notice = "Cleared playlist"
     }
@@ -792,6 +1142,7 @@ final class BeatDropperAppModel: ObservableObject {
         playlist.insert(item, at: targetIndex)
         clearCurrentMixPlan()
         persistLibraryState()
+        syncAIMixAfterPlaylistMutation()
     }
 
     func selectUserPlaylist(_ id: String) {
@@ -864,6 +1215,7 @@ final class BeatDropperAppModel: ObservableObject {
         clearCurrentMixPlan()
         persistLibraryState()
         refreshAnalyses(for: restored)
+        syncAIMixAfterPlaylistMutation()
         notice = "Loaded \(selectedUserPlaylist.name)"
     }
 
@@ -994,6 +1346,8 @@ final class BeatDropperAppModel: ObservableObject {
             elapsedSec: currentElapsed,
             currentAnalysis: currentAnalysis,
             nextAnalysis: nextAnalysis,
+            currentPreparation: preparation(forTrackId: current.id),
+            nextPreparation: preparation(forTrackId: next.id),
             settings: plannerSettings
         )
         let validationContext = MixPlanValidationContext(
@@ -1036,12 +1390,42 @@ final class BeatDropperAppModel: ObservableObject {
         }
     }
 
-    func cancelMixPlan() {
+    func setAIMixEnabled(_ enabled: Bool) {
+        if enabled {
+            enableAIMix()
+        } else {
+            disableAIMix(noticeText: "AI mix off")
+        }
+    }
+
+    private func enableAIMix() {
+        selectFirstAvailableTrackIfNeeded()
+        guard playlist.count >= 2, selectedTrack != nil, nextTrackAfterSelection != nil else {
+            isAIMixEnabled = false
+            plannerStatus = "AI mix needs at least two available tracks"
+            notice = plannerStatus
+            return
+        }
+
+        isAIMixEnabled = true
+        plannerStatus = "AI mix active: analyzing playlist"
+        notice = plannerStatus
+        refreshAnalyses(for: playlist)
+        requestAIMixPlanIfReady()
+    }
+
+    private func disableAIMix(noticeText: String) {
+        isAIMixEnabled = false
         stopMixPlanScheduler()
         clearCurrentMixPlan()
         isPlanningMix = false
         activePlannerRequestID = nil
-        notice = "Canceled AI mix plan"
+        plannerStatus = "No AI mix plan"
+        notice = noticeText
+    }
+
+    func cancelMixPlan() {
+        disableAIMix(noticeText: "Canceled AI mix")
     }
 
     private func playAdjacentTrack(offset: Int) {
@@ -1077,6 +1461,7 @@ final class BeatDropperAppModel: ObservableObject {
                 notice = "Playing \(target.track.title)"
             }
             clearCurrentMixPlan()
+            requestAIMixPlanIfReady()
         } catch {
             notice = error.localizedDescription
         }
@@ -1161,6 +1546,7 @@ final class BeatDropperAppModel: ObservableObject {
         audioEngine.setMasterGain(settings.masterGain)
         if invalidatesMixPlan {
             clearCurrentMixPlan()
+            requestAIMixPlanIfReady()
         }
         persistSettings()
     }
@@ -1370,6 +1756,7 @@ final class BeatDropperAppModel: ObservableObject {
                 self.applyAnalysis(analysis, persist: true)
                 self.notice = "Analyzed \(imported.track.title)"
                 self.drainAnalysisQueue()
+                self.requestAIMixPlanIfReady()
             } catch {
                 guard let self else {
                     return
@@ -1378,6 +1765,7 @@ final class BeatDropperAppModel: ObservableObject {
                 self.syncAnalysisQueuePublishedState()
                 self.notice = "Could not analyze \(imported.track.title): \(error.localizedDescription)"
                 self.drainAnalysisQueue()
+                self.requestAIMixPlanIfReady()
             }
         }
     }
@@ -1391,7 +1779,10 @@ final class BeatDropperAppModel: ObservableObject {
 
     private func applyAnalysis(_ analysis: TrackAnalysis, persist: Bool) {
         trackAnalysesById[analysis.trackId] = analysis
-        clearCurrentMixPlan()
+        if currentMixPlanPair?.currentTrackId == analysis.trackId ||
+            currentMixPlanPair?.nextTrackId == analysis.trackId {
+            clearCurrentMixPlan()
+        }
         guard let bpm = analysis.bpm else {
             return
         }
@@ -1423,6 +1814,52 @@ final class BeatDropperAppModel: ObservableObject {
         }
         return cachedRevision.sizeBytes == currentRevision.sizeBytes &&
             cachedRevision.mtimeMs == currentRevision.mtimeMs
+    }
+
+    private func requestAIMixPlanIfReady() {
+        guard isAIMixEnabled else {
+            return
+        }
+        guard !isPlanningMix else {
+            return
+        }
+        guard let current = selectedTrack,
+              let next = nextTrackAfterSelection,
+              isTrackAvailableForImmediateUse(current),
+              isTrackAvailableForImmediateUse(next)
+        else {
+            plannerStatus = "AI mix active: waiting for an available next track"
+            return
+        }
+
+        if currentMixPlanPair == PlannedMixPair(currentTrackId: current.id, nextTrackId: next.id),
+           currentMixPlan != nil {
+            startMixPlanSchedulerIfNeeded()
+            return
+        }
+
+        let currentPairNeedsAnalysis = trackAnalysesById[current.id] == nil ||
+            trackAnalysesById[next.id] == nil
+        if currentPairNeedsAnalysis, queuedAnalysisTrackCount + runningAnalysisTrackCount > 0 {
+            plannerStatus = "AI mix active: analyzing playlist"
+            return
+        }
+
+        requestMixPlanForNextTrack()
+    }
+
+    private func syncAIMixAfterPlaylistMutation() {
+        guard isAIMixEnabled else {
+            return
+        }
+        selectFirstAvailableTrackIfNeeded()
+        guard playlist.count >= 2, selectedTrack != nil, nextTrackAfterSelection != nil else {
+            disableAIMix(noticeText: "AI mix off: need two available tracks")
+            return
+        }
+
+        refreshAnalyses(for: playlist)
+        requestAIMixPlanIfReady()
     }
 
     private func startMixPlanSchedulerIfNeeded() {
@@ -1495,6 +1932,7 @@ final class BeatDropperAppModel: ObservableObject {
             )
             notice = "Executing scheduled AI mix"
             isExecutingScheduledMix = false
+            requestAIMixPlanIfReady()
         } catch {
             isExecutingScheduledMix = false
             stopMixPlanScheduler()
@@ -1573,7 +2011,7 @@ final class BeatDropperAppModel: ObservableObject {
         currentMixPlanPair = nil
         scheduledMixCountdownSec = nil
         if !isPlanningMix {
-            plannerStatus = "No AI mix plan"
+            plannerStatus = isAIMixEnabled ? "AI mix active" : "No AI mix plan"
         }
     }
 }

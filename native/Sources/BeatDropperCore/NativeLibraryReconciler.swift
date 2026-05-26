@@ -98,7 +98,8 @@ public enum NativeLibraryReconciler {
                 missing: false,
                 missingAt: nil,
                 addedAt: existing?.addedAt ?? now,
-                updatedAt: now
+                updatedAt: now,
+                preparation: existing?.preparation ?? .empty
             )
 
             if existing == nil && !orderedIds.contains(resolvedId) {
@@ -182,7 +183,8 @@ public enum NativeLibraryReconciler {
             missing: false,
             missingAt: nil,
             addedAt: existing.addedAt,
-            updatedAt: now
+            updatedAt: now,
+            preparation: existing.preparation
         )
 
         var sourceFolders = existingSourceFolders

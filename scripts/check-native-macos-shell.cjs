@@ -106,7 +106,7 @@ const checks = [
   {
     label: 'playback commands expose DJ shortcuts',
     source: sources.app,
-    pattern: /Button\("Play\/Pause"[\s\S]*keyboardShortcut\(\.space, modifiers: \[\]\)[\s\S]*Button\("Plan Mix With AI"[\s\S]*keyboardShortcut\("m", modifiers: \[\.command\]\)[\s\S]*Button\("Cancel AI Mix Plan"[\s\S]*keyboardShortcut\("\.", modifiers: \[\.command\]\)/
+    pattern: /Button\("Play\/Pause"[\s\S]*keyboardShortcut\(\.space, modifiers: \[\]\)[\s\S]*"Turn Off AI Mix"[\s\S]*"Turn On AI Mix"[\s\S]*keyboardShortcut\("m", modifiers: \[\.command\]\)[\s\S]*Button\("Cancel AI Mix"[\s\S]*keyboardShortcut\("\.", modifiers: \[\.command\]\)/
   },
   {
     label: 'set commands expose playlist editing shortcuts',
@@ -121,7 +121,7 @@ const checks = [
   {
     label: 'workspace commands expose pane shortcuts',
     source: sources.app,
-    pattern: /Button\("Playing Workspace"[\s\S]*keyboardShortcut\("1", modifiers: \[\.command\]\)[\s\S]*Button\("Creative Workspace"[\s\S]*keyboardShortcut\("2", modifiers: \[\.command\]\)[\s\S]*Hide Inspector" : "Show Inspector"[\s\S]*keyboardShortcut\("3", modifiers: \[\.command\]\)/
+    pattern: /Button\("Playing Workspace"[\s\S]*keyboardShortcut\("1", modifiers: \[\.command\]\)[\s\S]*Button\("Creative Workspace"[\s\S]*keyboardShortcut\("2", modifiers: \[\.command\]\)[\s\S]*"Hide Library Browser"[\s\S]*"Show Library Browser"[\s\S]*keyboardShortcut\("2", modifiers: \[\.command, \.shift\]\)[\s\S]*"Hide Inspector"[\s\S]*"Show Inspector"[\s\S]*keyboardShortcut\("3", modifiers: \[\.command\]\)/
   },
   {
     label: 'settings view uses native form sections',

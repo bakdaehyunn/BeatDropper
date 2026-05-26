@@ -91,6 +91,14 @@ final class NativeAudioEngine: ObservableObject {
         try play()
     }
 
+    func playPreview(url: URL, track: Track, startOffsetSec: TimeInterval) throws {
+        stop()
+        try prepare(deck: activeDeck, url: url, track: track, volume: 1, startOffsetSec: startOffsetSec)
+        currentTrack = track
+        queuedTrack = nil
+        try play()
+    }
+
     func play() throws {
         guard activeDeck.file != nil else {
             return

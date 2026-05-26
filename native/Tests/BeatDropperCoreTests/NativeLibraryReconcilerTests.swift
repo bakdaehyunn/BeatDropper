@@ -9,7 +9,11 @@ struct NativeLibraryReconcilerTests {
             sourceFolderPath: "/Music/Old",
             fileFingerprint: "same-song|wav|180000|123456",
             addedAt: "2026-05-25T00:00:00Z",
-            updatedAt: "2026-05-25T00:00:00Z"
+            updatedAt: "2026-05-25T00:00:00Z",
+            preparation: TrackPreparation(
+                bpmOverride: 127.5,
+                hotCues: [TrackPreparationCue(id: "drop", kind: .drop, timeSec: 64, label: "Drop")]
+            )
         )
         let imported = NativeLibraryImportItem(
             track: Track(id: "path-generated-new-id", title: "Same Song", durationSec: 180, format: .wav),
@@ -31,6 +35,8 @@ struct NativeLibraryReconcilerTests {
         #expect(result.trackRecords.first?.filePath == "/Music/New/Same Song.wav")
         #expect(result.trackRecords.first?.track.bpm == 128)
         #expect(result.trackRecords.first?.missing == false)
+        #expect(result.trackRecords.first?.preparation.bpmOverride == 127.5)
+        #expect(result.trackRecords.first?.preparation.hotCues.first?.id == "drop")
         #expect(result.resolvedTrackIdByImportId["path-generated-new-id"] == "stable-track")
     }
 
@@ -114,7 +120,11 @@ struct NativeLibraryReconcilerTests {
             missing: true,
             missingAt: "2026-05-25T00:00:00Z",
             addedAt: "2026-05-24T00:00:00Z",
-            updatedAt: "2026-05-25T00:00:00Z"
+            updatedAt: "2026-05-25T00:00:00Z",
+            preparation: TrackPreparation(
+                bpmOverride: 125.5,
+                hotCues: [TrackPreparationCue(id: "intro", kind: .intro, timeSec: 8, label: "Intro")]
+            )
         )
         let missingFolder = NativeLibrarySourceFolder(
             path: "/Music/Gone",
@@ -149,6 +159,8 @@ struct NativeLibraryReconcilerTests {
         #expect(result.trackRecords.first?.track.bpm == 126)
         #expect(result.trackRecords.first?.missing == false)
         #expect(result.trackRecords.first?.missingAt == nil)
+        #expect(result.trackRecords.first?.preparation.bpmOverride == 125.5)
+        #expect(result.trackRecords.first?.preparation.hotCues.first?.kind == .intro)
         #expect(result.resolvedTrackIdByImportId["replacement-path-id"] == "stable-track")
         #expect(result.sourceFolders.map(\.path) == ["/Music/Relinked"])
         #expect(result.sourceFolders.first?.trackCount == 1)

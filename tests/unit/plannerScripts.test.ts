@@ -183,6 +183,27 @@ describe('planner scripts', () => {
     expect(prompt).toContain('first downbeat 12.00s confidence 0.80');
   });
 
+  it('includes user preparation hints in the codex prompt', () => {
+    const prompt = buildPrompt({
+      ...baseRequest,
+      preparation: {
+        current: {
+          bpmOverride: 123.8,
+          hotCues: [{ kind: 'outro', timeSec: 158, label: 'Prep outro' }]
+        },
+        next: {
+          bpmOverride: null,
+          hotCues: [{ kind: 'drop', timeSec: 32, label: 'Drop' }]
+        }
+      }
+    });
+
+    expect(prompt).toContain('Preparation hints:');
+    expect(prompt).toContain('human intent');
+    expect(prompt).toContain('current: prep BPM 123.8; Prep outro 158.00s');
+    expect(prompt).toContain('next: prep BPM --; Drop 32.00s');
+  });
+
   it('keeps the codex output schema strict-compatible for nullable mix plan fields', () => {
     const mixPlanObjectSchema = plannerSchema.properties.mixPlan.anyOf.find(
       (entry) => entry.type === 'object'
