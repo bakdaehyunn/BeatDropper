@@ -103,6 +103,7 @@ describe('create-analysis-benchmark-fixture script', () => {
     expect(result.status).toBe(0);
     expect(result.stderr).toBe('');
     expect(result.stdout).toContain('Created');
+    expect(result.stdout).toContain('npm run native:benchmark:analysis');
     expect(fixture.kind).toBe('snapshot');
     expect(fixture.title).toBe('Private Fixture A');
     expect(fixture.tags).toEqual(['private', 'house']);

@@ -44,6 +44,30 @@ export interface PlannerPhraseSummary {
   strongestBoundaries: PlannerPhraseBoundarySummary[];
 }
 
+export type PlannerMixWindowKind =
+  | 'intro'
+  | 'first_downbeat'
+  | 'outro'
+  | 'low_energy_break'
+  | 'high_energy_drop'
+  | 'phrase'
+  | 'transient'
+  | 'track_start';
+
+export interface PlannerMixWindowSummary {
+  kind: PlannerMixWindowKind;
+  source: 'analysis' | 'cue' | 'tail_fallback';
+  startSec: number;
+  endSec: number;
+  confidence: number;
+  label: string;
+}
+
+export interface PlannerMixWindowGroupSummary {
+  mixIn: PlannerMixWindowSummary[];
+  mixOut: PlannerMixWindowSummary[];
+}
+
 export interface PlannerBeatStabilitySummary {
   score: number;
   label: 'stable' | 'usable' | 'weak';
@@ -69,6 +93,7 @@ export interface PlannerAnalysisTrackSummary {
   beatStability: PlannerBeatStabilitySummary;
   transients: PlannerTransientSummary;
   phrases: PlannerPhraseSummary;
+  mixWindows: PlannerMixWindowGroupSummary;
 }
 
 export interface PlannerAnalysisSummary {
@@ -161,6 +186,196 @@ const cueToSummary = (cue: CueCandidate): PlannerCueSummary => ({
   label: cue.label
 });
 
+const sourceRank = (source: PlannerMixWindowSummary['source']): number => {
+  if (source === 'cue') {
+    return 0;
+  }
+  if (source === 'analysis') {
+    return 1;
+  }
+  return 2;
+};
+
+const mixWindowSpan = (analysis: TrackAnalysis, durationSec: number): number => {
+  const barIntervals = analysis.barGrid
+    .slice(1)
+    .map((marker, index) => marker.startSec - analysis.barGrid[index].startSec)
+    .filter((interval) => Number.isFinite(interval) && interval > 0.5 && interval < 20);
+  const averageBar = average(barIntervals);
+  if (averageBar !== null) {
+    return clamp(averageBar * 2, 4, 16);
+  }
+  return clamp(durationSec * 0.05, 4, 12);
+};
+
+const buildWindow = (input: {
+  kind: PlannerMixWindowKind;
+  source: PlannerMixWindowSummary['source'];
+  startSec: number;
+  durationSec: number;
+  spanSec: number;
+  confidence: number;
+  label: string;
+}): PlannerMixWindowSummary => {
+  const safeStart = clamp(input.startSec, 0, input.durationSec);
+  return {
+    kind: input.kind,
+    source: input.source,
+    startSec: round(safeStart, 2),
+    endSec: round(clamp(safeStart + input.spanSec, safeStart + 0.25, input.durationSec), 2),
+    confidence: round(clamp(input.confidence, 0, 1)),
+    label: input.label
+  };
+};
+
+const cueWindow = (
+  cue: CueCandidate,
+  durationSec: number,
+  spanSec: number
+): PlannerMixWindowSummary => {
+  const startSec = clamp(cue.startSec, 0, durationSec);
+  const preferredEnd = cue.endSec > cue.startSec ? cue.endSec : cue.startSec + spanSec;
+  return {
+    kind: cue.type,
+    source: 'cue',
+    startSec: round(startSec, 2),
+    endSec: round(clamp(preferredEnd, startSec + 0.25, Math.min(durationSec, startSec + spanSec)), 2),
+    confidence: round(clamp(cue.confidence, 0, 1)),
+    label: cue.label
+  };
+};
+
+const dedupeWindows = (windows: PlannerMixWindowSummary[]): PlannerMixWindowSummary[] => {
+  const sorted = [...windows].sort((left, right) => {
+    const sourceDelta = sourceRank(left.source) - sourceRank(right.source);
+    if (sourceDelta !== 0) {
+      return sourceDelta;
+    }
+    return right.confidence - left.confidence || left.startSec - right.startSec;
+  });
+  const result: PlannerMixWindowSummary[] = [];
+  for (const window of sorted) {
+    if (result.some((item) => Math.abs(item.startSec - window.startSec) < 0.75)) {
+      continue;
+    }
+    result.push(window);
+  }
+  return result;
+};
+
+const buildMixWindows = (
+  analysis: TrackAnalysis,
+  durationSec: number
+): PlannerMixWindowGroupSummary => {
+  if (durationSec <= 0) {
+    return { mixIn: [], mixOut: [] };
+  }
+
+  const spanSec = mixWindowSpan(analysis, durationSec);
+  const earlyLimit = Math.min(48, durationSec * 0.35);
+  const mixIn: PlannerMixWindowSummary[] = [
+    ...analysis.cueCandidates
+      .filter((cue) => cue.type === 'intro' || cue.type === 'first_downbeat')
+      .map((cue) => cueWindow(cue, durationSec, spanSec))
+  ];
+  if (mixIn.length === 0 && analysis.introCueSec !== null) {
+    mixIn.push(buildWindow({
+      kind: 'intro',
+      source: 'cue',
+      startSec: analysis.introCueSec,
+      durationSec,
+      spanSec,
+      confidence: 0.42,
+      label: 'Intro'
+    }));
+  }
+  if (mixIn.length === 0) {
+    mixIn.push(buildWindow({
+      kind: 'track_start',
+      source: 'cue',
+      startSec: 0,
+      durationSec,
+      spanSec,
+      confidence: 0.34,
+      label: 'Track start'
+    }));
+  }
+  mixIn.push(
+    ...analysis.phraseMarkers
+      .filter((marker) => marker.startSec <= earlyLimit)
+      .slice(0, 4)
+      .map((marker) => buildWindow({
+        kind: 'phrase',
+        source: 'analysis',
+        startSec: marker.startSec,
+        durationSec,
+        spanSec,
+        confidence: marker.confidence,
+        label: `Phrase marker ${marker.index + 1}`
+      })),
+    ...analysis.transientMarkers
+      .filter((marker) => marker.timeSec <= earlyLimit && marker.strength >= 0.55)
+      .slice(0, 3)
+      .map((marker) => buildWindow({
+        kind: 'transient',
+        source: 'analysis',
+        startSec: marker.timeSec,
+        durationSec,
+        spanSec: Math.min(spanSec, 6),
+        confidence: marker.strength,
+        label: `Transient ${marker.index + 1}`
+      }))
+  );
+
+  const mixOut: PlannerMixWindowSummary[] = [
+    ...analysis.cueCandidates
+      .filter((cue) => cue.type === 'outro' || cue.type === 'low_energy_break')
+      .map((cue) => cueWindow(cue, durationSec, spanSec))
+  ];
+  if (analysis.outroCueSec !== null) {
+    mixOut.push(buildWindow({
+      kind: 'outro',
+      source: 'cue',
+      startSec: analysis.outroCueSec,
+      durationSec,
+      spanSec,
+      confidence: 0.42,
+      label: 'Outro mix-out'
+    }));
+  }
+  mixOut.push(
+    ...analysis.phraseMarkers
+      .filter((marker) => marker.startSec >= durationSec * 0.45 && marker.startSec <= durationSec * 0.92)
+      .slice(-4)
+      .map((marker) => buildWindow({
+        kind: 'phrase',
+        source: 'analysis',
+        startSec: marker.startSec,
+        durationSec,
+        spanSec,
+        confidence: marker.confidence,
+        label: `Phrase marker ${marker.index + 1}`
+      })),
+    ...analysis.transientMarkers
+      .filter((marker) => marker.timeSec >= durationSec * 0.45 && marker.timeSec <= durationSec * 0.9 && marker.strength >= 0.55)
+      .slice(-3)
+      .map((marker) => buildWindow({
+        kind: 'transient',
+        source: 'analysis',
+        startSec: marker.timeSec,
+        durationSec,
+        spanSec: Math.min(spanSec, 6),
+        confidence: marker.strength,
+        label: `Transient ${marker.index + 1}`
+      }))
+  );
+
+  return {
+    mixIn: dedupeWindows(mixIn).slice(0, 5),
+    mixOut: dedupeWindows(mixOut).slice(0, 5)
+  };
+};
+
 const buildBeatStability = (analysis: TrackAnalysis): PlannerBeatStabilitySummary => {
   const beatGridQuality = clamp(analysis.analysisQuality.beatGrid, 0, 1);
   const transientQuality = clamp(analysis.analysisQuality.transientMarkers, 0, 1);
@@ -227,7 +442,8 @@ export const buildPlannerAnalysisTrackSummary = (
       barCount: analysis.barGrid.length,
       phraseCount: analysis.phraseMarkers.length,
       strongestBoundaries
-    }
+    },
+    mixWindows: buildMixWindows(analysis, durationSec)
   };
 };
 

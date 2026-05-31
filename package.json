@@ -24,6 +24,7 @@
     "test:e2e:all": "npm run test:e2e && npm run test:e2e:electron",
     "native:build": "swift build --package-path native",
     "native:benchmark:analysis": "node scripts/evaluate-native-analysis-benchmarks.cjs",
+    "native:benchmark:analysis:create": "node scripts/create-analysis-benchmark-fixture.cjs",
     "native:benchmark:analysis:gate": "node scripts/evaluate-native-analysis-benchmarks.cjs --allow-expected-grades --write-json native/dist/analysis-benchmark-report.json",
     "native:benchmark:planner": "node scripts/evaluate-native-planner-benchmarks.cjs",
     "native:accessibility:check": "node scripts/check-native-accessibility.cjs",

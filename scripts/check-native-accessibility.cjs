@@ -4,8 +4,16 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const rootDir = path.resolve(__dirname, '..');
-const contentViewPath = path.join(rootDir, 'native', 'Sources', 'BeatDropperNative', 'ContentView.swift');
-const source = fs.readFileSync(contentViewPath, 'utf8');
+const nativeViewDir = path.join(rootDir, 'native', 'Sources', 'BeatDropperNative');
+const sourcePaths = fs.readdirSync(nativeViewDir)
+  .filter((fileName) => /^ContentView(?:\+.+)?\.swift$/.test(fileName))
+  .sort((left, right) => {
+    if (left === 'ContentView.swift') return -1;
+    if (right === 'ContentView.swift') return 1;
+    return left.localeCompare(right);
+  })
+  .map((fileName) => path.join(nativeViewDir, fileName));
+const source = sourcePaths.map((sourcePath) => fs.readFileSync(sourcePath, 'utf8')).join('\n');
 const reportTitle = 'Native Accessibility Check';
 
 const parseArgs = (argv) => {
@@ -107,12 +115,12 @@ const splitPaneMinWidthsFitWindow = () => {
   }
 
   const playingWorkspace = sourceSection(
-    /private var playingWorkspace:/,
-    /private var creativeWorkspace:/
+    /(?:private )?var playingWorkspace:/,
+    /(?:private )?var creativeWorkspace:/
   );
   const creativeWorkspace = sourceSection(
-    /private var creativeWorkspace:/,
-    /private var mixMonitor:/
+    /(?:private )?var creativeWorkspace:/,
+    /(?:private )?var mixMonitor:/
   );
 
   return (
@@ -140,23 +148,23 @@ const checks = [
   },
   {
     label: 'playing monitor exposes a dedicated waveform stack',
-    pattern: /private var playingWaveformStack:[\s\S]*deckWaveformRow[\s\S]*title: "Current"[\s\S]*deckWaveformRow[\s\S]*title: "Next"[\s\S]*accessibilityLabel\("Playing waveform stack"\)/
+    pattern: /(?:private )?var playingWaveformStack:[\s\S]*deckWaveformRow[\s\S]*title: "Current"[\s\S]*deckWaveformRow[\s\S]*title: "Next"[\s\S]*accessibilityLabel\("Playing waveform stack"\)/
   },
   {
     label: 'playing monitor keeps deck and AI status secondary',
-    pattern: /private var playingMonitorMetaBar:[\s\S]*Text\(playingMixStatusText\)[\s\S]*private var playingMixStatusText: String/
+    pattern: /(?:private )?var playingMonitorMetaBar:[\s\S]*Text\(playingMixStatusText\)[\s\S]*(?:private )?var playingMixStatusText: String/
   },
   {
     label: 'playing waveform rows are larger than summary cards',
-    pattern: /private func deckWaveformRow[\s\S]*miniDeckMeter\(meter\)[\s\S]*\.frame\(height: 118\)/
+    pattern: /(?:private )?func deckWaveformRow[\s\S]*miniDeckMeter\(meter\)[\s\S]*\.frame\(height: 118\)/
   },
   {
     label: 'playing waveform strip renders through Canvas',
-    pattern: /private func trackWaveformStrip[\s\S]*waveformRenderPoints\(for: analysis\)[\s\S]*return Canvas/
+    pattern: /(?:private )?func trackWaveformStrip[\s\S]*waveformRenderPoints\(for: analysis\)[\s\S]*return Canvas/
   },
   {
     label: 'playing waveform strip includes bar phrase and transient evidence',
-    pattern: /private func trackWaveformStrip[\s\S]*drawBarMarkers[\s\S]*drawPhraseMarkers[\s\S]*drawTransientMarkers/
+    pattern: /(?:private )?func trackWaveformStrip[\s\S]*drawBarMarkers[\s\S]*drawPhraseMarkers[\s\S]*drawTransientMarkers/
   },
   {
     label: 'waveform renderer prefers detailed DSP data with fallback peaks',
@@ -180,11 +188,15 @@ const checks = [
   },
   {
     label: 'creative workspace includes a track preparation monitor',
-    pattern: /private var creativeTrackMonitor:[\s\S]*accessibilityLabel\("Creative track monitor"\)/
+    pattern: /(?:private )?var creativeTrackMonitor:[\s\S]*accessibilityLabel\("Creative track monitor"\)/
+  },
+  {
+    label: 'creative collection panes keep a separated layout gap',
+    pattern: /(?:private )?var creativeCollectionArea:[\s\S]*HStack\(spacing: 16\)[\s\S]*playlistPane[\s\S]*libraryPane[\s\S]*\.padding\(\.top, 8\)/
   },
   {
     label: 'creative waveform supports click to preview',
-    pattern: /private func creativeWaveform[\s\S]*DragGesture\(minimumDistance: 0\)[\s\S]*model\.previewCreativeTrack[\s\S]*accessibilityLabel\("Creative waveform editor"\)/
+    pattern: /(?:private )?func creativeWaveform[\s\S]*DragGesture\(minimumDistance: 0\)[\s\S]*model\.previewCreativeTrack[\s\S]*accessibilityLabel\("Creative waveform editor"\)/
   },
   {
     label: 'creative preparation exposes BPM tap and hot cue actions',
@@ -231,6 +243,10 @@ const checks = [
     pattern: /accessibilityLabel\("Transport controls"\)/
   },
   {
+    label: 'transport controls use a centered three-zone bar',
+    pattern: /(?:private )?var playbackControlBar:[\s\S]*HStack\(spacing: 12\)[\s\S]*frame\(maxWidth: \.infinity, alignment: \.leading\)[\s\S]*\.frame\(width: model\.workspaceMode == \.playing && !model\.playlist\.isEmpty \? 286 : 142, alignment: \.center\)[\s\S]*transportPositionText[\s\S]*frame\(maxWidth: \.infinity, alignment: \.trailing\)[\s\S]*\.frame\(height: 44\)/
+  },
+  {
     label: 'transport uses AI mix toggle instead of one-shot plan button',
     pattern: /Toggle\([\s\S]*get: \{ model\.isAIMixEnabled \}[\s\S]*set: \{ model\.setAIMixEnabled\(\$0\) \}[\s\S]*Text\("AI Mix"\)[\s\S]*toggleStyle\(AIMixSwitchToggleStyle\(\)\)/
   },
@@ -240,15 +256,15 @@ const checks = [
   },
   {
     label: 'live mix monitor is hidden until a playable surface exists',
-    pattern: /if shouldShowMixMonitor[\s\S]*mixMonitor[\s\S]*private var shouldShowMixMonitor: Bool[\s\S]*model\.workspaceMode == \.playing && hasPlayableSurface/
+    pattern: /if shouldShowMixMonitor[\s\S]*mixMonitor[\s\S]*(?:private )?var shouldShowMixMonitor: Bool[\s\S]*model\.workspaceMode == \.playing && hasPlayableSurface/
   },
   {
     label: 'transport controls sit under live monitor',
-    pattern: /private var playingWorkspace:[\s\S]*playbackControlBar[\s\S]*playlistPane/
+    pattern: /(?:private )?var playingWorkspace:[\s\S]*playbackControlBar[\s\S]*playlistPane/
   },
   {
     label: 'playing shell places controls between monitor and playlist',
-    pattern: /private var mainStage:[\s\S]*mixMonitor[\s\S]*frame\(height: 360\)[\s\S]*workspaceContent[\s\S]*private var playingWorkspace:[\s\S]*playbackControlBar[\s\S]*playlistPane/
+    pattern: /(?:private )?var mainStage:[\s\S]*mixMonitor[\s\S]*frame\(height: 360\)[\s\S]*workspaceContent[\s\S]*(?:private )?var playingWorkspace:[\s\S]*playbackControlBar[\s\S]*playlistPane/
   },
   {
     label: 'root window uses two-axis scroll fallback when content is larger than the window',
@@ -256,7 +272,7 @@ const checks = [
   },
   {
     label: 'playing inspector uses a drawer overlay instead of relayouting workspace',
-    pattern: /ZStack\(alignment: \.trailing\)[\s\S]*if shouldShowInspectorDrawer[\s\S]*inspectorDrawer[\s\S]*private var shouldShowInspectorDrawer: Bool[\s\S]*model\.workspaceMode == \.playing && model\.isInspectorVisible[\s\S]*private var inspectorDrawer:[\s\S]*\.frame\(width: 360\)[\s\S]*accessibilityLabel\("Mix inspector drawer"\)/
+    pattern: /ZStack\(alignment: \.trailing\)[\s\S]*if shouldShowInspectorDrawer[\s\S]*inspectorDrawer[\s\S]*(?:private )?var shouldShowInspectorDrawer: Bool[\s\S]*model\.workspaceMode == \.playing && model\.isInspectorVisible[\s\S]*(?:private )?var inspectorDrawer:[\s\S]*\.frame\(width: 360\)[\s\S]*accessibilityLabel\("Mix inspector drawer"\)/
   },
   {
     label: 'add tracks toolbar action is hidden for empty playlists',
@@ -268,7 +284,7 @@ const checks = [
   },
   {
     label: 'inspector pane has an in-pane close action',
-    pattern: /private var inspectorContent:[\s\S]*centeredIconButton\([\s\S]*systemImage: "xmark"[\s\S]*accessibilityLabel: "Close mix inspector"[\s\S]*model\.isInspectorVisible = false/
+    pattern: /(?:private )?var inspectorContent:[\s\S]*centeredIconButton\([\s\S]*systemImage: "xmark"[\s\S]*accessibilityLabel: "Close mix inspector"[\s\S]*model\.isInspectorVisible = false/
   },
   {
     label: 'playlist empty state replaces table chrome',
@@ -284,7 +300,7 @@ const checks = [
   },
   {
     label: 'saved set actions are hidden until actionable',
-    pattern: /private var shouldShowSavedSetActions: Bool[\s\S]*shouldShowSaveSetAction \|\| model\.canLoadSelectedSet/
+    pattern: /(?:private )?var shouldShowSavedSetActions: Bool[\s\S]*shouldShowSaveSetAction \|\| model\.canLoadSelectedSet/
   },
   {
     label: 'split pane minimum widths fit inside the content canvas or scroll fallback exists',
@@ -317,7 +333,8 @@ writeJsonReport(options.writeJson, {
   generatedAt: new Date().toISOString(),
   kind: 'accessibility-check',
   status,
-  source: relative(contentViewPath),
+  source: sourcePaths.map(relative).join(', '),
+  sources: sourcePaths.map(relative),
   summary: {
     checkCount: checks.length,
     failCount: failures.length

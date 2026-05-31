@@ -119,6 +119,15 @@ describe('buildPlannerAnalysisSummary', () => {
           startSec: 88,
           confidence: 0.82
         }
+      },
+      mixWindows: {
+        mixOut: expect.arrayContaining([
+          expect.objectContaining({
+            kind: 'outro',
+            startSec: 88,
+            confidence: 0.82
+          })
+        ])
       }
     });
     expect(request.analysisSummary?.current?.phrases.strongestBoundaries[0]).toMatchObject({
@@ -133,6 +142,15 @@ describe('buildPlannerAnalysisSummary', () => {
           startSec: 0,
           confidence: 0.8
         }
+      },
+      mixWindows: {
+        mixIn: expect.arrayContaining([
+          expect.objectContaining({
+            kind: 'first_downbeat',
+            startSec: 0,
+            confidence: 0.8
+          })
+        ])
       }
     });
   });

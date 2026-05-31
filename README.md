@@ -2,7 +2,7 @@
 
 BeatDropper is a desktop DJ player for DJs who prepare local tracks and want help keeping the next mix ready.
 
-Load a set, arrange the running order, start playback, and let an AI agent suggest how the next transition should land. BeatDropper keeps the playlist, current track, mix plan, and next track visible in one performance-focused workspace.
+Load a set, arrange the running order, start playback, and let Codex help plan how the next transition should land. BeatDropper keeps the track monitor, playlist, library, preparation tools, and mix plan focused around a native macOS workflow.
 
 ## What It Does
 
@@ -16,17 +16,14 @@ BeatDropper is built around the way a DJ works with prepared music:
 
 The goal is not to replace a DJ's taste. The goal is to give the DJ a focused assistant for transition timing, cue alignment, playlist flow, and repeatable mix decisions.
 
-## Performance Workspace
+## Native Workspaces
 
-The main screen is organized around the set:
+BeatDropper is organized around two native macOS workspaces:
 
-- `Playlist`: the active running order for the set.
-- `Now Playing`: current track, playback state, BPM, length, and outro cue.
-- `AI Mix Plan`: transition window, next-track offset, transition style, confidence, and reasoning.
-- `Next Track`: upcoming track, BPM, length, and intro cue.
-- `Transport`: compact playback controls designed to stay out of the playlist's way.
+- `Playing`: performance mode for the current/next waveform monitor, transport, AI Mix switch, and active playlist.
+- `Creative`: preparation mode for saved sets, library browsing, BPM override, preview playback, and hot cues.
 
-The layout is playlist-first because the set order matters more than a source browser once the music is loaded.
+The library and saved sets are user-taste surfaces. AI is used for transition timing, fade style, tempo-sync strategy, and mix evidence, not for choosing the user's taste.
 
 ## AI Agent Mixer
 
@@ -39,45 +36,47 @@ BeatDropper can ask an AI agent to plan the next transition. The agent receives 
 - whether tempo sync should be applied
 - why that plan makes musical sense
 
-Supported agent profiles:
+Supported planner path:
 
-- `Codex CLI`: uses the user's local Codex CLI login. BeatDropper does not ask for or store a Codex API key.
-- `Local Heuristic`: runs a local deterministic planner for offline/fallback comparison.
-- `Custom CLI`: lets a user point BeatDropper at another agent command that speaks the MixPlan contract.
+- `Codex`: uses the user's local Codex CLI login. BeatDropper does not ask for or store a Codex API key.
 
-The app includes connection checks so selecting an agent is not treated as enough. BeatDropper checks whether the CLI is available, whether it can return a valid MixPlan, and whether login/authentication is required.
+If Codex or the planner bridge is unavailable, BeatDropper falls back to a deterministic local planner so playback can remain usable.
 
 ## How The Technology Works
 
-BeatDropper is an Electron desktop app with a React interface and a local audio engine.
+BeatDropper is now a native macOS app backed by SwiftUI, AppKit, AVAudioEngine, local JSON persistence, and a bundled Node-based planner bridge.
 
-- The renderer provides the DJ workspace, playlist management, transport controls, and planner review UI.
-- The audio engine uses Web Audio for local playback, gain ramps, crossfades, and output metering.
-- The main process owns local file access, track loading, persistent settings, track analysis lookup, and AI agent connection checks.
-- AI planners are external CLI processes that exchange JSON through stdin/stdout.
+- The native app provides the Playing and Creative workspaces, playlist management, library browsing, transport controls, and planner review UI.
+- The audio engine uses AVAudioEngine for local playback, gain ramps, crossfades, and output metering.
+- The native core owns local file access, persistent library state, settings, analysis cache, DSP analysis, planner evidence, and fallback planning.
+- The Codex planner bridge exchanges JSON through stdin/stdout and validates the returned `MixPlan`.
 - MixPlan responses are validated before they can affect playback.
-- API keys are not stored by default. CLI agents use their own official authentication flow or environment configuration.
+- API keys are not stored by default. Codex uses its own official authentication flow.
 
-This keeps BeatDropper focused on DJ workflow and agent harnessing instead of becoming a credential manager.
+The Electron app remains in the repository as a reference path until notarized native release verification and the retirement checks pass.
 
 ## Run Locally
 
 ```bash
 npm install
-npm run dev
+npm run native:run
 ```
 
-For WSLg or GPU-sensitive environments, launch with GPU acceleration disabled:
+Build and package the native app:
 
 ```bash
-BEATDROPPER_DISABLE_GPU=1 BEATDROPPER_OPEN_DEVTOOLS=0 ELECTRON_DISABLE_GPU=1 npm run dev
+npm run native:build
+npm run native:package
 ```
 
 ## Validation
 
 ```bash
-npm run test
-npm run build
-npm run test:e2e
-npm run test:e2e:electron
+npm run native:test
+npm run native:accessibility:check
+npm run native:macos-shell:check
+npm run native:benchmark:analysis
+npm run native:benchmark:planner
 ```
+
+Electron reference validation remains available during migration through the older `test`, `build`, and `test:e2e:*` scripts.

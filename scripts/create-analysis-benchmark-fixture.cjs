@@ -405,7 +405,7 @@ const main = () => {
       `Created ${filePath}`,
       `Fixture id: ${fixture.id}`,
       'Review expected timing values manually before treating this as ground truth.',
-      `Run: node scripts/evaluate-analysis-benchmarks.cjs --no-default-fixtures --fixture-dir ${options.outDir}`
+      `Run: npm run native:benchmark:analysis -- --no-default-fixtures --fixture-dir ${options.outDir}`
     ].join('\n') + '\n'
   );
 };

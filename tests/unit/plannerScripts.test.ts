@@ -2,8 +2,9 @@ import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
 
-const { buildPrompt, plannerSchema } = require('../../scripts/codex-mix-planner.cjs') as {
+const { buildPrompt, buildPromptRequest, plannerSchema } = require('../../scripts/codex-mix-planner.cjs') as {
   buildPrompt: (request: Record<string, unknown>) => string;
+  buildPromptRequest: (request: Record<string, unknown>) => Record<string, unknown>;
   plannerSchema: {
     properties: {
       mixPlan: {
@@ -71,6 +72,75 @@ const baseRequest = {
   }
 };
 
+const buildLargeAnalysis = (trackId: string) => ({
+  schemaVersion: 5,
+  trackId,
+  generatedAt: '2026-05-29T00:00:00Z',
+  source: 'native_dsp',
+  bpm: 124,
+  bpmConfidence: 0.82,
+  beatGridSec: Array.from({ length: 800 }, (_, index) => index * 0.48),
+  downbeatsSec: Array.from({ length: 200 }, (_, index) => index * 1.92),
+  barGrid: Array.from({ length: 200 }, (_, index) => ({
+    index,
+    startSec: index * 1.92,
+    confidence: 0.74
+  })),
+  phraseMarkers: Array.from({ length: 25 }, (_, index) => ({
+    index,
+    startSec: index * 15.36,
+    bars: 8,
+    confidence: 0.7
+  })),
+  introCueSec: 12,
+  outroCueSec: 188,
+  energyProfile: Array.from({ length: 64 }, (_, index) => index / 64),
+  waveformPeaks: Array.from({ length: 240 }, (_, index) => ({
+    startSec: index,
+    endSec: index + 1,
+    peak: 0.4,
+    rms: 0.2
+  })),
+  waveformDetail: Array.from({ length: 1200 }, (_, index) => ({
+    startSec: index * 0.2,
+    endSec: index * 0.2 + 0.2,
+    low: 0.2,
+    mid: 0.3,
+    high: 0.1,
+    peak: 0.5,
+    rms: 0.25
+  })),
+  spectralBands: Array.from({ length: 512 }, (_, index) => ({
+    timeSec: index * 0.1,
+    low: 0.2,
+    mid: 0.3,
+    high: 0.4
+  })),
+  transientMarkers: Array.from({ length: 180 }, (_, index) => ({
+    timeSec: index * 0.5,
+    strength: 0.7,
+    band: 'mid',
+    beatIndex: index
+  })),
+  cueCandidates: [
+    {
+      id: `${trackId}-outro`,
+      type: 'outro',
+      startSec: 188,
+      endSec: 196,
+      confidence: 0.83,
+      label: 'Outro mix-out'
+    }
+  ],
+  analysisConfidence: 0.78,
+  analysisQuality: {
+    beatGrid: 0.82,
+    spectralBands: 0.78,
+    transientMarkers: 0.76
+  },
+  analysisWarnings: ['beat_grid_estimated']
+});
+
 describe('planner scripts', () => {
   it('builds a codex prompt with mode guidance and cue-aware rules', () => {
     const prompt = buildPrompt(baseRequest);
@@ -128,6 +198,19 @@ describe('planner scripts', () => {
             phraseCount: 8,
             barCount: 32,
             strongestBoundaries: [{ startSec: 188, confidence: 0.82 }]
+          },
+          mixWindows: {
+            mixIn: [],
+            mixOut: [
+              {
+                kind: 'outro',
+                source: 'cue',
+                startSec: 188,
+                endSec: 196,
+                confidence: 0.82,
+                label: 'Outro mix-out'
+              }
+            ]
           }
         },
         next: {
@@ -171,6 +254,19 @@ describe('planner scripts', () => {
             phraseCount: 7,
             barCount: 30,
             strongestBoundaries: [{ startSec: 12, confidence: 0.8 }]
+          },
+          mixWindows: {
+            mixIn: [
+              {
+                kind: 'first_downbeat',
+                source: 'cue',
+                startSec: 12,
+                endSec: 20,
+                confidence: 0.8,
+                label: 'First downbeat'
+              }
+            ],
+            mixOut: []
           }
         }
       }
@@ -180,7 +276,77 @@ describe('planner scripts', () => {
     expect(prompt).toContain('current: plannerReady true');
     expect(prompt).toContain('beat stability stable score 0.8');
     expect(prompt).toContain('energy falling early 0.82 mid 0.48 late 0.24');
+    expect(prompt).toContain('out outro 188.00-196.00s confidence 0.82');
+    expect(prompt).toContain('in first_downbeat 12.00-20.00s confidence 0.80');
     expect(prompt).toContain('first downbeat 12.00s confidence 0.80');
+  });
+
+  it('compacts heavy TrackAnalysis arrays before building the codex prompt', () => {
+    const promptRequest = buildPromptRequest({
+      ...baseRequest,
+      analysis: {
+        current: buildLargeAnalysis('current-track'),
+        next: buildLargeAnalysis('next-track')
+      },
+      pairContext: {
+        currentTrackId: 'current-track',
+        nextTrackId: 'next-track',
+        recommendedCandidateId: 'analysis:candidate',
+        readiness: 'ready',
+        candidates: [
+          {
+            id: 'analysis:candidate',
+            currentTrackId: 'current-track',
+            nextTrackId: 'next-track',
+            source: 'analysis',
+            evidenceLevel: 'strong',
+            requiresAnalysisUpgrade: false,
+            currentMixOutSec: 188,
+            nextMixInSec: 12,
+            currentBarIndex: 96,
+            nextBarIndex: 8,
+            phraseAlignment: 'aligned',
+            bpmDelta: 2,
+            tempoSyncRate: 0.98,
+            energyDelta: 0.12,
+            style: 'smooth_blend',
+            score: 0.86,
+            confidence: 0.82,
+            reason: 'analysis phrase candidate'
+          }
+        ]
+      }
+    }) as any;
+
+    expect(promptRequest.analysis.current.waveformDetail).toBeUndefined();
+    expect(promptRequest.analysis.current.waveformPeaks).toBeUndefined();
+    expect(promptRequest.analysis.current.spectralBands).toBeUndefined();
+    expect(promptRequest.analysis.current.transientMarkers).toBeUndefined();
+    expect(promptRequest.analysis.current.beatGridSec).toBeUndefined();
+    expect(promptRequest.analysis.current.counts.waveformDetail).toBe(1200);
+    expect(promptRequest.analysis.current.counts.spectralBands).toBe(512);
+    expect(promptRequest.analysis.current.counts.transientMarkers).toBe(180);
+    expect(promptRequest.analysis.current.cueCandidates).toHaveLength(1);
+    expect(promptRequest.pairContext.candidates).toHaveLength(1);
+  });
+
+  it('keeps the codex prompt bounded for large analysis payloads', () => {
+    const prompt = buildPrompt({
+      ...baseRequest,
+      analysis: {
+        current: buildLargeAnalysis('current-track'),
+        next: buildLargeAnalysis('next-track')
+      }
+    });
+
+    expect(Buffer.byteLength(prompt, 'utf8')).toBeLessThan(30000);
+    expect(prompt).toContain('Raw DSP arrays are intentionally omitted');
+    expect(prompt).toContain('"waveformDetail": 1200');
+    expect(prompt).not.toContain('"waveformDetail": [');
+    expect(prompt).not.toContain('"spectralBands": [');
+    expect(prompt).not.toContain('"transientMarkers": [');
+    expect(prompt).not.toContain('"peak": 0.5');
+    expect(prompt).not.toContain('"strength": 0.7');
   });
 
   it('includes user preparation hints in the codex prompt', () => {

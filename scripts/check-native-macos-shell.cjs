@@ -4,10 +4,22 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const rootDir = path.resolve(__dirname, '..');
-const appPath = path.join(rootDir, 'native', 'Sources', 'BeatDropperNative', 'BeatDropperNativeApp.swift');
-const contentViewPath = path.join(rootDir, 'native', 'Sources', 'BeatDropperNative', 'ContentView.swift');
-const settingsViewPath = path.join(rootDir, 'native', 'Sources', 'BeatDropperNative', 'MixSettingsView.swift');
-const appModelPath = path.join(rootDir, 'native', 'Sources', 'BeatDropperNative', 'BeatDropperAppModel.swift');
+const nativeSourceDir = path.join(rootDir, 'native', 'Sources', 'BeatDropperNative');
+const appPath = path.join(nativeSourceDir, 'BeatDropperNativeApp.swift');
+const contentViewPaths = fs.readdirSync(nativeSourceDir)
+  .filter((fileName) => /^ContentView(?:\+.+)?\.swift$/.test(fileName))
+  .sort((left, right) => {
+    if (left === 'ContentView.swift') return -1;
+    if (right === 'ContentView.swift') return 1;
+    return left.localeCompare(right);
+  })
+  .map((fileName) => path.join(nativeSourceDir, fileName));
+const settingsViewPath = path.join(nativeSourceDir, 'MixSettingsView.swift');
+const appModelPath = path.join(nativeSourceDir, 'BeatDropperAppModel.swift');
+const appModelPaths = fs.readdirSync(nativeSourceDir)
+  .filter((fileName) => /^BeatDropperAppModel(?:\+.+)?\.swift$/.test(fileName))
+  .sort()
+  .map((fileName) => path.join(nativeSourceDir, fileName));
 const fileImporterPath = path.join(rootDir, 'native', 'Sources', 'BeatDropperNative', 'NativeFileImporter.swift');
 const infoPlistPath = path.join(rootDir, 'native', 'Packaging', 'Info.plist');
 const reportTitle = 'Native macOS Shell Check';
@@ -80,9 +92,10 @@ const read = (filePath) => fs.readFileSync(filePath, 'utf8');
 
 const sources = {
   app: read(appPath),
-  contentView: read(contentViewPath),
+  contentView: contentViewPaths.map(read).join('\n'),
   settingsView: read(settingsViewPath),
   appModel: read(appModelPath),
+  appModelAll: appModelPaths.map(read).join('\n'),
   fileImporter: read(fileImporterPath),
   infoPlist: read(infoPlistPath)
 };
@@ -140,13 +153,13 @@ const checks = [
   },
   {
     label: 'Finder-open import uses existing library pipeline',
-    source: sources.appModel,
+    source: sources.appModelAll,
     pattern: /func openFinderItemsAsSet\(_ urls: \[URL\]\)[\s\S]*func openDroppedItemsAsSet\(_ urls: \[URL\]\)[\s\S]*openExternalItemsAsSet[\s\S]*NativeFileImporter\.classifyOpenURLs\(urls\)[\s\S]*replaceSetFromOpenSelection[\s\S]*upsertLibraryRecords[\s\S]*persistLibraryState\(\)[\s\S]*refreshAnalyses/
   },
   {
     label: 'workspace accepts dropped file URLs',
     source: sources.contentView,
-    pattern: /@State private var isFileDropTargeted = false[\s\S]*\.onDrop\(of: \[\.fileURL\], isTargeted: \$isFileDropTargeted\)[\s\S]*loadDroppedFileURLs\(from: providers\)[\s\S]*model\.openDroppedItemsAsSet\(urls\)/
+    pattern: /@State (?:private )?var isFileDropTargeted = false[\s\S]*\.onDrop\(of: \[\.fileURL\], isTargeted: \$isFileDropTargeted\)[\s\S]*loadDroppedFileURLs\(from: providers\)[\s\S]*model\.openDroppedItemsAsSet\(urls\)/
   },
   {
     label: 'drop highlight stays transient and unframed',
@@ -200,9 +213,10 @@ writeJsonReport(options.writeJson, {
   status,
   sources: {
     app: relative(appPath),
-    contentView: relative(contentViewPath),
+    contentViewSources: contentViewPaths.map(relative),
     settingsView: relative(settingsViewPath),
     appModel: relative(appModelPath),
+    appModelSources: appModelPaths.map(relative),
     fileImporter: relative(fileImporterPath),
     infoPlist: relative(infoPlistPath)
   },

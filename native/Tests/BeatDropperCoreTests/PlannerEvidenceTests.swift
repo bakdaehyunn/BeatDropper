@@ -27,6 +27,8 @@ struct PlannerEvidenceTests {
 
         #expect(request.analysisSummary?.current?.plannerReady == true)
         #expect(request.analysisSummary?.next?.cues.firstDownbeat != nil)
+        #expect(request.analysisSummary?.current?.mixWindows.mixOut.contains { $0.kind == .outro } == true)
+        #expect(request.analysisSummary?.next?.mixWindows.mixIn.contains { $0.kind == .firstDownbeat } == true)
         #expect(request.pairContext?.readiness == .ready)
         #expect(request.pairContext?.recommendedCandidateId != nil)
         #expect(request.preparation?.current?.bpmOverride == 123.8)

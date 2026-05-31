@@ -99,6 +99,52 @@ public struct PlannerPhraseSummary: Codable, Hashable, Sendable {
     }
 }
 
+public enum PlannerMixWindowKind: String, Codable, Sendable {
+    case intro
+    case firstDownbeat = "first_downbeat"
+    case outro
+    case lowEnergyBreak = "low_energy_break"
+    case highEnergyDrop = "high_energy_drop"
+    case phrase
+    case transient
+    case trackStart = "track_start"
+}
+
+public struct PlannerMixWindowSummary: Codable, Hashable, Sendable {
+    public var kind: PlannerMixWindowKind
+    public var source: MixCandidateSource
+    public var startSec: Double
+    public var endSec: Double
+    public var confidence: Double
+    public var label: String
+
+    public init(
+        kind: PlannerMixWindowKind,
+        source: MixCandidateSource,
+        startSec: Double,
+        endSec: Double,
+        confidence: Double,
+        label: String
+    ) {
+        self.kind = kind
+        self.source = source
+        self.startSec = startSec
+        self.endSec = endSec
+        self.confidence = confidence
+        self.label = label
+    }
+}
+
+public struct PlannerMixWindowGroupSummary: Codable, Hashable, Sendable {
+    public var mixIn: [PlannerMixWindowSummary]
+    public var mixOut: [PlannerMixWindowSummary]
+
+    public init(mixIn: [PlannerMixWindowSummary], mixOut: [PlannerMixWindowSummary]) {
+        self.mixIn = mixIn
+        self.mixOut = mixOut
+    }
+}
+
 public struct PlannerAnalysisTrackSummary: Codable, Hashable, Sendable {
     public var trackId: String
     public var source: TrackAnalysisSource
@@ -113,6 +159,7 @@ public struct PlannerAnalysisTrackSummary: Codable, Hashable, Sendable {
     public var beatStability: PlannerBeatStabilitySummary
     public var transients: PlannerTransientSummary
     public var phrases: PlannerPhraseSummary
+    public var mixWindows: PlannerMixWindowGroupSummary
 
     public init(
         trackId: String,
@@ -127,7 +174,8 @@ public struct PlannerAnalysisTrackSummary: Codable, Hashable, Sendable {
         energyTrend: PlannerEnergyTrendSummary,
         beatStability: PlannerBeatStabilitySummary,
         transients: PlannerTransientSummary,
-        phrases: PlannerPhraseSummary
+        phrases: PlannerPhraseSummary,
+        mixWindows: PlannerMixWindowGroupSummary
     ) {
         self.trackId = trackId
         self.source = source
@@ -142,6 +190,7 @@ public struct PlannerAnalysisTrackSummary: Codable, Hashable, Sendable {
         self.beatStability = beatStability
         self.transients = transients
         self.phrases = phrases
+        self.mixWindows = mixWindows
     }
 }
 
@@ -468,7 +517,8 @@ public enum PlannerEvidenceBuilder {
                 barCount: analysis.barGrid.count,
                 phraseCount: analysis.phraseMarkers.count,
                 strongestBoundaries: Array(strongestBoundaries)
-            )
+            ),
+            mixWindows: buildMixWindows(analysis: analysis, durationSec: durationSec)
         )
     }
 
@@ -605,6 +655,211 @@ public enum PlannerEvidenceBuilder {
         return deduped.isEmpty
             ? [CandidatePoint(timeSec: 0, source: .cue, evidenceLevel: .partial, confidence: 0.36, reason: "track start")]
             : deduped
+    }
+
+    private static func buildMixWindows(
+        analysis: TrackAnalysis,
+        durationSec: Double
+    ) -> PlannerMixWindowGroupSummary {
+        guard durationSec > 0 else {
+            return PlannerMixWindowGroupSummary(mixIn: [], mixOut: [])
+        }
+
+        let spanSec = mixWindowSpan(analysis: analysis, durationSec: durationSec)
+        let earlyLimit = min(48, durationSec * 0.35)
+
+        var mixIn = analysis.cueCandidates
+            .filter { $0.type == .intro || $0.type == .firstDownbeat }
+            .map { cueWindow(cue: $0, durationSec: durationSec, spanSec: spanSec, source: .cue) }
+        if mixIn.isEmpty, let introCueSec = analysis.introCueSec {
+            mixIn.append(window(
+                kind: .intro,
+                source: .cue,
+                startSec: introCueSec,
+                durationSec: durationSec,
+                spanSec: spanSec,
+                confidence: 0.42,
+                label: "Intro"
+            ))
+        }
+        if mixIn.isEmpty {
+            mixIn.append(window(
+                kind: .trackStart,
+                source: .cue,
+                startSec: 0,
+                durationSec: durationSec,
+                spanSec: spanSec,
+                confidence: 0.34,
+                label: "Track start"
+            ))
+        }
+        mixIn += analysis.phraseMarkers
+            .filter { $0.startSec <= earlyLimit }
+            .prefix(4)
+            .map {
+                window(
+                    kind: .phrase,
+                    source: .analysis,
+                    startSec: $0.startSec,
+                    durationSec: durationSec,
+                    spanSec: spanSec,
+                    confidence: $0.confidence,
+                    label: "Phrase marker \($0.index + 1)"
+                )
+            }
+        mixIn += analysis.transientMarkers
+            .filter { $0.timeSec <= earlyLimit && $0.strength >= 0.55 }
+            .prefix(3)
+            .map {
+                window(
+                    kind: .transient,
+                    source: .analysis,
+                    startSec: $0.timeSec,
+                    durationSec: durationSec,
+                    spanSec: min(spanSec, 6),
+                    confidence: $0.strength,
+                    label: "Transient \($0.index + 1)"
+                )
+            }
+
+        var mixOut = analysis.cueCandidates
+            .filter { $0.type == .outro || $0.type == .lowEnergyBreak }
+            .map { cueWindow(cue: $0, durationSec: durationSec, spanSec: spanSec, source: .cue) }
+        if let outroCueSec = analysis.outroCueSec {
+            mixOut.append(window(
+                kind: .outro,
+                source: .cue,
+                startSec: outroCueSec,
+                durationSec: durationSec,
+                spanSec: spanSec,
+                confidence: 0.42,
+                label: "Outro mix-out"
+            ))
+        }
+        mixOut += analysis.phraseMarkers
+            .filter { $0.startSec >= durationSec * 0.45 && $0.startSec <= durationSec * 0.92 }
+            .suffix(4)
+            .map {
+                window(
+                    kind: .phrase,
+                    source: .analysis,
+                    startSec: $0.startSec,
+                    durationSec: durationSec,
+                    spanSec: spanSec,
+                    confidence: $0.confidence,
+                    label: "Phrase marker \($0.index + 1)"
+                )
+            }
+        mixOut += analysis.transientMarkers
+            .filter { $0.timeSec >= durationSec * 0.45 && $0.timeSec <= durationSec * 0.9 && $0.strength >= 0.55 }
+            .suffix(3)
+            .map {
+                window(
+                    kind: .transient,
+                    source: .analysis,
+                    startSec: $0.timeSec,
+                    durationSec: durationSec,
+                    spanSec: min(spanSec, 6),
+                    confidence: $0.strength,
+                    label: "Transient \($0.index + 1)"
+                )
+            }
+
+        return PlannerMixWindowGroupSummary(
+            mixIn: dedupeWindows(mixIn).prefix(5).map { $0 },
+            mixOut: dedupeWindows(mixOut).prefix(5).map { $0 }
+        )
+    }
+
+    private static func cueWindow(
+        cue: CueCandidate,
+        durationSec: Double,
+        spanSec: Double,
+        source: MixCandidateSource
+    ) -> PlannerMixWindowSummary {
+        let kind: PlannerMixWindowKind
+        switch cue.type {
+        case .intro:
+            kind = .intro
+        case .firstDownbeat:
+            kind = .firstDownbeat
+        case .outro:
+            kind = .outro
+        case .lowEnergyBreak:
+            kind = .lowEnergyBreak
+        case .highEnergyDrop:
+            kind = .highEnergyDrop
+        }
+
+        let startSec = clamped(cue.startSec, min: 0, max: durationSec)
+        let preferredEnd = cue.endSec > cue.startSec ? cue.endSec : cue.startSec + spanSec
+        return PlannerMixWindowSummary(
+            kind: kind,
+            source: source,
+            startSec: rounded(startSec, digits: 2),
+            endSec: rounded(clamped(preferredEnd, min: startSec + 0.25, max: min(durationSec, startSec + spanSec)), digits: 2),
+            confidence: rounded(clamped(cue.confidence, min: 0, max: 1)),
+            label: cue.label
+        )
+    }
+
+    private static func window(
+        kind: PlannerMixWindowKind,
+        source: MixCandidateSource,
+        startSec: Double,
+        durationSec: Double,
+        spanSec: Double,
+        confidence: Double,
+        label: String
+    ) -> PlannerMixWindowSummary {
+        let safeStart = clamped(startSec, min: 0, max: durationSec)
+        return PlannerMixWindowSummary(
+            kind: kind,
+            source: source,
+            startSec: rounded(safeStart, digits: 2),
+            endSec: rounded(clamped(safeStart + spanSec, min: safeStart + 0.25, max: durationSec), digits: 2),
+            confidence: rounded(clamped(confidence, min: 0, max: 1)),
+            label: label
+        )
+    }
+
+    private static func dedupeWindows(_ windows: [PlannerMixWindowSummary]) -> [PlannerMixWindowSummary] {
+        let sorted = windows.sorted {
+            if mixWindowSourceRank($0.source) == mixWindowSourceRank($1.source) {
+                if $0.confidence != $1.confidence {
+                    return $0.confidence > $1.confidence
+                }
+                return $0.startSec < $1.startSec
+            }
+            return mixWindowSourceRank($0.source) < mixWindowSourceRank($1.source)
+        }
+        var result: [PlannerMixWindowSummary] = []
+        for candidate in sorted where !result.contains(where: { abs($0.startSec - candidate.startSec) < 0.75 }) {
+            result.append(candidate)
+        }
+        return result
+    }
+
+    private static func mixWindowSourceRank(_ source: MixCandidateSource) -> Int {
+        switch source {
+        case .cue:
+            return 0
+        case .analysis:
+            return 1
+        case .tailFallback:
+            return 2
+        }
+    }
+
+    private static func mixWindowSpan(analysis: TrackAnalysis, durationSec: Double) -> Double {
+        let barStarts = analysis.barGrid.map(\.startSec)
+        let barIntervals = zip(barStarts, barStarts.dropFirst())
+            .map { $1 - $0 }
+            .filter { $0.isFinite && $0 > 0.5 && $0 < 20 }
+        if let averageBar = average(barIntervals) {
+            return clamped(averageBar * 2, min: 4, max: 16)
+        }
+        return clamped(durationSec * 0.05, min: 4, max: 12)
     }
 
     private static func dedupePoints(_ points: [CandidatePoint]) -> [CandidatePoint] {

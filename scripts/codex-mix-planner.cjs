@@ -123,6 +123,115 @@ const buildModeGuidance = (mode) => {
   ].join('\n');
 };
 
+const arrayCount = (value) => (Array.isArray(value) ? value.length : 0);
+
+const compactCueCandidate = (cue) => {
+  if (!cue || typeof cue !== 'object') {
+    return cue ?? null;
+  }
+
+  return {
+    id: cue.id,
+    type: cue.type,
+    startSec: cue.startSec,
+    endSec: cue.endSec,
+    confidence: cue.confidence,
+    label: cue.label
+  };
+};
+
+const compactAnalysisForPrompt = (analysis) => {
+  if (!analysis || typeof analysis !== 'object') {
+    return null;
+  }
+
+  return {
+    schemaVersion: analysis.schemaVersion,
+    trackId: analysis.trackId,
+    generatedAt: analysis.generatedAt,
+    source: analysis.source,
+    bpm: analysis.bpm,
+    bpmConfidence: analysis.bpmConfidence,
+    introCueSec: analysis.introCueSec,
+    outroCueSec: analysis.outroCueSec,
+    analysisConfidence: analysis.analysisConfidence,
+    analysisQuality: analysis.analysisQuality,
+    analysisWarnings: analysis.analysisWarnings,
+    cueCandidates: Array.isArray(analysis.cueCandidates)
+      ? analysis.cueCandidates.slice(0, 8).map(compactCueCandidate)
+      : [],
+    counts: {
+      beatGridSec: arrayCount(analysis.beatGridSec),
+      downbeatsSec: arrayCount(analysis.downbeatsSec),
+      barGrid: arrayCount(analysis.barGrid),
+      phraseMarkers: arrayCount(analysis.phraseMarkers),
+      energyProfile: arrayCount(analysis.energyProfile),
+      waveformPeaks: arrayCount(analysis.waveformPeaks),
+      waveformDetail: arrayCount(analysis.waveformDetail),
+      spectralBands: arrayCount(analysis.spectralBands),
+      transientMarkers: arrayCount(analysis.transientMarkers)
+    }
+  };
+};
+
+const compactCandidateForPrompt = (candidate) => {
+  if (!candidate || typeof candidate !== 'object') {
+    return candidate ?? null;
+  }
+
+  return {
+    id: candidate.id,
+    currentTrackId: candidate.currentTrackId,
+    nextTrackId: candidate.nextTrackId,
+    source: candidate.source,
+    evidenceLevel: candidate.evidenceLevel,
+    requiresAnalysisUpgrade: candidate.requiresAnalysisUpgrade,
+    currentMixOutSec: candidate.currentMixOutSec,
+    nextMixInSec: candidate.nextMixInSec,
+    currentBarIndex: candidate.currentBarIndex,
+    nextBarIndex: candidate.nextBarIndex,
+    phraseAlignment: candidate.phraseAlignment,
+    bpmDelta: candidate.bpmDelta,
+    tempoSyncRate: candidate.tempoSyncRate,
+    energyDelta: candidate.energyDelta,
+    style: candidate.style,
+    score: candidate.score,
+    confidence: candidate.confidence,
+    reason: candidate.reason
+  };
+};
+
+const compactPairContextForPrompt = (pairContext) => {
+  if (!pairContext || typeof pairContext !== 'object') {
+    return null;
+  }
+
+  return {
+    currentTrackId: pairContext.currentTrackId,
+    nextTrackId: pairContext.nextTrackId,
+    recommendedCandidateId: pairContext.recommendedCandidateId,
+    readiness: pairContext.readiness,
+    candidates: Array.isArray(pairContext.candidates)
+      ? pairContext.candidates.slice(0, 8).map(compactCandidateForPrompt)
+      : []
+  };
+};
+
+const buildPromptRequest = (request) => ({
+  schemaVersion: request?.schemaVersion,
+  currentTrack: request?.currentTrack,
+  nextTrack: request?.nextTrack,
+  currentPlayback: request?.currentPlayback,
+  analysis: {
+    current: compactAnalysisForPrompt(request?.analysis?.current),
+    next: compactAnalysisForPrompt(request?.analysis?.next)
+  },
+  analysisSummary: request?.analysisSummary ?? null,
+  pairContext: compactPairContextForPrompt(request?.pairContext),
+  preparation: request?.preparation ?? null,
+  settings: request?.settings
+});
+
 const buildAnalysisHints = (request) => {
   const currentSummary = request?.analysisSummary?.current;
   const nextSummary = request?.analysisSummary?.next;
@@ -133,6 +242,10 @@ const buildAnalysisHints = (request) => {
     const formatCue = (label, cue) =>
       cue && typeof cue.startSec === 'number'
         ? `${label} ${cue.startSec.toFixed(2)}s confidence ${typeof cue.confidence === 'number' ? cue.confidence.toFixed(2) : '--'}`
+        : null;
+    const formatWindow = (direction, window) =>
+      window && typeof window.startSec === 'number'
+        ? `${direction} ${window.kind ?? 'window'} ${window.startSec.toFixed(2)}-${typeof window.endSec === 'number' ? window.endSec.toFixed(2) : '--'}s confidence ${typeof window.confidence === 'number' ? window.confidence.toFixed(2) : '--'}`
         : null;
     const formatTrackSummary = (label, summary) => {
       if (!summary) {
@@ -156,6 +269,15 @@ const buildAnalysisHints = (request) => {
       const phrases = summary.phrases
         ? `phrases ${summary.phrases.phraseCount ?? 0}, bars ${summary.phrases.barCount ?? 0}, strongest ${Array.isArray(summary.phrases.strongestBoundaries) ? summary.phrases.strongestBoundaries.map((boundary) => `${boundary.startSec}s/${boundary.confidence}`).join(', ') : 'none'}`
         : 'phrases unknown';
+      const mixInWindows = Array.isArray(summary.mixWindows?.mixIn)
+        ? summary.mixWindows.mixIn.slice(0, 3).map((window) => formatWindow('in', window)).filter(Boolean)
+        : [];
+      const mixOutWindows = Array.isArray(summary.mixWindows?.mixOut)
+        ? summary.mixWindows.mixOut.slice(0, 3).map((window) => formatWindow('out', window)).filter(Boolean)
+        : [];
+      const windows = mixInWindows.length > 0 || mixOutWindows.length > 0
+        ? `mix windows ${[...mixOutWindows, ...mixInWindows].join('; ')}`
+        : 'mix windows none';
       const quality = summary.analysisQuality
         ? `quality beat ${summary.analysisQuality.beatGrid ?? 0}, spectral ${summary.analysisQuality.spectralBands ?? 0}, transient ${summary.analysisQuality.transientMarkers ?? 0}`
         : 'quality unknown';
@@ -172,13 +294,14 @@ const buildAnalysisHints = (request) => {
         energy,
         transients,
         phrases,
+        windows,
         warnings
       ].join('; ');
     };
 
     return [
       'Analysis hints:',
-      'Prefer analysisSummary and pairContext for decisions; use raw TrackAnalysis arrays only as fallback detail.',
+      'Prefer analysisSummary and pairContext for decisions; raw DSP arrays are intentionally omitted from this prompt.',
       formatTrackSummary('current', currentSummary),
       formatTrackSummary('next', nextSummary)
     ].join('\n');
@@ -186,15 +309,21 @@ const buildAnalysisHints = (request) => {
 
   const currentHints = [];
   const nextHints = [];
+  const currentCounts = current?.counts ?? {};
+  const nextCounts = next?.counts ?? {};
 
   if (typeof current?.outroCueSec === 'number') {
     currentHints.push(`current outro cue ${current.outroCueSec.toFixed(2)}s`);
   }
   if (Array.isArray(current?.downbeatsSec) && current.downbeatsSec.length > 0) {
     currentHints.push(`current downbeats ${current.downbeatsSec.length}`);
+  } else if (currentCounts.downbeatsSec > 0) {
+    currentHints.push(`current downbeats ${currentCounts.downbeatsSec}`);
   }
   if (Array.isArray(current?.beatGridSec) && current.beatGridSec.length > 0) {
     currentHints.push(`current beat-grid points ${current.beatGridSec.length}`);
+  } else if (currentCounts.beatGridSec > 0) {
+    currentHints.push(`current beat-grid points ${currentCounts.beatGridSec}`);
   }
 
   if (typeof next?.introCueSec === 'number') {
@@ -202,13 +331,18 @@ const buildAnalysisHints = (request) => {
   }
   if (Array.isArray(next?.downbeatsSec) && next.downbeatsSec.length > 0) {
     nextHints.push(`next downbeats ${next.downbeatsSec.length}`);
+  } else if (nextCounts.downbeatsSec > 0) {
+    nextHints.push(`next downbeats ${nextCounts.downbeatsSec}`);
   }
   if (Array.isArray(next?.beatGridSec) && next.beatGridSec.length > 0) {
     nextHints.push(`next beat-grid points ${next.beatGridSec.length}`);
+  } else if (nextCounts.beatGridSec > 0) {
+    nextHints.push(`next beat-grid points ${nextCounts.beatGridSec}`);
   }
 
   return [
     'Analysis hints:',
+    'Raw DSP arrays are intentionally omitted from this prompt; use compact cue/count evidence.',
     `- ${currentHints.length > 0 ? currentHints.join(', ') : 'current track has limited cue/downbeat data'}`,
     `- ${nextHints.length > 0 ? nextHints.join(', ') : 'next track has limited cue/downbeat data'}`
   ].join('\n');
@@ -279,7 +413,8 @@ const buildPreparationHints = (request) => {
 };
 
 const buildPrompt = (request) => {
-  const requestJson = JSON.stringify(request, null, 2);
+  const promptRequest = buildPromptRequest(request);
+  const requestJson = JSON.stringify(promptRequest, null, 2);
   return [
     'You are an AI DJ planner for BeatDropper.',
     'Return only a JSON object that matches the provided schema.',
@@ -306,13 +441,13 @@ const buildPrompt = (request) => {
     '- Use tempoSync only when BPM values are present and the chosen playback-rate ratio still sounds plausible',
     '- tempoSync.targetRate is a playback-rate ratio from 0.85 to 1.15, not a BPM value; use currentBpm / nextBpm when syncing the next track to the current track',
     '',
-    buildModeGuidance(request?.settings?.aiDjMode),
+    buildModeGuidance(promptRequest?.settings?.aiDjMode),
     '',
-    buildAnalysisHints(request),
+    buildAnalysisHints(promptRequest),
     '',
-    buildPairContextHints(request),
+    buildPairContextHints(promptRequest),
     '',
-    buildPreparationHints(request),
+    buildPreparationHints(promptRequest),
     '',
     'Planner request JSON:',
     requestJson
@@ -392,6 +527,7 @@ module.exports = {
   buildAnalysisHints,
   buildPairContextHints,
   buildPreparationHints,
+  buildPromptRequest,
   buildPrompt,
   plannerSchema
 };
