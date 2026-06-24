@@ -151,6 +151,7 @@ public struct PlayerSettings: Codable, Hashable, Sendable {
     public var plannerCommand: String
     public var plannerArgs: [String]
     public var plannerTimeoutMs: Double
+    public var mixReviewArtifactFolderPath: String?
 
     public init(
         fadeDurationSec: Double = 8,
@@ -165,7 +166,8 @@ public struct PlayerSettings: Codable, Hashable, Sendable {
         activeAiAgentProfileId: String = "codex",
         plannerCommand: String = "node",
         plannerArgs: [String] = ["scripts/codex-mix-planner.cjs"],
-        plannerTimeoutMs: Double = 20_000
+        plannerTimeoutMs: Double = 20_000,
+        mixReviewArtifactFolderPath: String? = nil
     ) {
         self.fadeDurationSec = fadeDurationSec
         self.masterGain = masterGain
@@ -180,5 +182,6 @@ public struct PlayerSettings: Codable, Hashable, Sendable {
         self.plannerCommand = plannerCommand
         self.plannerArgs = plannerArgs
         self.plannerTimeoutMs = plannerTimeoutMs
+        self.mixReviewArtifactFolderPath = mixReviewArtifactFolderPath
     }
 }

@@ -42,17 +42,20 @@ public struct NativePlannerBenchmarkCase: Sendable {
     public var request: PlannerRequest
     public var validationContext: MixPlanValidationContext
     public var expectation: NativePlannerBenchmarkExpectation
+    public var aiPlannerPlan: MixPlan?
 
     public init(
         name: String,
         request: PlannerRequest,
         validationContext: MixPlanValidationContext,
-        expectation: NativePlannerBenchmarkExpectation
+        expectation: NativePlannerBenchmarkExpectation,
+        aiPlannerPlan: MixPlan? = nil
     ) {
         self.name = name
         self.request = request
         self.validationContext = validationContext
         self.expectation = expectation
+        self.aiPlannerPlan = aiPlannerPlan
     }
 }
 
@@ -60,6 +63,13 @@ public struct NativePlannerBenchmarkResult: Sendable {
     public var name: String
     public var grade: NativePlannerBenchmarkGrade
     public var plan: MixPlan?
+    public var selectedPlan: MixPlan?
+    public var rejectedPlan: MixPlan?
+    public var selectedPlanRole: MixPlanAcceptanceSelectedRole?
+    public var aiPlannerPlan: MixPlan?
+    public var acceptanceDecision: MixPlanAcceptanceDecision?
+    public var qualityComparisons: [NativePlannerQualityComparison]
+    public var plannerDiagnostics: [MixReviewPlannerDiagnosticSummary]
     public var failures: [String]
     public var warnings: [String]
 
@@ -67,14 +77,62 @@ public struct NativePlannerBenchmarkResult: Sendable {
         name: String,
         grade: NativePlannerBenchmarkGrade,
         plan: MixPlan?,
+        selectedPlan: MixPlan? = nil,
+        rejectedPlan: MixPlan? = nil,
+        selectedPlanRole: MixPlanAcceptanceSelectedRole? = nil,
+        aiPlannerPlan: MixPlan? = nil,
+        acceptanceDecision: MixPlanAcceptanceDecision? = nil,
+        qualityComparisons: [NativePlannerQualityComparison] = [],
+        plannerDiagnostics: [MixReviewPlannerDiagnosticSummary] = [],
         failures: [String],
         warnings: [String]
     ) {
         self.name = name
         self.grade = grade
         self.plan = plan
+        self.selectedPlan = selectedPlan
+        self.rejectedPlan = rejectedPlan
+        self.selectedPlanRole = selectedPlanRole
+        self.aiPlannerPlan = aiPlannerPlan
+        self.acceptanceDecision = acceptanceDecision
+        self.qualityComparisons = qualityComparisons
+        self.plannerDiagnostics = plannerDiagnostics
         self.failures = failures
         self.warnings = warnings
+    }
+}
+
+public struct NativePlannerQualityComparison: Sendable {
+    public var role: String
+    public var candidateId: String?
+    public var source: MixCandidateSource?
+    public var isSelected: Bool
+    public var style: MixStyle
+    public var transitionStartSec: Double
+    public var transitionEndSec: Double
+    public var nextTrackStartOffsetSec: Double
+    public var renderedQuality: RenderedTransitionQualityReport
+
+    public init(
+        role: String,
+        candidateId: String?,
+        source: MixCandidateSource?,
+        isSelected: Bool,
+        style: MixStyle,
+        transitionStartSec: Double,
+        transitionEndSec: Double,
+        nextTrackStartOffsetSec: Double,
+        renderedQuality: RenderedTransitionQualityReport
+    ) {
+        self.role = role
+        self.candidateId = candidateId
+        self.source = source
+        self.isSelected = isSelected
+        self.style = style
+        self.transitionStartSec = transitionStartSec
+        self.transitionEndSec = transitionEndSec
+        self.nextTrackStartOffsetSec = nextTrackStartOffsetSec
+        self.renderedQuality = renderedQuality
     }
 }
 
@@ -168,6 +226,30 @@ public enum NativePlannerBenchmarkSuite {
         if plan.reasoningSummary?.isEmpty != false {
             warnings.append("plan has no reasoning summary")
         }
+        let aiPlannerPlan = benchmark.aiPlannerPlan
+            .flatMap { MixPlanValidator.validateAndClamp($0, context: benchmark.validationContext).plan }
+        let qualityComparisons = buildQualityComparisons(
+            localFallbackPlan: plan,
+            aiPlannerPlan: aiPlannerPlan,
+            benchmark: benchmark,
+            selectedRole: nil
+        )
+        let acceptanceDecision = buildAcceptanceDecision(
+            localFallbackPlan: plan,
+            aiPlannerPlan: aiPlannerPlan,
+            qualityComparisons: qualityComparisons,
+            benchmark: benchmark
+        )
+        let selectedRole = acceptanceDecision?.selectedRole ?? .localFallback
+        let selectedPlan = selectedRole == .aiPlanner ? aiPlannerPlan : plan
+        let rejectedPlan = selectedRole == .aiPlanner ? plan : aiPlannerPlan
+        let selectedQualityComparisons = buildQualityComparisons(
+            localFallbackPlan: plan,
+            aiPlannerPlan: aiPlannerPlan,
+            benchmark: benchmark,
+            selectedRole: selectedRole
+        )
+        let plannerDiagnostics = acceptanceDecision.map { [$0.diagnostics] } ?? []
 
         let grade: NativePlannerBenchmarkGrade = failures.isEmpty
             ? (warnings.isEmpty ? .pass : .warn)
@@ -176,9 +258,261 @@ public enum NativePlannerBenchmarkSuite {
             name: benchmark.name,
             grade: grade,
             plan: plan,
+            selectedPlan: selectedPlan,
+            rejectedPlan: rejectedPlan,
+            selectedPlanRole: selectedRole,
+            aiPlannerPlan: aiPlannerPlan,
+            acceptanceDecision: acceptanceDecision,
+            qualityComparisons: selectedQualityComparisons,
+            plannerDiagnostics: plannerDiagnostics,
             failures: failures,
             warnings: warnings
         )
+    }
+
+    private static func buildAcceptanceDecision(
+        localFallbackPlan: MixPlan,
+        aiPlannerPlan: MixPlan?,
+        qualityComparisons: [NativePlannerQualityComparison],
+        benchmark: NativePlannerBenchmarkCase
+    ) -> MixPlanAcceptanceDecision? {
+        guard let aiPlannerPlan,
+              let aiQuality = qualityComparisons.first(where: { $0.role == "ai_planner" })?.renderedQuality,
+              let fallbackQuality = qualityComparisons.first(where: { $0.role == "local_fallback" })?.renderedQuality
+        else {
+            return nil
+        }
+
+        return MixPlanAcceptanceGate.decide(
+            currentTrackId: benchmark.request.currentTrack.id,
+            nextTrackId: benchmark.request.nextTrack.id,
+            aiPlan: diagnosticPlan(source: "ai_planner", plan: aiPlannerPlan, quality: aiQuality),
+            fallbackPlan: diagnosticPlan(source: "local_fallback", plan: localFallbackPlan, quality: fallbackQuality)
+        )
+    }
+
+    private static func diagnosticPlan(
+        source: String,
+        plan: MixPlan,
+        quality: RenderedTransitionQualityReport
+    ) -> MixReviewExportPlan {
+        MixReviewExportPlan(
+            source: source,
+            reason: plan.reasoningSummary,
+            transitionStartSec: plan.transitionStartSec,
+            transitionEndSec: plan.transitionEndSec,
+            nextTrackStartOffsetSec: plan.nextTrackStartOffsetSec,
+            style: plan.style,
+            confidence: plan.confidence,
+            candidateId: plan.candidateId,
+            renderedQuality: quality
+        )
+    }
+
+    private static func buildQualityComparisons(
+        localFallbackPlan: MixPlan,
+        aiPlannerPlan: MixPlan?,
+        benchmark: NativePlannerBenchmarkCase,
+        selectedRole: MixPlanAcceptanceSelectedRole?
+    ) -> [NativePlannerQualityComparison] {
+        let currentTrack = Track(
+            id: benchmark.request.currentTrack.id,
+            title: benchmark.request.currentTrack.title,
+            durationSec: benchmark.request.currentTrack.durationSec,
+            format: .wav,
+            bpm: benchmark.request.currentTrack.bpm
+        )
+        let nextTrack = Track(
+            id: benchmark.request.nextTrack.id,
+            title: benchmark.request.nextTrack.title,
+            durationSec: benchmark.request.nextTrack.durationSec,
+            format: .wav,
+            bpm: benchmark.request.nextTrack.bpm
+        )
+        let candidatesById = (benchmark.request.pairContext?.candidates ?? [])
+            .reduce(into: [String: MixCandidate]()) { values, candidate in
+                values[candidate.id] = values[candidate.id] ?? candidate
+            }
+        let selectedSource = localFallbackPlan.candidateId.flatMap { candidatesById[$0]?.source }
+        var comparisons: [NativePlannerQualityComparison] = []
+        if let aiPlannerPlan {
+            comparisons.append(qualityComparison(
+                role: "ai_planner",
+                plan: aiPlannerPlan,
+                source: aiPlannerPlan.candidateId.flatMap { candidatesById[$0]?.source },
+                isSelected: selectedRole == .aiPlanner,
+                currentTrack: currentTrack,
+                nextTrack: nextTrack,
+                currentAnalysis: benchmark.request.analysis.current,
+                nextAnalysis: benchmark.request.analysis.next
+            ))
+        }
+        comparisons.append(qualityComparison(
+            role: "local_fallback",
+            plan: localFallbackPlan,
+            source: selectedSource,
+            isSelected: selectedRole == nil || selectedRole == .localFallback,
+            currentTrack: currentTrack,
+            nextTrack: nextTrack,
+            currentAnalysis: benchmark.request.analysis.current,
+            nextAnalysis: benchmark.request.analysis.next
+        ))
+
+        for candidate in benchmark.request.pairContext?.candidates ?? [] where candidate.id != localFallbackPlan.candidateId {
+            guard let plan = benchmarkPlan(for: candidate, benchmark: benchmark) else {
+                continue
+            }
+            comparisons.append(qualityComparison(
+                role: "candidate_alternative",
+                plan: plan,
+                source: candidate.source,
+                isSelected: false,
+                currentTrack: currentTrack,
+                nextTrack: nextTrack,
+                currentAnalysis: benchmark.request.analysis.current,
+                nextAnalysis: benchmark.request.analysis.next
+            ))
+        }
+
+        return comparisons.sorted {
+            if roleRank($0.role) != roleRank($1.role) {
+                return roleRank($0.role) < roleRank($1.role)
+            }
+            return $0.renderedQuality.score > $1.renderedQuality.score
+        }
+    }
+
+    private static func roleRank(_ role: String) -> Int {
+        switch role {
+        case "ai_planner":
+            return 0
+        case "local_fallback":
+            return 1
+        default:
+            return 2
+        }
+    }
+
+    private static func qualityComparison(
+        role: String,
+        plan: MixPlan,
+        source: MixCandidateSource?,
+        isSelected: Bool,
+        currentTrack: Track,
+        nextTrack: Track,
+        currentAnalysis: TrackAnalysis?,
+        nextAnalysis: TrackAnalysis?
+    ) -> NativePlannerQualityComparison {
+        let report = RenderedTransitionQualityAnalyzer.analyze(
+            plan: plan,
+            currentTrack: currentTrack,
+            nextTrack: nextTrack,
+            currentAnalysis: currentAnalysis,
+            nextAnalysis: nextAnalysis
+        )
+        return NativePlannerQualityComparison(
+            role: role,
+            candidateId: plan.candidateId,
+            source: source,
+            isSelected: isSelected,
+            style: plan.style,
+            transitionStartSec: plan.transitionStartSec,
+            transitionEndSec: plan.transitionEndSec,
+            nextTrackStartOffsetSec: plan.nextTrackStartOffsetSec,
+            renderedQuality: report
+        )
+    }
+
+    private static func benchmarkPlan(
+        for candidate: MixCandidate,
+        benchmark: NativePlannerBenchmarkCase
+    ) -> MixPlan? {
+        let transitionDurationSec = benchmarkTransitionDuration(
+            candidate: candidate,
+            mode: benchmark.request.settings.aiDjMode,
+            maxFadeDurationSec: max(0.25, benchmark.request.settings.fadeDurationSec)
+        )
+        let transitionEndSec = benchmarkMixOutTime(
+            candidate: candidate,
+            request: benchmark.request,
+            transitionDurationSec: transitionDurationSec
+        )
+        let transitionStartSec = max(
+            benchmark.request.currentPlayback.elapsedSec,
+            transitionEndSec - transitionDurationSec
+        )
+        let plan = MixPlan(
+            transitionStartSec: transitionStartSec,
+            transitionEndSec: transitionEndSec,
+            nextTrackStartOffsetSec: candidate.nextMixInSec,
+            style: candidate.style,
+            confidence: candidate.confidence,
+            reasoningSummary: "Benchmark candidate comparison: \(candidate.reason)",
+            tempoSync: MixTempoSyncPlan(
+                enabled: candidate.tempoSyncRate != nil && (candidate.bpmDelta ?? 0) <= 10,
+                targetRate: candidate.tempoSyncRate
+            ),
+            candidateId: candidate.id,
+            currentBarIndex: candidate.currentBarIndex,
+            nextBarIndex: candidate.nextBarIndex,
+            phraseAlignment: candidate.phraseAlignment,
+            energyStrategy: energyStrategy(for: candidate.energyDelta),
+            evidence: ["benchmark quality comparison", "source \(candidate.source.rawValue)", candidate.reason],
+            mixControls: .conservativeDefaults
+        )
+        return MixPlanValidator.validateAndClamp(plan, context: benchmark.validationContext).plan
+    }
+
+    private static func benchmarkTransitionDuration(
+        candidate: MixCandidate,
+        mode: AIDJMode,
+        maxFadeDurationSec: Double
+    ) -> Double {
+        switch candidate.style {
+        case .hardCut:
+            switch mode {
+            case .safe:
+                return min(maxFadeDurationSec, 3)
+            case .balanced:
+                return min(maxFadeDurationSec, 2)
+            case .adventurous:
+                return min(maxFadeDurationSec, 1.25)
+            }
+        case .energySwap:
+            return min(maxFadeDurationSec, max(2.5, maxFadeDurationSec * 0.65))
+        case .smoothBlend:
+            return maxFadeDurationSec
+        }
+    }
+
+    private static func benchmarkMixOutTime(
+        candidate: MixCandidate,
+        request: PlannerRequest,
+        transitionDurationSec: Double
+    ) -> Double {
+        if candidate.currentMixOutSec > request.currentPlayback.elapsedSec + 0.25 {
+            return min(candidate.currentMixOutSec, request.currentTrack.durationSec)
+        }
+        return min(
+            request.currentTrack.durationSec,
+            max(
+                request.currentPlayback.elapsedSec + min(transitionDurationSec, 2),
+                request.currentTrack.durationSec - transitionDurationSec * 0.5
+            )
+        )
+    }
+
+    private static func energyStrategy(for energyDelta: Double?) -> EnergyStrategy {
+        guard let energyDelta else {
+            return .maintain
+        }
+        if energyDelta > 0.08 {
+            return .lift
+        }
+        if energyDelta < -0.08 {
+            return .drop
+        }
+        return .maintain
     }
 
     public static func defaultCases() -> [NativePlannerBenchmarkCase] {
@@ -453,6 +787,26 @@ public enum NativePlannerBenchmarkSuite {
         readiness: MixPairReadiness,
         expectation: NativePlannerBenchmarkExpectation
     ) -> NativePlannerBenchmarkCase {
+        let candidateMixOutTimes = candidates.map(\.currentMixOutSec)
+        let candidateMixInTimes = candidates.map(\.nextMixInSec)
+        let currentAnalysis = benchmarkAnalysis(
+            track: current,
+            cueTimes: [elapsedSec] + candidateMixOutTimes,
+            introCueSec: nil,
+            outroCueSec: candidateMixOutTimes.min(),
+            peak: mode == .adventurous ? 0.58 : 0.5,
+            rms: mode == .adventurous ? 0.32 : 0.26,
+            spectral: mode == .adventurous ? (0.7, 0.62, 0.44) : (0.44, 0.38, 0.28)
+        )
+        let nextAnalysis = benchmarkAnalysis(
+            track: next,
+            cueTimes: candidateMixInTimes + candidateMixInTimes.map { $0 + fadeDurationSec },
+            introCueSec: candidateMixInTimes.min(),
+            outroCueSec: nil,
+            peak: mode == .adventurous ? 0.56 : 0.46,
+            rms: mode == .adventurous ? 0.31 : 0.24,
+            spectral: mode == .adventurous ? (0.68, 0.6, 0.42) : (0.28, 0.34, 0.26)
+        )
         let request = PlannerRequest(
             currentTrack: PlannerTrackSnapshot(track: current),
             nextTrack: PlannerTrackSnapshot(track: next),
@@ -460,8 +814,13 @@ public enum NativePlannerBenchmarkSuite {
                 elapsedSec: elapsedSec,
                 remainingSec: max(0, current.durationSec - elapsedSec)
             ),
-            analysis: PlannerAnalysisPair(current: nil, next: nil),
-            analysisSummary: nil,
+            analysis: PlannerAnalysisPair(current: currentAnalysis, next: nextAnalysis),
+            analysisSummary: PlannerEvidenceBuilder.buildPlannerAnalysisSummary(
+                currentTrack: current,
+                nextTrack: next,
+                currentAnalysis: currentAnalysis,
+                nextAnalysis: nextAnalysis
+            ),
             pairContext: MixPairContext(
                 currentTrackId: current.id,
                 nextTrackId: next.id,
@@ -471,16 +830,101 @@ public enum NativePlannerBenchmarkSuite {
             ),
             settings: PlannerSettingsSnapshot(fadeDurationSec: fadeDurationSec, aiDjMode: mode)
         )
+        let validationContext = MixPlanValidationContext(
+            currentPlaybackElapsedSec: elapsedSec,
+            currentTrackDurationSec: current.durationSec,
+            nextTrackDurationSec: next.durationSec,
+            maxFadeDurationSec: fadeDurationSec
+        )
         return NativePlannerBenchmarkCase(
             name: name,
             request: request,
-            validationContext: MixPlanValidationContext(
-                currentPlaybackElapsedSec: elapsedSec,
-                currentTrackDurationSec: current.durationSec,
-                nextTrackDurationSec: next.durationSec,
-                maxFadeDurationSec: fadeDurationSec
+            validationContext: validationContext,
+            expectation: expectation,
+            aiPlannerPlan: benchmarkAIPlannerPlan(
+                request: request,
+                validationContext: validationContext
+            )
+        )
+    }
+
+    private static func benchmarkAIPlannerPlan(
+        request: PlannerRequest,
+        validationContext: MixPlanValidationContext
+    ) -> MixPlan? {
+        let candidates = request.pairContext?.candidates ?? []
+        if let candidate = candidates.first(where: { $0.source != .tailFallback }) ?? candidates.first,
+           var plan = benchmarkPlan(
+            for: candidate,
+            benchmark: NativePlannerBenchmarkCase(
+                name: "ai-fixture",
+                request: request,
+                validationContext: validationContext,
+                expectation: NativePlannerBenchmarkExpectation(allowedStyles: [.smoothBlend, .energySwap, .hardCut], minConfidence: 0)
+            )
+           ) {
+            plan.reasoningSummary = "AI fixture: \(candidate.reason)"
+            plan.evidence = ["ai planner fixture", "source \(candidate.source.rawValue)", candidate.reason]
+            return MixPlanValidator.validateAndClamp(plan, context: validationContext).plan
+        }
+
+        guard var plan = NativeFallbackMixPlanner.buildPlan(
+            request: request,
+            validationContext: validationContext,
+            failureReason: "ai_fixture_no_candidates"
+        ) else {
+            return nil
+        }
+        plan.reasoningSummary = "AI fixture: emergency tail mix"
+        plan.evidence = ["ai planner fixture", "emergency tail mix"]
+        return MixPlanValidator.validateAndClamp(plan, context: validationContext).plan
+    }
+
+    private static func benchmarkAnalysis(
+        track: Track,
+        cueTimes: [Double],
+        introCueSec: Double?,
+        outroCueSec: Double?,
+        peak: Double,
+        rms: Double,
+        spectral: (low: Double, mid: Double, high: Double)
+    ) -> TrackAnalysis {
+        let times = ([0, track.durationSec] + cueTimes)
+            .map { min(max(0, $0), track.durationSec) }
+            .reduce(into: [Double]()) { values, time in
+                if !values.contains(where: { abs($0 - time) < 0.001 }) {
+                    values.append(time)
+                }
+            }
+            .sorted()
+        return TrackAnalysis(
+            trackId: track.id,
+            generatedAt: "2026-06-16T00:00:00Z",
+            source: .derived,
+            bpm: track.bpm,
+            bpmConfidence: track.bpm == nil ? 0 : 0.86,
+            beatGridSec: stride(from: 0, through: min(track.durationSec, 16), by: 0.5).map { $0 },
+            downbeatsSec: [0],
+            barGrid: [BarMarker(index: 0, startSec: 0, beatIndex: 0)],
+            phraseMarkers: [PhraseMarker(index: 0, startSec: 0, bars: 8, confidence: 0.8)],
+            introCueSec: introCueSec,
+            outroCueSec: outroCueSec,
+            energyProfile: [rms, min(1, rms + 0.08), max(0, rms - 0.04)],
+            waveformPeaks: times.map { WaveformPeak(timeSec: $0, peak: peak, rms: rms) },
+            waveformDetail: times.map { WaveformDetailPoint(timeSec: $0, peak: peak, rms: rms, min: -peak, max: peak) },
+            spectralBands: times.map { SpectralBandPoint(timeSec: $0, low: spectral.low, mid: spectral.mid, high: spectral.high) },
+            transientMarkers: times.enumerated().map {
+                TransientMarker(index: $0.offset, timeSec: $0.element, strength: 0.7)
+            },
+            cueCandidates: [],
+            analysisConfidence: 0.82,
+            analysisQuality: AnalysisQuality(
+                waveformDetail: 0.82,
+                spectralBands: 0.82,
+                transientMarkers: 0.76,
+                beatGrid: 0.82
             ),
-            expectation: expectation
+            analysisWarnings: []
         )
     }
 

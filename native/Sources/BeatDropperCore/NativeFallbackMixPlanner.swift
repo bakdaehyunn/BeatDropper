@@ -53,7 +53,8 @@ public enum NativeFallbackMixPlanner {
             nextBarIndex: selectedCandidate.nextBarIndex,
             phraseAlignment: selectedCandidate.phraseAlignment,
             energyStrategy: energyStrategy(for: selectedCandidate.energyDelta),
-            evidence: fallbackEvidence(candidate: selectedCandidate, failureReason: failureReason)
+            evidence: fallbackEvidence(candidate: selectedCandidate, failureReason: failureReason),
+            mixControls: fallbackMixControls(candidate: selectedCandidate)
         )
 
         return MixPlanValidator.validateAndClamp(plan, context: validationContext).plan
@@ -198,7 +199,8 @@ public enum NativeFallbackMixPlanner {
                 "local fallback",
                 "emergency tail mix",
                 failureReason.map { "planner failure: \($0)" }
-            ].compactMap { $0 }
+            ].compactMap { $0 },
+            mixControls: .conservativeDefaults
         )
         return MixPlanValidator.validateAndClamp(plan, context: validationContext).plan
     }
@@ -249,5 +251,40 @@ public enum NativeFallbackMixPlanner {
         }
         evidence.append(candidate.reason)
         return Array(evidence.prefix(8))
+    }
+
+    private static func fallbackMixControls(candidate: MixCandidate) -> MixControlPlan {
+        let incomingTrimDb: Double = switch candidate.style {
+        case .hardCut:
+            -1
+        case .energySwap:
+            -1.5
+        case .smoothBlend:
+            -2
+        }
+        let outgoingLowDb: Double = switch candidate.energyDelta ?? 0 {
+        case let delta where delta > 0.08:
+            -2
+        default:
+            0
+        }
+        return MixControlPlan(
+            gain: MixGainPlan(outgoingTrimDb: 0, incomingTrimDb: incomingTrimDb),
+            eq: MixThreeBandEQPlan(
+                outgoingLowDb: outgoingLowDb,
+                outgoingMidDb: 0,
+                outgoingHighDb: 0,
+                incomingLowDb: 0,
+                incomingMidDb: 0,
+                incomingHighDb: 0
+            ),
+            filter: .conservativeDefaults,
+            loudness: .conservativeDefaults,
+            clipProtection: .conservativeDefaults,
+            qualityNotes: [
+                "local fallback mix controls are planning metadata only",
+                "native audio engine execution remains unchanged"
+            ]
+        )
     }
 }

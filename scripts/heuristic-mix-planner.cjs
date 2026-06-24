@@ -134,6 +134,46 @@ const chooseStyle = ({ mode, bpmGap, nextIntroCueSec, currentOutroCueSec, transi
   return 'smooth_blend';
 };
 
+const buildConservativeMixControls = ({ style, energyDelta }) => {
+  const incomingTrimDb = style === 'hard_cut' ? -1 : style === 'energy_swap' ? -1.5 : -2;
+  const outgoingLowDb = typeof energyDelta === 'number' && energyDelta > 0.08 ? -2 : 0;
+  return {
+    gain: {
+      outgoingTrimDb: 0,
+      incomingTrimDb
+    },
+    eq: {
+      outgoingLowDb,
+      outgoingMidDb: 0,
+      outgoingHighDb: 0,
+      incomingLowDb: 0,
+      incomingMidDb: 0,
+      incomingHighDb: 0
+    },
+    filter: {
+      outgoingMode: 'disabled',
+      outgoingStartHz: null,
+      outgoingEndHz: null,
+      incomingMode: 'disabled',
+      incomingStartHz: null,
+      incomingEndHz: null
+    },
+    loudness: {
+      targetIntegratedLufs: null,
+      maxPeakDb: -1
+    },
+    clipProtection: {
+      enabled: true,
+      mode: 'monitor_only',
+      ceilingDb: -1
+    },
+    qualityNotes: [
+      'heuristic mix controls are planning metadata only',
+      'audio engine execution remains unchanged'
+    ]
+  };
+};
+
 const buildHeuristicResponse = (request) => {
   const fadeDurationSec = asNumber(request?.settings?.fadeDurationSec) ?? 8;
   const currentDurationSec = asNumber(request?.currentTrack?.durationSec) ?? 0;
@@ -262,6 +302,10 @@ const buildHeuristicResponse = (request) => {
               ? 'drop'
               : 'maintain'
           : null,
+      mixControls: buildConservativeMixControls({
+        style,
+        energyDelta: candidate?.energyDelta
+      }),
       evidence: [
         candidate?.reason,
         candidate?.source ? `candidate source ${candidate.source}` : null,

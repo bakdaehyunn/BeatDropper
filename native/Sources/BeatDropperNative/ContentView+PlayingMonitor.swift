@@ -35,7 +35,10 @@ extension ContentView {
 
     var playingMixStatusText: String {
         if let plan = model.currentMixPlan {
-            return "AI Mix \(model.scheduledMixCountdownSec.map { "in \(formatDuration($0))" } ?? "ready") · OUT \(formatDuration(plan.transitionStartSec)) · IN \(formatDuration(plan.nextTrackStartOffsetSec)) · \(Int((plan.confidence * 100).rounded()))%"
+            let qualityText = model.currentMixPlanReview.map {
+                " · Q \($0.renderedQuality.grade.rawValue) \(Int(($0.renderedQuality.score * 100).rounded()))%"
+            } ?? ""
+            return "AI Mix \(model.scheduledMixCountdownSec.map { "in \(formatDuration($0))" } ?? "ready") · OUT \(formatDuration(plan.transitionStartSec)) · IN \(formatDuration(plan.nextTrackStartOffsetSec)) · \(Int((plan.confidence * 100).rounded()))%\(qualityText)"
         }
         if model.isPlanningMix {
             return "AI Mix planning"

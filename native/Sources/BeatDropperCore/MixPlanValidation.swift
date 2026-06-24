@@ -78,10 +78,76 @@ public enum MixPlanValidator {
                 nextBarIndex: candidate.nextBarIndex.map { max(0, $0) },
                 phraseAlignment: candidate.phraseAlignment,
                 energyStrategy: candidate.energyStrategy,
-                evidence: Array(candidate.evidence.prefix(8))
+                evidence: Array(candidate.evidence.prefix(8)),
+                mixControls: clampedMixControls(candidate.mixControls)
             ),
             nil
         )
+    }
+
+    private static func clampedMixControls(_ candidate: MixControlPlan?) -> MixControlPlan {
+        let controls = candidate ?? .conservativeDefaults
+        return MixControlPlan(
+            gain: MixGainPlan(
+                outgoingTrimDb: controls.gain.outgoingTrimDb.map(clampedGainDb) ?? 0,
+                incomingTrimDb: controls.gain.incomingTrimDb.map(clampedGainDb) ?? 0
+            ),
+            eq: MixThreeBandEQPlan(
+                outgoingLowDb: controls.eq.outgoingLowDb.map(clampedEQDb) ?? 0,
+                outgoingMidDb: controls.eq.outgoingMidDb.map(clampedEQDb) ?? 0,
+                outgoingHighDb: controls.eq.outgoingHighDb.map(clampedEQDb) ?? 0,
+                incomingLowDb: controls.eq.incomingLowDb.map(clampedEQDb) ?? 0,
+                incomingMidDb: controls.eq.incomingMidDb.map(clampedEQDb) ?? 0,
+                incomingHighDb: controls.eq.incomingHighDb.map(clampedEQDb) ?? 0
+            ),
+            filter: clampedFilterPlan(controls.filter),
+            loudness: MixLoudnessPlan(
+                targetIntegratedLufs: controls.loudness.targetIntegratedLufs.map {
+                    clamped($0, min: -24, max: -6)
+                },
+                maxPeakDb: controls.loudness.maxPeakDb.map {
+                    clamped($0, min: -6, max: -0.1)
+                } ?? -1
+            ),
+            clipProtection: MixClipProtectionPlan(
+                enabled: controls.clipProtection.enabled,
+                mode: controls.clipProtection.mode,
+                ceilingDb: controls.clipProtection.ceilingDb.map {
+                    clamped($0, min: -6, max: -0.1)
+                } ?? -1
+            ),
+            qualityNotes: Array(controls.qualityNotes.filter { !$0.isEmpty }.prefix(6))
+        )
+    }
+
+    private static func clampedFilterPlan(_ filter: MixFilterPlan) -> MixFilterPlan {
+        let outgoingStartHz = clampedFrequency(filter.outgoingStartHz, mode: filter.outgoingMode)
+        let outgoingEndHz = clampedFrequency(filter.outgoingEndHz, mode: filter.outgoingMode)
+        let incomingStartHz = clampedFrequency(filter.incomingStartHz, mode: filter.incomingMode)
+        let incomingEndHz = clampedFrequency(filter.incomingEndHz, mode: filter.incomingMode)
+        return MixFilterPlan(
+            outgoingMode: filter.outgoingMode,
+            outgoingStartHz: outgoingStartHz,
+            outgoingEndHz: outgoingEndHz,
+            incomingMode: filter.incomingMode,
+            incomingStartHz: incomingStartHz,
+            incomingEndHz: incomingEndHz
+        )
+    }
+
+    private static func clampedFrequency(_ value: Double?, mode: MixFilterMode) -> Double? {
+        guard mode != .disabled else {
+            return nil
+        }
+        return value.map { clamped($0, min: 20, max: 20_000) }
+    }
+
+    private static func clampedGainDb(_ value: Double) -> Double {
+        clamped(value, min: -12, max: 6)
+    }
+
+    private static func clampedEQDb(_ value: Double) -> Double {
+        clamped(value, min: -12, max: 6)
     }
 }
 

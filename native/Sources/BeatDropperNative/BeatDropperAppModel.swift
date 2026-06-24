@@ -28,6 +28,12 @@ final class BeatDropperAppModel: ObservableObject {
     @Published var filteredLibraryTracks: [NativeLibraryBrowserTrack] = []
     @Published var currentMixPlan: MixPlan?
     @Published var currentMixPlanPair: PlannedMixPair?
+    @Published var currentMixPlanReview: PlannedMixReview?
+    @Published var recentMixReviewEvents: [PlannedMixReviewEvent] = []
+    @Published var importedMixReviewArtifacts: [ImportedMixReviewArtifact] = []
+    @Published var isImportedMixReviewArtifactPairFilterEnabled: Bool = false
+    @Published var importedMixReviewArtifactSearchText: String = ""
+    @Published var selectedImportedMixReviewComparisonArtifactIds: [ImportedMixReviewArtifact.ID] = []
     @Published var isPlanningMix: Bool = false
     @Published var plannerStatus: String = "No AI mix plan"
     @Published var isAIMixEnabled: Bool = false
@@ -72,6 +78,7 @@ final class BeatDropperAppModel: ObservableObject {
     let store: NativeLibraryStore
     private let settingsStore: NativeSettingsStore
     let analysisStore: NativeTrackAnalysisStore
+    let mixReviewArtifactStore: MixReviewArtifactStore
     let mixPlanner: NativeMixPlannerBridge
     let maxConcurrentAnalysisTasks = NativeAnalysisQueueState.recommendedConcurrency(
         activeProcessorCount: ProcessInfo.processInfo.activeProcessorCount
@@ -87,14 +94,17 @@ final class BeatDropperAppModel: ObservableObject {
         store: NativeLibraryStore = .applicationSupport(),
         settingsStore: NativeSettingsStore = .applicationSupport(),
         analysisStore: NativeTrackAnalysisStore = .applicationSupport(),
+        mixReviewArtifactStore: MixReviewArtifactStore = .applicationSupport(),
         mixPlanner: NativeMixPlannerBridge = NativeMixPlannerBridge()
     ) {
         self.store = store
         self.settingsStore = settingsStore
         self.analysisStore = analysisStore
+        self.mixReviewArtifactStore = mixReviewArtifactStore
         self.mixPlanner = mixPlanner
         restoreSettings()
         restoreLibraryState()
+        restoreMixReviewArtifacts()
     }
 
     func previewCreativeTrack(at timeSec: Double) {
@@ -457,11 +467,173 @@ final class BeatDropperAppModel: ObservableObject {
         persistSettings()
     }
 
+    var mixReviewArtifactFolderURL: URL? {
+        var isDirectory: ObjCBool = false
+        guard let path = settings.mixReviewArtifactFolderPath,
+              FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory),
+              isDirectory.boolValue
+        else {
+            return nil
+        }
+        return URL(fileURLWithPath: path, isDirectory: true)
+    }
+
+    func updateMixReviewArtifactFolder(_ folderURL: URL) {
+        updateSettings(invalidatesMixPlan: false) { settings in
+            settings.mixReviewArtifactFolderPath = folderURL.path
+        }
+    }
+
 }
 
 struct PlannedMixPair: Equatable, Sendable {
     var currentTrackId: String
     var nextTrackId: String
+}
+
+struct PlannedMixReview: Equatable, Sendable {
+    var pair: PlannedMixPair
+    var source: String
+    var fallbackReason: String?
+    var selectionReason: String?
+    var renderedQuality: RenderedTransitionQualityReport
+    var shadowFallbackComparison: PlannedMixReviewPlanComparison?
+}
+
+struct AcceptedMixPlan: Equatable, Sendable {
+    var plan: MixPlan
+    var review: PlannedMixReview
+}
+
+struct PlannedMixReviewPlanComparison: Equatable, Sendable {
+    var source: String
+    var reason: String?
+    var transitionStartSec: Double
+    var transitionEndSec: Double
+    var nextTrackStartOffsetSec: Double
+    var style: MixStyle
+    var confidence: Double
+    var candidateId: String?
+    var renderedQuality: RenderedTransitionQualityReport
+}
+
+struct PlannedMixReviewEvent: Identifiable, Equatable, Sendable {
+    var id: UUID
+    var createdAt: Date
+    var pair: PlannedMixPair
+    var source: String
+    var fallbackReason: String?
+    var selectionReason: String?
+    var transitionStartSec: Double
+    var transitionEndSec: Double
+    var nextTrackStartOffsetSec: Double
+    var style: MixStyle
+    var confidence: Double
+    var candidateId: String?
+    var renderedQuality: RenderedTransitionQualityReport
+    var shadowFallbackComparison: PlannedMixReviewPlanComparison?
+}
+
+struct ImportedMixReviewArtifact: Identifiable, Equatable, Sendable {
+    var id: UUID
+    var importedAt: Date
+    var fileName: String
+    var format: String
+    var content: String
+    var reviewCount: Int
+    var schemaVersion: Int?
+    var trackPairs: [MixReviewArtifactTrackPair]
+    var pairDetails: [MixReviewArtifactPairDetail]
+    var reviewAnnotation: String
+
+    init(
+        id: UUID,
+        importedAt: Date,
+        fileName: String,
+        format: String,
+        content: String,
+        reviewCount: Int,
+        schemaVersion: Int?,
+        trackPairs: [MixReviewArtifactTrackPair] = [],
+        pairDetails: [MixReviewArtifactPairDetail] = [],
+        reviewAnnotation: String = ""
+    ) {
+        self.id = id
+        self.importedAt = importedAt
+        self.fileName = fileName
+        self.format = format
+        self.content = content
+        self.reviewCount = reviewCount
+        self.schemaVersion = schemaVersion
+        self.trackPairs = trackPairs
+        self.pairDetails = pairDetails
+        self.reviewAnnotation = reviewAnnotation
+    }
+
+    init(persisted: PersistedMixReviewArtifact) {
+        let extractedPairs = MixReviewArtifactPairExtractor.trackPairs(content: persisted.content)
+        let pairDetails = MixReviewArtifactPairDetailExtractor.pairDetails(content: persisted.content)
+        self.id = UUID(uuidString: persisted.id) ?? UUID()
+        self.importedAt = ISO8601DateFormatter().date(from: persisted.importedAt) ?? Date()
+        self.fileName = persisted.fileName
+        self.format = persisted.format
+        self.content = persisted.content
+        self.reviewCount = persisted.reviewCount
+        self.schemaVersion = persisted.schemaVersion
+        self.trackPairs = persisted.trackPairs.isEmpty ? extractedPairs : persisted.trackPairs
+        self.pairDetails = pairDetails
+        self.reviewAnnotation = persisted.reviewAnnotation
+    }
+
+    var persisted: PersistedMixReviewArtifact {
+        PersistedMixReviewArtifact(
+            id: id.uuidString,
+            importedAt: ISO8601DateFormatter().string(from: importedAt),
+            fileName: fileName,
+            format: format,
+            content: content,
+            reviewCount: reviewCount,
+            schemaVersion: schemaVersion,
+            trackPairs: trackPairs,
+            reviewAnnotation: reviewAnnotation
+        )
+    }
+
+    func matches(pair: PlannedMixPair) -> Bool {
+        MixReviewArtifactPairFilter.matches(
+            trackPairs: trackPairs,
+            currentTrackId: pair.currentTrackId,
+            nextTrackId: pair.nextTrackId
+        )
+    }
+
+    func matches(searchText: String) -> Bool {
+        MixReviewArtifactSearch.matches(
+            fileName: fileName,
+            format: format,
+            reviewCount: reviewCount,
+            trackPairs: trackPairs,
+            content: content,
+            annotation: reviewAnnotation,
+            query: searchText
+        )
+    }
+}
+
+struct ImportedMixReviewArtifactComparison: Identifiable, Equatable, Sendable {
+    var pair: PlannedMixPair
+    var leftArtifact: ImportedMixReviewArtifact
+    var rightArtifact: ImportedMixReviewArtifact
+    var pairComparison: MixReviewArtifactPairComparison
+
+    var id: String {
+        [
+            pair.currentTrackId,
+            pair.nextTrackId,
+            leftArtifact.id.uuidString,
+            rightArtifact.id.uuidString
+        ].joined(separator: "|")
+    }
 }
 
 private enum NativePlaybackError: LocalizedError {

@@ -6,6 +6,9 @@ struct ContentView: View {
     @State var isFileDropTargeted = false
     @State var creativeCueKind: TrackPreparationCueKind = .drop
     @State var creativeBPMDraft = ""
+    @State var mixReviewExportPreview: MixReviewExportPreview?
+    @State var mixReviewImportedArtifactPreview: ImportedMixReviewArtifact?
+    @State var mixReviewImportedArtifactComparison: ImportedMixReviewArtifactComparison?
 
     var body: some View {
         GeometryReader { proxy in
@@ -33,6 +36,15 @@ struct ContentView: View {
         }
         .onDrop(of: [.fileURL], isTargeted: $isFileDropTargeted) { providers in
             loadDroppedFileURLs(from: providers)
+        }
+        .sheet(item: $mixReviewExportPreview) { preview in
+            mixReviewExportPreviewSheet(preview)
+        }
+        .sheet(item: $mixReviewImportedArtifactPreview) { artifact in
+            mixReviewImportedArtifactPreviewSheet(artifact)
+        }
+        .sheet(item: $mixReviewImportedArtifactComparison) { comparison in
+            mixReviewImportedArtifactComparisonSheet(comparison)
         }
         .accessibilityLabel("BeatDropper DJ workspace")
     }

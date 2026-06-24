@@ -29,6 +29,8 @@ struct NativeFallbackMixPlannerTests {
         #expect(plan.evidence.contains("local fallback"))
         #expect(plan.evidence.contains { $0.contains("planner_timeout") })
         #expect(plan.confidence >= 0.38)
+        #expect(plan.mixControls?.clipProtection.mode == .monitorOnly)
+        #expect(plan.mixControls?.qualityNotes.contains { $0.contains("planning metadata") } == true)
     }
 
     @Test func usesTailFallbackWhenAnalysisIsMissing() throws {
@@ -55,6 +57,7 @@ struct NativeFallbackMixPlannerTests {
         #expect(plan.phraseAlignment == .free)
         #expect(plan.confidence <= 0.42)
         #expect(plan.evidence.contains { $0.contains("planner_returned_no_plan") })
+        #expect(plan.mixControls?.gain.incomingTrimDb == -2)
     }
 
     @Test func staleTailRecommendationDoesNotOverrideAnalysisCandidate() throws {
@@ -147,6 +150,8 @@ struct NativeFallbackMixPlannerTests {
         #expect(plan.transitionStartSec >= 45)
         #expect(plan.nextTrackStartOffsetSec == 0)
         #expect(plan.evidence.contains("emergency tail mix"))
+        #expect(plan.mixControls?.gain.outgoingTrimDb == 0)
+        #expect(plan.mixControls?.clipProtection.enabled == true)
     }
 
     private func request(

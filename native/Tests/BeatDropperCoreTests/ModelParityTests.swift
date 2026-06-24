@@ -112,4 +112,104 @@ struct ModelParityTests {
         #expect(decoded.mixPlan?.energyStrategy == .lift)
         #expect(decoded.mixPlan?.evidence.count == 2)
     }
+
+    @Test func plannerResponseDecodesMixPlanWithoutMixControlsForBackwardCompatibility() throws {
+        let json = """
+        {
+          "schemaVersion": 1,
+          "mixPlan": {
+            "transitionStartSec": 144,
+            "transitionEndSec": 152,
+            "nextTrackStartOffsetSec": 25,
+            "style": "smooth_blend",
+            "confidence": 0.87,
+            "reasoningSummary": "bar aligned",
+            "tempoSync": { "enabled": false, "targetRate": null },
+            "candidateId": "candidate-1",
+            "currentBarIndex": 89,
+            "nextBarIndex": 17,
+            "phraseAlignment": "aligned",
+            "energyStrategy": "lift",
+            "evidence": ["bar 89 -> 17", "phrase aligned"]
+          },
+          "error": null
+        }
+        """
+
+        let decoded = try decoder.decode(PlannerResponse.self, from: Data(json.utf8))
+
+        #expect(decoded.mixPlan?.candidateId == "candidate-1")
+        #expect(decoded.mixPlan?.mixControls == nil)
+    }
+
+    @Test func plannerResponseRoundTripsMixControlsWhenPresent() throws {
+        let response = PlannerResponse(
+            mixPlan: MixPlan(
+                transitionStartSec: 144,
+                transitionEndSec: 152,
+                nextTrackStartOffsetSec: 25,
+                style: .energySwap,
+                confidence: 0.87,
+                reasoningSummary: "bar aligned with conservative controls",
+                tempoSync: MixTempoSyncPlan(enabled: false, targetRate: nil),
+                candidateId: "candidate-2",
+                currentBarIndex: 89,
+                nextBarIndex: 17,
+                phraseAlignment: .aligned,
+                energyStrategy: .lift,
+                evidence: ["bar 89 -> 17", "phrase aligned"],
+                mixControls: MixControlPlan(
+                    gain: MixGainPlan(outgoingTrimDb: 0, incomingTrimDb: -1.5),
+                    eq: MixThreeBandEQPlan(outgoingLowDb: -2, incomingLowDb: 0),
+                    filter: .conservativeDefaults,
+                    loudness: .conservativeDefaults,
+                    clipProtection: .conservativeDefaults,
+                    qualityNotes: ["planning metadata only"]
+                )
+            ),
+            error: nil
+        )
+
+        let encoded = try encoder.encode(response)
+        let decoded = try decoder.decode(PlannerResponse.self, from: encoded)
+
+        #expect(decoded.mixPlan?.mixControls?.gain.incomingTrimDb == -1.5)
+        #expect(decoded.mixPlan?.mixControls?.eq.outgoingLowDb == -2)
+        #expect(decoded.mixPlan?.mixControls?.clipProtection.mode == .monitorOnly)
+    }
+
+    @Test func plannerResponseDecodesPartialMixControlsWithDefaults() throws {
+        let json = """
+        {
+          "schemaVersion": 1,
+          "mixPlan": {
+            "transitionStartSec": 144,
+            "transitionEndSec": 152,
+            "nextTrackStartOffsetSec": 25,
+            "style": "smooth_blend",
+            "confidence": 0.87,
+            "reasoningSummary": "bar aligned",
+            "tempoSync": { "enabled": false, "targetRate": null },
+            "candidateId": "candidate-1",
+            "currentBarIndex": 89,
+            "nextBarIndex": 17,
+            "phraseAlignment": "aligned",
+            "energyStrategy": "lift",
+            "evidence": ["bar 89 -> 17", "phrase aligned"],
+            "mixControls": {
+              "gain": { "incomingTrimDb": -3 },
+              "clipProtection": { "enabled": true }
+            }
+          },
+          "error": null
+        }
+        """
+
+        let decoded = try decoder.decode(PlannerResponse.self, from: Data(json.utf8))
+
+        #expect(decoded.mixPlan?.mixControls?.gain.incomingTrimDb == -3)
+        #expect(decoded.mixPlan?.mixControls?.gain.outgoingTrimDb == nil)
+        #expect(decoded.mixPlan?.mixControls?.filter.outgoingMode == .disabled)
+        #expect(decoded.mixPlan?.mixControls?.clipProtection.mode == .monitorOnly)
+    }
 }

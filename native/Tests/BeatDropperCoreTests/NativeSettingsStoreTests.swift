@@ -15,6 +15,7 @@ struct NativeSettingsStoreTests {
         #expect(settings.aiDjMode == .safe)
         #expect(settings.activeAiAgentProfileId == PlayerSettings.codexAgentProfileId)
         #expect(settings.plannerTimeoutMs == 20_000)
+        #expect(settings.mixReviewArtifactFolderPath == nil)
     }
 
     @Test func sanitizesAndPersistsNativeSettings() throws {
@@ -46,7 +47,8 @@ struct NativeSettingsStoreTests {
                 activeAiAgentProfileId: "custom",
                 plannerCommand: "custom",
                 plannerArgs: ["planner"],
-                plannerTimeoutMs: 999
+                plannerTimeoutMs: 999,
+                mixReviewArtifactFolderPath: "  /tmp/BeatDropper Reviews  "
             )
         )
 
@@ -63,6 +65,7 @@ struct NativeSettingsStoreTests {
         #expect(loaded.aiAgentProfiles.map(\.id) == [PlayerSettings.codexAgentProfileId])
         #expect(loaded.plannerCommand == "node")
         #expect(loaded.plannerTimeoutMs == 20_000)
+        #expect(loaded.mixReviewArtifactFolderPath == "/tmp/BeatDropper Reviews")
     }
 
     @Test func saveWritesBackupAndLoadFallsBackWhenPrimaryIsCorrupt() throws {
@@ -79,6 +82,14 @@ struct NativeSettingsStoreTests {
         #expect(loaded.fadeDurationSec == 14)
         #expect(loaded.masterGain == 0.42)
         #expect(loaded.aiDjMode == .balanced)
+    }
+
+    @Test func emptyMixReviewArtifactFolderPathSanitizesToNil() throws {
+        let settings = NativeSettingsStore.sanitize(
+            PlayerSettings(mixReviewArtifactFolderPath: "   ")
+        )
+
+        #expect(settings.mixReviewArtifactFolderPath == nil)
     }
 
     @Test func loadFallsBackToBackupWhenPrimaryIsMissing() throws {
@@ -125,7 +136,8 @@ struct NativeSettingsStoreTests {
               "activeAiAgentProfileId": "old-custom",
               "plannerCommand": "old",
               "plannerArgs": ["planner"],
-              "plannerTimeoutMs": 9999
+              "plannerTimeoutMs": 9999,
+              "mixReviewArtifactFolderPath": "/tmp/BeatDropper Review Notes"
             }
             """.utf8
         ).write(to: folderURL.appendingPathComponent("player-settings.json"))
@@ -146,6 +158,7 @@ struct NativeSettingsStoreTests {
         #expect(settings.activeAiAgentProfileId == PlayerSettings.codexAgentProfileId)
         #expect(settings.plannerCommand == "node")
         #expect(settings.plannerTimeoutMs == 20_000)
+        #expect(settings.mixReviewArtifactFolderPath == "/tmp/BeatDropper Review Notes")
     }
 
     private func temporarySettingsURL() -> URL {

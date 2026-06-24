@@ -64,16 +64,30 @@ extension BeatDropperAppModel {
             self.isPlanningMix = false
             self.activePlannerRequestID = nil
             if let plan = result.plan {
-                self.currentMixPlan = plan
-                self.currentMixPlanPair = PlannedMixPair(currentTrackId: current.id, nextTrackId: next.id)
+                let pair = PlannedMixPair(currentTrackId: current.id, nextTrackId: next.id)
+                let accepted = self.acceptedMixPlan(
+                    plan: plan,
+                    pair: pair,
+                    result: result,
+                    current: current,
+                    next: next,
+                    currentAnalysis: currentAnalysis,
+                    nextAnalysis: nextAnalysis
+                )
+                self.currentMixPlan = accepted.plan
+                self.currentMixPlanPair = pair
+                self.currentMixPlanReview = accepted.review
+                self.recordMixReviewEvent(plan: accepted.plan, review: accepted.review)
                 self.updateScheduledMixStatus()
                 self.startMixPlanSchedulerIfNeeded()
-                self.notice = result.source == "local-fallback"
+                let readyText = accepted.review.source == "local-fallback"
                     ? "Local fallback mix plan ready"
                     : "AI mix plan ready"
+                self.notice = "\(readyText) · quality \(accepted.review.renderedQuality.grade.rawValue)"
             } else {
                 self.currentMixPlan = nil
                 self.currentMixPlanPair = nil
+                self.currentMixPlanReview = nil
                 self.plannerStatus = result.reason ?? "AI planner returned no plan"
                 self.notice = self.plannerStatus
             }
@@ -265,10 +279,176 @@ extension BeatDropperAppModel {
         stopMixPlanScheduler()
         currentMixPlan = nil
         currentMixPlanPair = nil
+        currentMixPlanReview = nil
         scheduledMixCountdownSec = nil
         if !isPlanningMix {
             plannerStatus = isAIMixEnabled ? "AI mix active" : "No AI mix plan"
         }
+    }
+
+    func acceptedMixPlan(
+        plan: MixPlan,
+        pair: PlannedMixPair,
+        result: NativeMixPlannerResult,
+        current: ImportedTrack,
+        next: ImportedTrack,
+        currentAnalysis: TrackAnalysis?,
+        nextAnalysis: TrackAnalysis?
+    ) -> AcceptedMixPlan {
+        let aiReport = RenderedTransitionQualityAnalyzer.analyze(
+            plan: plan,
+            currentTrack: current.track,
+            nextTrack: next.track,
+            currentAnalysis: currentAnalysis,
+            nextAnalysis: nextAnalysis
+        )
+        let aiComparison = buildPlanComparison(
+            plan: plan,
+            source: result.source,
+            reason: result.reason,
+            renderedQuality: aiReport
+        )
+        guard result.source == "cli",
+              let fallbackPlan = result.shadowFallbackPlan
+        else {
+            return AcceptedMixPlan(
+                plan: plan,
+                review: PlannedMixReview(
+                    pair: pair,
+                    source: result.source,
+                    fallbackReason: result.source == "local-fallback" ? result.reason : nil,
+                    selectionReason: nil,
+                    renderedQuality: aiReport,
+                    shadowFallbackComparison: nil
+                )
+            )
+        }
+
+        let fallbackComparison = buildPlanComparison(
+            plan: fallbackPlan,
+            source: "local-fallback",
+            reason: result.shadowFallbackReason,
+            current: current,
+            next: next,
+            currentAnalysis: currentAnalysis,
+            nextAnalysis: nextAnalysis
+        )
+        let decision = MixPlanAcceptanceGate.decide(
+            currentTrackId: pair.currentTrackId,
+            nextTrackId: pair.nextTrackId,
+            aiPlan: exportPlan(from: aiComparison),
+            fallbackPlan: exportPlan(from: fallbackComparison)
+        )
+
+        switch decision.selectedRole {
+        case .aiPlanner:
+            return AcceptedMixPlan(
+                plan: plan,
+                review: PlannedMixReview(
+                    pair: pair,
+                    source: result.source,
+                    fallbackReason: nil,
+                    selectionReason: decision.reason.rawValue,
+                    renderedQuality: aiReport,
+                    shadowFallbackComparison: fallbackComparison
+                )
+            )
+        case .localFallback:
+            return AcceptedMixPlan(
+                plan: fallbackPlan,
+                review: PlannedMixReview(
+                    pair: pair,
+                    source: "local-fallback",
+                    fallbackReason: decision.reason.rawValue,
+                    selectionReason: decision.reason.rawValue,
+                    renderedQuality: fallbackComparison.renderedQuality,
+                    shadowFallbackComparison: aiComparison
+                )
+            )
+        }
+    }
+
+    func buildPlanComparison(
+        plan: MixPlan,
+        source: String,
+        reason: String?,
+        current: ImportedTrack,
+        next: ImportedTrack,
+        currentAnalysis: TrackAnalysis?,
+        nextAnalysis: TrackAnalysis?
+    ) -> PlannedMixReviewPlanComparison {
+        let report = RenderedTransitionQualityAnalyzer.analyze(
+            plan: plan,
+            currentTrack: current.track,
+            nextTrack: next.track,
+            currentAnalysis: currentAnalysis,
+            nextAnalysis: nextAnalysis
+        )
+        return PlannedMixReviewPlanComparison(
+            source: source,
+            reason: reason,
+            transitionStartSec: plan.transitionStartSec,
+            transitionEndSec: plan.transitionEndSec,
+            nextTrackStartOffsetSec: plan.nextTrackStartOffsetSec,
+            style: plan.style,
+            confidence: plan.confidence,
+            candidateId: plan.candidateId,
+            renderedQuality: report
+        )
+    }
+
+    func buildPlanComparison(
+        plan: MixPlan,
+        source: String,
+        reason: String?,
+        renderedQuality: RenderedTransitionQualityReport
+    ) -> PlannedMixReviewPlanComparison {
+        PlannedMixReviewPlanComparison(
+            source: source,
+            reason: reason,
+            transitionStartSec: plan.transitionStartSec,
+            transitionEndSec: plan.transitionEndSec,
+            nextTrackStartOffsetSec: plan.nextTrackStartOffsetSec,
+            style: plan.style,
+            confidence: plan.confidence,
+            candidateId: plan.candidateId,
+            renderedQuality: renderedQuality
+        )
+    }
+
+    func exportPlan(from comparison: PlannedMixReviewPlanComparison) -> MixReviewExportPlan {
+        MixReviewExportPlan(
+            source: comparison.source,
+            reason: comparison.reason,
+            transitionStartSec: comparison.transitionStartSec,
+            transitionEndSec: comparison.transitionEndSec,
+            nextTrackStartOffsetSec: comparison.nextTrackStartOffsetSec,
+            style: comparison.style,
+            confidence: comparison.confidence,
+            candidateId: comparison.candidateId,
+            renderedQuality: comparison.renderedQuality
+        )
+    }
+
+    func recordMixReviewEvent(plan: MixPlan, review: PlannedMixReview) {
+        let event = PlannedMixReviewEvent(
+            id: UUID(),
+            createdAt: Date(),
+            pair: review.pair,
+            source: review.source,
+            fallbackReason: review.fallbackReason,
+            selectionReason: review.selectionReason,
+            transitionStartSec: plan.transitionStartSec,
+            transitionEndSec: plan.transitionEndSec,
+            nextTrackStartOffsetSec: plan.nextTrackStartOffsetSec,
+            style: plan.style,
+            confidence: plan.confidence,
+            candidateId: plan.candidateId,
+            renderedQuality: review.renderedQuality,
+            shadowFallbackComparison: review.shadowFallbackComparison
+        )
+        recentMixReviewEvents.insert(event, at: 0)
+        recentMixReviewEvents = Array(recentMixReviewEvents.prefix(12))
     }
 }
 

@@ -85,6 +85,68 @@ struct PlannerEvidenceTests {
         #expect(plan.confidence == 1)
         #expect(plan.tempoSync.targetRate == 1.15)
         #expect(plan.evidence.count == 8)
+        #expect(plan.mixControls?.gain.outgoingTrimDb == 0)
+        #expect(plan.mixControls?.clipProtection.mode == .monitorOnly)
+    }
+
+    @Test func mixPlanValidationClampsMixControls() throws {
+        let candidate = MixPlan(
+            transitionStartSec: 120,
+            transitionEndSec: 128,
+            nextTrackStartOffsetSec: 16,
+            style: .energySwap,
+            confidence: 0.8,
+            reasoningSummary: "candidate",
+            tempoSync: MixTempoSyncPlan(enabled: false, targetRate: nil),
+            mixControls: MixControlPlan(
+                gain: MixGainPlan(outgoingTrimDb: -50, incomingTrimDb: 20),
+                eq: MixThreeBandEQPlan(
+                    outgoingLowDb: -40,
+                    outgoingMidDb: 12,
+                    outgoingHighDb: 0.5,
+                    incomingLowDb: 9,
+                    incomingMidDb: -20,
+                    incomingHighDb: 0
+                ),
+                filter: MixFilterPlan(
+                    outgoingMode: .lowPass,
+                    outgoingStartHz: 5,
+                    outgoingEndHz: 40_000,
+                    incomingMode: .disabled,
+                    incomingStartHz: 200,
+                    incomingEndHz: 500
+                ),
+                loudness: MixLoudnessPlan(targetIntegratedLufs: -40, maxPeakDb: 2),
+                clipProtection: MixClipProtectionPlan(enabled: true, mode: .softLimit, ceilingDb: -20),
+                qualityNotes: Array(repeating: "note", count: 8)
+            )
+        )
+
+        let result = MixPlanValidator.validateAndClamp(
+            candidate,
+            context: MixPlanValidationContext(
+                currentPlaybackElapsedSec: 100,
+                currentTrackDurationSec: 150,
+                nextTrackDurationSec: 190,
+                maxFadeDurationSec: 8
+            )
+        )
+
+        let controls = try #require(result.plan?.mixControls)
+        #expect(controls.gain.outgoingTrimDb == -12)
+        #expect(controls.gain.incomingTrimDb == 6)
+        #expect(controls.eq.outgoingLowDb == -12)
+        #expect(controls.eq.outgoingMidDb == 6)
+        #expect(controls.eq.incomingLowDb == 6)
+        #expect(controls.eq.incomingMidDb == -12)
+        #expect(controls.filter.outgoingStartHz == 20)
+        #expect(controls.filter.outgoingEndHz == 20_000)
+        #expect(controls.filter.incomingStartHz == nil)
+        #expect(controls.loudness.targetIntegratedLufs == -24)
+        #expect(controls.loudness.maxPeakDb == -0.1)
+        #expect(controls.clipProtection.mode == .softLimit)
+        #expect(controls.clipProtection.ceilingDb == -6)
+        #expect(controls.qualityNotes.count == 6)
     }
 
     @Test func mixPlanSchedulerStartsAtTransitionStartWithTolerance() {

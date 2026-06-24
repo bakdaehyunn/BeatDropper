@@ -7,6 +7,8 @@ struct NativeMixPlannerResult: Sendable {
     var reason: String?
     var request: PlannerRequest
     var response: PlannerResponse?
+    var shadowFallbackPlan: MixPlan?
+    var shadowFallbackReason: String?
 }
 
 struct NativeMixPlannerBridge: Sendable {
@@ -37,12 +39,20 @@ struct NativeMixPlannerBridge: Sendable {
                 )
             }
 
+            let shadowFallbackReason = "shadow_fallback_comparison"
+            let shadowFallbackPlan = NativeFallbackMixPlanner.buildPlan(
+                request: request,
+                validationContext: validationContext,
+                failureReason: shadowFallbackReason
+            )
             return NativeMixPlannerResult(
                 plan: plan,
                 source: "cli",
                 reason: nil,
                 request: request,
-                response: response
+                response: response,
+                shadowFallbackPlan: shadowFallbackPlan,
+                shadowFallbackReason: shadowFallbackPlan == nil ? nil : shadowFallbackReason
             )
         } catch {
             return fallbackResult(
@@ -70,7 +80,9 @@ struct NativeMixPlannerBridge: Sendable {
             source: plan == nil ? "fallback-unavailable" : "local-fallback",
             reason: reason,
             request: request,
-            response: response
+            response: response,
+            shadowFallbackPlan: nil,
+            shadowFallbackReason: nil
         )
     }
 

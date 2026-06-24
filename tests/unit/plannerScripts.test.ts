@@ -33,6 +33,19 @@ const { buildHeuristicResponse } = require('../../scripts/heuristic-mix-planner.
         enabled: boolean;
         targetRate: number | null;
       };
+      mixControls?: {
+        gain: {
+          outgoingTrimDb: number | null;
+          incomingTrimDb: number | null;
+        };
+        eq: Record<string, number | null>;
+        clipProtection: {
+          enabled: boolean;
+          mode: string;
+          ceilingDb: number | null;
+        };
+        qualityNotes: string[];
+      };
       candidateId?: string | null;
     };
   };
@@ -151,6 +164,8 @@ describe('planner scripts', () => {
     expect(prompt).toContain('Analysis hints:');
     expect(prompt).toContain('Treat source=tail_fallback candidates as safety fallbacks');
     expect(prompt).toContain('tempoSync.targetRate is a playback-rate ratio');
+    expect(prompt).toContain('mixControls is optional planning metadata');
+    expect(prompt).toContain('Do not request realtime AI control');
   });
 
   it('prefers compact analysis summary evidence when present', () => {
@@ -376,8 +391,11 @@ describe('planner scripts', () => {
     );
 
     expect(mixPlanObjectSchema).toBeDefined();
+    const optionalFields = ['mixControls'];
     expect(mixPlanObjectSchema?.required?.sort()).toEqual(
-      Object.keys(mixPlanObjectSchema?.properties ?? {}).sort()
+      Object.keys(mixPlanObjectSchema?.properties ?? {})
+        .filter((key) => !optionalFields.includes(key))
+        .sort()
     );
     const tempoSyncSchema = mixPlanObjectSchema?.properties?.tempoSync as
       | {
@@ -392,6 +410,27 @@ describe('planner scripts', () => {
       (entry) => entry.type === 'number'
     );
     expect(targetRateNumberSchema).toMatchObject({ minimum: 0.85, maximum: 1.15 });
+
+    const mixControlsSchema = mixPlanObjectSchema?.properties?.mixControls as
+      | {
+          anyOf?: Array<{
+            type: string;
+            properties?: {
+              gain?: {
+                properties?: {
+                  incomingTrimDb?: {
+                    anyOf?: Array<{ type: string; minimum?: number; maximum?: number }>;
+                  };
+                };
+              };
+            };
+          }>;
+        }
+      | undefined;
+    const mixControlsObjectSchema = mixControlsSchema?.anyOf?.find((entry) => entry.type === 'object');
+    const incomingTrimNumberSchema = mixControlsObjectSchema?.properties?.gain?.properties
+      ?.incomingTrimDb?.anyOf?.find((entry) => entry.type === 'number');
+    expect(incomingTrimNumberSchema).toMatchObject({ minimum: -12, maximum: 6 });
   });
 
   it('includes distinct mode guidance in the codex prompt', () => {
@@ -425,6 +464,8 @@ describe('planner scripts', () => {
     expect(response.mixPlan.transitionStartSec).toBeGreaterThanOrEqual(176);
     expect(response.mixPlan.transitionEndSec).toBeLessThanOrEqual(188);
     expect(response.mixPlan.reasoningSummary).toContain('Mode safe');
+    expect(response.mixPlan.mixControls?.clipProtection.mode).toBe('monitor_only');
+    expect(response.mixPlan.mixControls?.gain.incomingTrimDb).toBe(-2);
   });
 
   it('builds an adventurous heuristic plan that can choose a harder transition policy', () => {
@@ -455,6 +496,7 @@ describe('planner scripts', () => {
     expect(response.mixPlan.style).toBe('hard_cut');
     expect(response.mixPlan.tempoSync.enabled).toBe(false);
     expect(response.mixPlan.reasoningSummary).toContain('Mode adventurous');
+    expect(response.mixPlan.mixControls?.gain.incomingTrimDb).toBe(-1);
   });
 
   it('differentiates heuristic policy across safe, balanced, and adventurous modes', () => {

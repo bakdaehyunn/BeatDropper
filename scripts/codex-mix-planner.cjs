@@ -13,6 +13,94 @@ const readStdin = async () => {
   return Buffer.concat(chunks).toString('utf8');
 };
 
+const mixControlsSchema = {
+  anyOf: [
+    { type: 'null' },
+    {
+      type: 'object',
+      additionalProperties: false,
+      required: ['gain', 'eq', 'filter', 'loudness', 'clipProtection', 'qualityNotes'],
+      properties: {
+        gain: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['outgoingTrimDb', 'incomingTrimDb'],
+          properties: {
+            outgoingTrimDb: { anyOf: [{ type: 'number', minimum: -12, maximum: 6 }, { type: 'null' }] },
+            incomingTrimDb: { anyOf: [{ type: 'number', minimum: -12, maximum: 6 }, { type: 'null' }] }
+          }
+        },
+        eq: {
+          type: 'object',
+          additionalProperties: false,
+          required: [
+            'outgoingLowDb',
+            'outgoingMidDb',
+            'outgoingHighDb',
+            'incomingLowDb',
+            'incomingMidDb',
+            'incomingHighDb'
+          ],
+          properties: {
+            outgoingLowDb: { anyOf: [{ type: 'number', minimum: -12, maximum: 6 }, { type: 'null' }] },
+            outgoingMidDb: { anyOf: [{ type: 'number', minimum: -12, maximum: 6 }, { type: 'null' }] },
+            outgoingHighDb: { anyOf: [{ type: 'number', minimum: -12, maximum: 6 }, { type: 'null' }] },
+            incomingLowDb: { anyOf: [{ type: 'number', minimum: -12, maximum: 6 }, { type: 'null' }] },
+            incomingMidDb: { anyOf: [{ type: 'number', minimum: -12, maximum: 6 }, { type: 'null' }] },
+            incomingHighDb: { anyOf: [{ type: 'number', minimum: -12, maximum: 6 }, { type: 'null' }] }
+          }
+        },
+        filter: {
+          type: 'object',
+          additionalProperties: false,
+          required: [
+            'outgoingMode',
+            'outgoingStartHz',
+            'outgoingEndHz',
+            'incomingMode',
+            'incomingStartHz',
+            'incomingEndHz'
+          ],
+          properties: {
+            outgoingMode: { type: 'string', enum: ['disabled', 'low_pass', 'high_pass'] },
+            outgoingStartHz: { anyOf: [{ type: 'number', minimum: 20, maximum: 20000 }, { type: 'null' }] },
+            outgoingEndHz: { anyOf: [{ type: 'number', minimum: 20, maximum: 20000 }, { type: 'null' }] },
+            incomingMode: { type: 'string', enum: ['disabled', 'low_pass', 'high_pass'] },
+            incomingStartHz: { anyOf: [{ type: 'number', minimum: 20, maximum: 20000 }, { type: 'null' }] },
+            incomingEndHz: { anyOf: [{ type: 'number', minimum: 20, maximum: 20000 }, { type: 'null' }] }
+          }
+        },
+        loudness: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['targetIntegratedLufs', 'maxPeakDb'],
+          properties: {
+            targetIntegratedLufs: {
+              anyOf: [{ type: 'number', minimum: -24, maximum: -6 }, { type: 'null' }]
+            },
+            maxPeakDb: { anyOf: [{ type: 'number', minimum: -6, maximum: -0.1 }, { type: 'null' }] }
+          }
+        },
+        clipProtection: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['enabled', 'mode', 'ceilingDb'],
+          properties: {
+            enabled: { type: 'boolean' },
+            mode: { type: 'string', enum: ['monitor_only', 'soft_limit'] },
+            ceilingDb: { anyOf: [{ type: 'number', minimum: -6, maximum: -0.1 }, { type: 'null' }] }
+          }
+        },
+        qualityNotes: {
+          type: 'array',
+          maxItems: 6,
+          items: { type: 'string' }
+        }
+      }
+    }
+  ]
+};
+
 const plannerSchema = {
   type: 'object',
   additionalProperties: false,
@@ -87,7 +175,8 @@ const plannerSchema = {
             evidence: {
               type: 'array',
               items: { type: 'string' }
-            }
+            },
+            mixControls: mixControlsSchema
           }
         }
       ]
@@ -440,6 +529,9 @@ const buildPrompt = (request) => {
     '- Keep style choices operationally conservative unless the mode explicitly allows more aggressive transitions',
     '- Use tempoSync only when BPM values are present and the chosen playback-rate ratio still sounds plausible',
     '- tempoSync.targetRate is a playback-rate ratio from 0.85 to 1.15, not a BPM value; use currentBpm / nextBpm when syncing the next track to the current track',
+    '- mixControls is optional planning metadata for a later deterministic DSP executor; it does not execute in this slice',
+    '- If you include mixControls, keep gain/EQ/filter moves conservative and bounded by the schema',
+    '- Do not request realtime AI control, stem separation, vocal detection, key detection, LUFS analysis, limiter DSP, or EQ DSP execution',
     '',
     buildModeGuidance(promptRequest?.settings?.aiDjMode),
     '',

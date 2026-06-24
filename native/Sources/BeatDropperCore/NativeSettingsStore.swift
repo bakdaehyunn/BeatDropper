@@ -118,7 +118,8 @@ public final class NativeSettingsStore: @unchecked Sendable {
             activeAiAgentProfileId: PlayerSettings.codexAgentProfileId,
             plannerCommand: PlayerSettings.defaultCodexAgentProfile.command,
             plannerArgs: PlayerSettings.defaultCodexAgentProfile.args,
-            plannerTimeoutMs: PlayerSettings.defaultCodexAgentProfile.timeoutMs
+            plannerTimeoutMs: PlayerSettings.defaultCodexAgentProfile.timeoutMs,
+            mixReviewArtifactFolderPath: string(settings.mixReviewArtifactFolderPath)
         )
     }
 
@@ -151,7 +152,8 @@ public final class NativeSettingsStore: @unchecked Sendable {
             activeAiAgentProfileId: PlayerSettings.codexAgentProfileId,
             plannerCommand: PlayerSettings.defaultCodexAgentProfile.command,
             plannerArgs: PlayerSettings.defaultCodexAgentProfile.args,
-            plannerTimeoutMs: PlayerSettings.defaultCodexAgentProfile.timeoutMs
+            plannerTimeoutMs: PlayerSettings.defaultCodexAgentProfile.timeoutMs,
+            mixReviewArtifactFolderPath: string(raw["mixReviewArtifactFolderPath"])
         )
     }
 
