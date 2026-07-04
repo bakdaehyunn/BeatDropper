@@ -1,0 +1,205 @@
+{
+  "id": "schema-v7-calibration-pass",
+  "title": "Schema v7 key, loudness, and stereo calibration fixture",
+  "kind": "snapshot",
+  "tags": ["schema-v7", "key", "loudness", "stereo", "cue-calibration"],
+  "trackReference": {
+    "source": "synthetic",
+    "notes": "Curated anonymized schema v7 snapshot values. No private track names, paths, or audio."
+  },
+  "expectedGrade": "pass",
+  "expected": {
+    "bpm": 124,
+    "firstDownbeatSec": 0,
+    "outroCueSec": 96,
+    "barGridSec": [0, 8, 16, 24, 32, 40, 48, 56],
+    "phraseBoundarySec": [0, 64],
+    "plannerReady": true,
+    "musicalKey": {
+      "tonic": "C",
+      "mode": "minor",
+      "minConfidence": 0.4
+    },
+    "loudness": {
+      "integratedRMSDb": -10.2,
+      "integratedLUFS": -9.8,
+      "peakDb": -0.7,
+      "truePeakDb": -0.55,
+      "minHeadroomDb": 0.5,
+      "minConfidence": 0.7
+    },
+    "stereo": {
+      "channelCount": 2,
+      "minStereoWidth": 0.2,
+      "maxStereoWidth": 0.8,
+      "minPhaseCorrelation": 0.4,
+      "maxMidSideBalance": 4,
+      "minConfidence": 0.7
+    },
+    "cueCandidates": [
+      {
+        "type": "first_downbeat",
+        "startSec": 0,
+        "minConfidence": 0.7,
+        "origin": "derived"
+      },
+      {
+        "type": "outro",
+        "startSec": 96,
+        "minConfidence": 0.7,
+        "origin": "derived"
+      }
+    ],
+    "mixReadiness": {
+      "minAnalysisConfidence": 0.78,
+      "minHarmonicKeyQuality": 0.4,
+      "minLoudnessConfidence": 0.7,
+      "forbiddenWarnings": ["key_unavailable", "loudness_low_confidence"]
+    }
+  },
+  "groundTruthLabels": {
+    "schemaVersion": 1,
+    "reviewedBy": "curated-fixture",
+    "reviewedAt": "2026-07-02T00:00:00.000Z",
+    "notes": "Editable anonymized calibration labels. These values are synthetic and do not disclose private audio.",
+    "expected": {
+      "bpm": 124,
+      "firstDownbeatSec": 0,
+      "outroCueSec": 96,
+      "barGridSec": [0, 8, 16, 24, 32, 40, 48, 56],
+      "phraseBoundarySec": [0, 64],
+      "plannerReady": true,
+      "musicalKey": {
+        "tonic": "C",
+        "mode": "minor",
+        "minConfidence": 0.4
+      },
+      "loudness": {
+        "integratedRMSDb": -10.2,
+        "integratedLUFS": -9.8,
+        "peakDb": -0.7,
+        "truePeakDb": -0.55,
+        "minHeadroomDb": 0.5,
+        "minConfidence": 0.7
+      },
+      "stereo": {
+        "channelCount": 2,
+        "minStereoWidth": 0.2,
+        "maxStereoWidth": 0.8,
+        "minPhaseCorrelation": 0.4,
+        "maxMidSideBalance": 4,
+        "minConfidence": 0.7
+      },
+      "cueCandidates": [
+        {
+          "type": "first_downbeat",
+          "startSec": 0,
+          "minConfidence": 0.7,
+          "origin": "derived"
+        },
+        {
+          "type": "outro",
+          "startSec": 96,
+          "minConfidence": 0.7,
+          "origin": "derived"
+        }
+      ],
+      "mixReadiness": {
+        "minAnalysisConfidence": 0.78,
+        "minHarmonicKeyQuality": 0.4,
+        "minLoudnessConfidence": 0.7,
+        "forbiddenWarnings": ["key_unavailable", "loudness_low_confidence"]
+      }
+    }
+  },
+  "analysis": {
+    "trackId": "schema-v7-calibration-pass",
+    "source": "derived",
+    "bpm": 124,
+    "bpmConfidence": 0.88,
+    "beatGridSec": [0, 2, 4, 6, 8, 10, 12, 14, 16],
+    "downbeatsSec": [0, 8, 16, 24, 32, 40, 48, 56],
+    "barGrid": [
+      { "index": 0, "startSec": 0, "beatIndex": 0 },
+      { "index": 1, "startSec": 8, "beatIndex": 4 },
+      { "index": 2, "startSec": 16, "beatIndex": 8 },
+      { "index": 3, "startSec": 24, "beatIndex": 12 },
+      { "index": 4, "startSec": 32, "beatIndex": 16 },
+      { "index": 5, "startSec": 40, "beatIndex": 20 },
+      { "index": 6, "startSec": 48, "beatIndex": 24 },
+      { "index": 7, "startSec": 56, "beatIndex": 28 }
+    ],
+    "phraseMarkers": [
+      { "index": 0, "startSec": 0, "bars": 8, "confidence": 0.82 },
+      { "index": 1, "startSec": 64, "bars": 8, "confidence": 0.84 }
+    ],
+    "introCueSec": 0,
+    "outroCueSec": 96,
+    "energyProfile": [0.82, 0.7, 0.58, 0.46, 0.36, 0.28],
+    "waveformPeaks": [{ "timeSec": 0, "peak": 0.92, "rms": 0.31 }],
+    "waveformDetail": [{ "timeSec": 0, "peak": 0.92, "rms": 0.31, "min": -0.8, "max": 0.92 }],
+    "spectralBands": [{ "timeSec": 0, "low": 0.58, "mid": 0.5, "high": 0.32 }],
+    "transientMarkers": [
+      { "index": 0, "timeSec": 0, "strength": 0.86 },
+      { "index": 1, "timeSec": 8, "strength": 0.78 }
+    ],
+    "cueCandidates": [
+      {
+        "id": "first-downbeat",
+        "type": "first_downbeat",
+        "startSec": 0,
+        "endSec": 4,
+        "confidence": 0.84,
+        "label": "First downbeat",
+        "origin": "derived"
+      },
+      {
+        "id": "outro",
+        "type": "outro",
+        "startSec": 96,
+        "endSec": 108,
+        "confidence": 0.8,
+        "label": "Outro mix-out",
+        "origin": "derived"
+      }
+    ],
+    "musicalKey": {
+      "tonic": "C",
+      "mode": "minor",
+      "confidence": 0.45,
+      "chromaEnergy": 128
+    },
+    "loudness": {
+      "integratedRMSDb": -10.2,
+      "integratedLUFS": -9.8,
+      "peakDb": -0.7,
+      "truePeakDb": -0.55,
+      "headroomDb": 0.7,
+      "crestFactorDb": 9.5,
+      "dynamicRangeDb": 12.8,
+      "loudnessRangeLU": 4.1,
+      "measurement": "ebu_r128_k_weighted_gated_mono",
+      "confidence": 0.82
+    },
+    "stereo": {
+      "channelCount": 2,
+      "leftPeakDb": -0.7,
+      "rightPeakDb": -1.1,
+      "leftRMSDb": -10.1,
+      "rightRMSDb": -10.6,
+      "stereoWidth": 0.32,
+      "phaseCorrelation": 0.72,
+      "midSideBalance": 2.15,
+      "confidence": 0.86
+    },
+    "analysisConfidence": 0.82,
+    "analysisQuality": {
+      "waveformDetail": 0.82,
+      "spectralBands": 0.8,
+      "transientMarkers": 0.78,
+      "beatGrid": 0.86,
+      "harmonicKey": 0.45
+    },
+    "analysisWarnings": []
+  }
+}

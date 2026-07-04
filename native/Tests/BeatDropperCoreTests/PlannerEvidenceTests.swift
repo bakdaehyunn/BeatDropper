@@ -201,8 +201,8 @@ struct PlannerEvidenceTests {
                 TransientMarker(index: 1, timeSec: beat, strength: 0.76)
             ],
             cueCandidates: [
-                CueCandidate(id: "first-downbeat", type: .firstDownbeat, startSec: 0, endSec: 4, confidence: 0.8, label: "First downbeat"),
-                CueCandidate(id: "outro", type: .outro, startSec: outroSec, endSec: durationSec, confidence: 0.74, label: "Outro mix-out")
+                CueCandidate(id: "first-downbeat", type: .firstDownbeat, startSec: 0, endSec: 4, confidence: 0.8, label: "First downbeat", origin: .derived),
+                CueCandidate(id: "outro", type: .outro, startSec: outroSec, endSec: durationSec, confidence: 0.74, label: "Outro mix-out", origin: .derived)
             ],
             analysisConfidence: 0.84,
             analysisQuality: AnalysisQuality(

@@ -2,11 +2,13 @@ import Foundation
 
 public struct PCMAnalysisBuffer: Sendable {
     public var samples: [Float]
+    public var channelSamples: [[Float]]
     public var sampleRate: Double
     public var durationSec: Double
 
-    public init(samples: [Float], sampleRate: Double, durationSec: Double) {
+    public init(samples: [Float], channelSamples: [[Float]] = [], sampleRate: Double, durationSec: Double) {
         self.samples = samples
+        self.channelSamples = channelSamples
         self.sampleRate = sampleRate
         self.durationSec = durationSec
     }
@@ -31,6 +33,17 @@ public struct NativeDSPAnalyzer: Sendable {
             durationSec: durationSec,
             bucketCount: waveformDetail.count
         )
+        let musicalKey = estimateMusicalKey(
+            samples: buffer.samples,
+            sampleRate: buffer.sampleRate,
+            durationSec: durationSec
+        )
+        let loudness = buildLoudnessAnalysis(
+            samples: buffer.samples,
+            sampleRate: buffer.sampleRate,
+            durationSec: durationSec
+        )
+        let stereo = buildStereoAnalysis(buffer: buffer)
         let onsetEnvelope = buildOnsetEnvelope(
             waveformDetail: waveformDetail,
             spectralBands: spectralBands,
@@ -70,22 +83,28 @@ public struct NativeDSPAnalyzer: Sendable {
             downbeatConfidence: downbeatGrid.confidence
         )
         let introCueSec = 0.0
-        let firstDownbeatSec = downbeatGrid.downbeatsSec.first ?? 0
+        let firstDownbeatSec = downbeatGrid.downbeatsSec.first
         let outroCueSec = resolveOutroCueSec(barGrid: downbeatGrid.barGrid, durationSec: durationSec)
-        let lowEnergyBreakSec = findEnergyTime(
+        let lowEnergyBreakSecRaw = findEnergyTime(
             energyProfile: energyProfile,
             durationSec: durationSec,
             findMax: false,
             startRatio: 0.35,
             endRatio: 0.8
         )
-        let highEnergyDropSec = findEnergyTime(
+        let lowEnergyBreakSec = lowEnergyBreakSecRaw.map {
+            snapToNearestBar(barGrid: downbeatGrid.barGrid, timeSec: $0) ?? $0
+        }
+        let highEnergyDropSecRaw = findEnergyTime(
             energyProfile: energyProfile,
             durationSec: durationSec,
             findMax: true,
             startRatio: 0.05,
             endRatio: 0.55
         )
+        let highEnergyDropSec = highEnergyDropSecRaw.map {
+            snapToNearestBar(barGrid: downbeatGrid.barGrid, timeSec: $0) ?? $0
+        }
         let transientQuality = scoreTransientMarkerQuality(
             transientMarkers: transientMarkers,
             beatGridSec: beatGridSec,
@@ -97,7 +116,8 @@ public struct NativeDSPAnalyzer: Sendable {
             waveformDetail: clamped(Double(waveformDetail.count) / Double(Self.waveformDetailMaxBuckets), min: 0, max: 1),
             spectralBands: clamped(Double(spectralBands.count) / Double(Self.waveformDetailMaxBuckets), min: 0, max: 1),
             transientMarkers: transientQuality,
-            beatGrid: beatGridQuality
+            beatGrid: beatGridQuality,
+            harmonicKey: musicalKey?.confidence ?? 0
         )
         let analysisConfidence = clamped(
             0.2 +
@@ -106,7 +126,9 @@ public struct NativeDSPAnalyzer: Sendable {
                 (energyProfile.count > 8 ? 0.14 : 0) +
                 (waveformPeaks.count > 8 ? 0.1 : 0) +
                 (spectralBands.count > 8 ? 0.08 : 0) +
-                transientQuality * 0.06,
+                transientQuality * 0.06 +
+                (musicalKey?.confidence ?? 0) * 0.03 +
+                (loudness?.confidence ?? 0) * 0.03,
             min: 0,
             max: 1
         )
@@ -136,9 +158,17 @@ public struct NativeDSPAnalyzer: Sendable {
                 outroCueSec: outroCueSec,
                 lowEnergyBreakSec: lowEnergyBreakSec,
                 highEnergyDropSec: highEnergyDropSec,
+                barGrid: downbeatGrid.barGrid,
+                energyProfile: energyProfile,
+                spectralBands: spectralBands,
+                transientMarkers: transientMarkers,
                 beatGridQuality: beatGridQuality,
+                downbeatConfidence: downbeatGrid.confidence,
                 transientQuality: transientQuality
             ),
+            musicalKey: musicalKey,
+            loudness: loudness,
+            stereo: stereo,
             analysisConfidence: analysisConfidence,
             analysisQuality: analysisQuality,
             analysisWarnings: buildWarnings(
@@ -146,7 +176,9 @@ public struct NativeDSPAnalyzer: Sendable {
                 bpmConfidence: resolvedBPM.confidence,
                 metadataMismatch: resolvedBPM.metadataMismatch,
                 durationSec: durationSec,
-                energyProfile: energyProfile
+                energyProfile: energyProfile,
+                musicalKey: musicalKey,
+                loudness: loudness
             )
         )
     }
@@ -160,6 +192,12 @@ public struct NativeDSPAnalyzer: Sendable {
     private static let maxValidBPM = 200.0
     private static let derivedBPMConfidencePriority = 0.58
     private static let bpmMismatchDelta = 3.0
+    private static let pitchClassNames = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+    private static let majorKeyProfile = [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88]
+    private static let minorKeyProfile = [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17]
+    private static let keyLowConfidenceThreshold = 0.35
+    private static let loudnessLowConfidenceThreshold = 0.45
+    private static let headroomLowThresholdDb = 1.0
 
     private func resolveDuration(track: Track, buffer: PCMAnalysisBuffer) -> Double {
         if buffer.durationSec.isFinite && buffer.durationSec > 0 {
@@ -314,6 +352,438 @@ public struct NativeDSPAnalyzer: Sendable {
                 high: clamped($0.high / maxEnergy, min: 0, max: 1)
             )
         }
+    }
+
+    private func estimateMusicalKey(
+        samples: [Float],
+        sampleRate: Double,
+        durationSec: Double
+    ) -> MusicalKeyEstimate? {
+        guard samples.count >= Self.spectralFFTSize, sampleRate > 0, durationSec >= 2 else {
+            return nil
+        }
+
+        let fftSize = Self.spectralFFTSize
+        let window = hannWindow(size: fftSize)
+        let hop = max(fftSize / 2, Int(sampleRate * 0.5))
+        let maxWindows = 64
+        let binHz = sampleRate / Double(fftSize)
+        let nyquistBin = fftSize / 2
+        let minBin = max(1, Int((55 / binHz).rounded(.up)))
+        let maxBin = min(nyquistBin, Int((5_000 / binHz).rounded(.down)))
+        guard minBin < maxBin else {
+            return nil
+        }
+
+        var chroma = Array(repeating: 0.0, count: 12)
+        var totalEnergy = 0.0
+        var windowStart = 0
+        var windowCount = 0
+        while windowStart < samples.count && windowCount < maxWindows {
+            var real = Array(repeating: 0.0, count: fftSize)
+            var imag = Array(repeating: 0.0, count: fftSize)
+            for index in 0..<fftSize {
+                let sampleIndex = windowStart + index
+                let sample = sampleIndex < samples.count ? Double(samples[sampleIndex]) : 0
+                real[index] = sample * window[index]
+            }
+            fftInPlace(real: &real, imag: &imag)
+
+            for bin in minBin...maxBin {
+                let frequency = Double(bin) * binHz
+                guard frequency > 0 else {
+                    continue
+                }
+                let midi = Int((69 + 12 * log2(frequency / 440)).rounded())
+                let pitchClass = ((midi % 12) + 12) % 12
+                let power = real[bin] * real[bin] + imag[bin] * imag[bin]
+                let weight = sqrt(power) * pitchWeight(frequency)
+                chroma[pitchClass] += weight
+                totalEnergy += weight
+            }
+
+            windowCount += 1
+            windowStart += hop
+        }
+
+        guard totalEnergy > 0.000_001 else {
+            return nil
+        }
+
+        let normalized = chroma.map { $0 / totalEnergy }
+        let candidates = keyCorrelationCandidates(chroma: normalized)
+        guard let best = candidates.first else {
+            return nil
+        }
+        let second = candidates.dropFirst().first?.score ?? 0
+        let separation = best.score > 0 ? clamped((best.score - second) / best.score, min: 0, max: 1) : 0
+        let concentration = normalized.max() ?? 0
+        let confidence = clamped(0.15 + separation * 0.58 + concentration * 1.2, min: 0, max: 0.96)
+        guard confidence >= 0.24 else {
+            return nil
+        }
+
+        return MusicalKeyEstimate(
+            tonic: Self.pitchClassNames[best.root],
+            mode: best.mode,
+            confidence: rounded(confidence),
+            chromaEnergy: rounded(clamped(totalEnergy / Double(max(1, windowCount)), min: 0, max: 1_000_000), digits: 3)
+        )
+    }
+
+    private func buildLoudnessAnalysis(samples: [Float], sampleRate: Double, durationSec: Double) -> LoudnessAnalysis? {
+        guard !samples.isEmpty, durationSec > 0 else {
+            return nil
+        }
+
+        let stats = sampleStats(samples: samples, start: 0, end: samples.count)
+        guard stats.peak > 0.000_01, stats.rms > 0.000_01 else {
+            return LoudnessAnalysis(
+                integratedRMSDb: -60,
+                integratedLUFS: -70,
+                peakDb: -60,
+                truePeakDb: -60,
+                headroomDb: 60,
+                crestFactorDb: 0,
+                dynamicRangeDb: 0,
+                loudnessRangeLU: 0,
+                measurement: "ebu_r128_k_weighted_gated_mono",
+                confidence: 0
+            )
+        }
+
+        let frameCount = min(256, max(8, Int(durationSec * 2)))
+        let samplesPerFrame = max(1, samples.count / frameCount)
+        var frameRMSDb: [Double] = []
+        frameRMSDb.reserveCapacity(frameCount)
+        for frameIndex in 0..<frameCount {
+            let start = frameIndex * samplesPerFrame
+            let end = min(samples.count, start + samplesPerFrame)
+            guard start < end else {
+                continue
+            }
+            let frameRMS = sampleStats(samples: samples, start: start, end: end).rms
+            if frameRMS > 0.000_01 {
+                frameRMSDb.append(db(frameRMS))
+            }
+        }
+
+        let integratedRMSDb = db(stats.rms)
+        let peakDb = db(stats.peak)
+        let ebuR128 = measureEBUR128(samples: samples, sampleRate: sampleRate)
+        let truePeakDb = ebuR128.truePeakDb ?? peakDb
+        let dynamicRangeDb = max(0, percentile(frameRMSDb, 0.95) - percentile(frameRMSDb, 0.10))
+        let confidence = clamped(
+            min(0.42, durationSec / 30) +
+                min(0.28, Double(frameRMSDb.count) / 180) +
+                min(0.24, stats.rms / 0.12) +
+                min(0.06, Double(ebuR128.gatedBlockCount) / 120),
+            min: 0,
+            max: 0.96
+        )
+
+        return LoudnessAnalysis(
+            integratedRMSDb: rounded(integratedRMSDb, digits: 2),
+            integratedLUFS: ebuR128.integratedLUFS.map { rounded($0, digits: 2) },
+            peakDb: rounded(peakDb, digits: 2),
+            truePeakDb: rounded(truePeakDb, digits: 2),
+            headroomDb: rounded(max(0, -truePeakDb), digits: 2),
+            crestFactorDb: rounded(max(0, peakDb - integratedRMSDb), digits: 2),
+            dynamicRangeDb: rounded(dynamicRangeDb, digits: 2),
+            loudnessRangeLU: ebuR128.loudnessRangeLU.map { rounded($0, digits: 2) },
+            measurement: "ebu_r128_k_weighted_gated_mono",
+            confidence: rounded(confidence)
+        )
+    }
+
+    private func buildStereoAnalysis(buffer: PCMAnalysisBuffer) -> StereoAnalysis? {
+        let channels = buffer.channelSamples.filter { !$0.isEmpty }
+        if channels.count < 2 {
+            let stats = sampleStats(samples: buffer.samples, start: 0, end: buffer.samples.count)
+            return StereoAnalysis(
+                channelCount: max(1, channels.count),
+                leftPeakDb: db(stats.peak),
+                rightPeakDb: nil,
+                leftRMSDb: db(stats.rms),
+                rightRMSDb: nil,
+                stereoWidth: 0,
+                phaseCorrelation: 1,
+                midSideBalance: 1,
+                confidence: buffer.samples.isEmpty ? 0 : 0.62
+            )
+        }
+
+        let left = channels[0]
+        let right = channels[1]
+        let count = min(left.count, right.count)
+        guard count > 0 else {
+            return nil
+        }
+
+        let leftStats = sampleStats(samples: left, start: 0, end: count)
+        let rightStats = sampleStats(samples: right, start: 0, end: count)
+        var sumLeftSquares = 0.0
+        var sumRightSquares = 0.0
+        var sumCross = 0.0
+        var sumMidSquares = 0.0
+        var sumSideSquares = 0.0
+
+        for index in 0..<count {
+            let leftValue = Double(left[index])
+            let rightValue = Double(right[index])
+            let mid = (leftValue + rightValue) * 0.5
+            let side = (leftValue - rightValue) * 0.5
+            sumLeftSquares += leftValue * leftValue
+            sumRightSquares += rightValue * rightValue
+            sumCross += leftValue * rightValue
+            sumMidSquares += mid * mid
+            sumSideSquares += side * side
+        }
+
+        let denominator = sqrt(max(0, sumLeftSquares * sumRightSquares))
+        let phaseCorrelation = denominator > 0 ? clamped(sumCross / denominator, min: -1, max: 1) : 1
+        let midRMS = sqrt(sumMidSquares / Double(count))
+        let sideRMS = sqrt(sumSideSquares / Double(count))
+        let stereoWidth = clamped(sideRMS / max(0.000_001, midRMS + sideRMS), min: 0, max: 1)
+        let midSideBalance = clamped(midRMS / max(0.000_001, sideRMS), min: 0, max: 12)
+        let activeChannels = [leftStats.rms, rightStats.rms].filter { $0 > 0.000_01 }.count
+        let confidence = clamped(
+            0.4 +
+                min(0.22, Double(count) / max(1, buffer.sampleRate * 20)) +
+                (activeChannels == 2 ? 0.28 : 0) +
+                min(0.1, Double(channels.count) / 20),
+            min: 0,
+            max: 0.96
+        )
+
+        return StereoAnalysis(
+            channelCount: channels.count,
+            leftPeakDb: rounded(db(leftStats.peak), digits: 2),
+            rightPeakDb: rounded(db(rightStats.peak), digits: 2),
+            leftRMSDb: rounded(db(leftStats.rms), digits: 2),
+            rightRMSDb: rounded(db(rightStats.rms), digits: 2),
+            stereoWidth: rounded(stereoWidth),
+            phaseCorrelation: rounded(phaseCorrelation),
+            midSideBalance: rounded(midSideBalance),
+            confidence: rounded(confidence)
+        )
+    }
+
+    private func measureEBUR128(
+        samples: [Float],
+        sampleRate: Double
+    ) -> (integratedLUFS: Double?, loudnessRangeLU: Double?, truePeakDb: Double?, gatedBlockCount: Int) {
+        guard samples.count >= 2, sampleRate > 0 else {
+            return (nil, nil, nil, 0)
+        }
+
+        let absoluteGateMeanSquare = pow(10, (-70 + 0.691) / 10)
+        let blockSize = max(1, Int((0.400 * sampleRate).rounded()))
+        let blockMeanSquares = ebuR128BlockMeanSquares(
+            samples: samples,
+            sampleRate: sampleRate,
+            blockSize: blockSize,
+            hopSize: max(1, Int((0.100 * sampleRate).rounded()))
+        )
+        guard samples.count >= blockSize else {
+            let meanSquare = blockMeanSquares.first ?? 0
+            let lufs = meanSquare > 0 ? -0.691 + 10 * log10(meanSquare) : -70
+            return (max(-70, lufs), 0, estimateTruePeakDb(samples: samples), meanSquare >= absoluteGateMeanSquare ? 1 : 0)
+        }
+
+        let absoluteGatedBlocks = blockMeanSquares.filter { $0 >= absoluteGateMeanSquare }
+        guard !absoluteGatedBlocks.isEmpty else {
+            return (-70, 0, estimateTruePeakDb(samples: samples), 0)
+        }
+
+        let absoluteGatedMean = absoluteGatedBlocks.reduce(0, +) / Double(absoluteGatedBlocks.count)
+        let relativeGateLUFS = (-0.691 + 10 * log10(absoluteGatedMean)) - 10
+        let relativeGateMeanSquare = pow(10, (relativeGateLUFS + 0.691) / 10)
+        let gatedBlocks = absoluteGatedBlocks.filter { $0 >= relativeGateMeanSquare }
+        let finalBlocks = gatedBlocks.isEmpty ? absoluteGatedBlocks : gatedBlocks
+        let integratedMeanSquare = finalBlocks.reduce(0, +) / Double(finalBlocks.count)
+        let integratedLUFS = -0.691 + 10 * log10(integratedMeanSquare)
+        let blockLoudness = finalBlocks.map { -0.691 + 10 * log10($0) }
+        let loudnessRange = blockLoudness.count >= 2
+            ? max(0, percentile(blockLoudness, 0.95) - percentile(blockLoudness, 0.10))
+            : 0
+
+        return (
+            max(-70, integratedLUFS),
+            loudnessRange,
+            estimateTruePeakDb(samples: samples),
+            finalBlocks.count
+        )
+    }
+
+    private func ebuR128BlockMeanSquares(
+        samples: [Float],
+        sampleRate: Double,
+        blockSize: Int,
+        hopSize: Int
+    ) -> [Double] {
+        guard !samples.isEmpty, blockSize > 0, hopSize > 0 else {
+            return []
+        }
+
+        var highShelf = BiquadProcessor(coefficients: highShelfCoefficients(
+            sampleRate: sampleRate,
+            frequency: 1_681.974,
+            gainDb: 4,
+            q: 0.707
+        ))
+        var highPass = BiquadProcessor(coefficients: highPassCoefficients(
+            sampleRate: sampleRate,
+            frequency: 38.135,
+            q: 0.5
+        ))
+        var ring = Array(repeating: 0.0, count: blockSize)
+        var ringIndex = 0
+        var ringCount = 0
+        var sumSquares = 0.0
+        var blockMeanSquares: [Double] = []
+        blockMeanSquares.reserveCapacity(max(1, samples.count / hopSize))
+
+        for index in samples.indices {
+            let weighted = highPass.process(highShelf.process(Double(samples[index])))
+            let square = weighted * weighted
+            if ringCount < blockSize {
+                ringCount += 1
+            } else {
+                sumSquares -= ring[ringIndex]
+            }
+            ring[ringIndex] = square
+            sumSquares += square
+            ringIndex = (ringIndex + 1) % blockSize
+
+            if ringCount == blockSize, (index - blockSize + 1).isMultiple(of: hopSize) {
+                blockMeanSquares.append(sumSquares / Double(blockSize))
+            }
+        }
+
+        if blockMeanSquares.isEmpty, ringCount > 0 {
+            blockMeanSquares.append(sumSquares / Double(ringCount))
+        }
+        return blockMeanSquares
+    }
+
+    private func kWeightedSamples(samples: [Float], sampleRate: Double) -> [Double] {
+        let prefiltered = applyBiquad(
+            samples: samples.map(Double.init),
+            coefficients: highShelfCoefficients(sampleRate: sampleRate, frequency: 1_681.974, gainDb: 4, q: 0.707)
+        )
+        return applyBiquad(
+            samples: prefiltered,
+            coefficients: highPassCoefficients(sampleRate: sampleRate, frequency: 38.135, q: 0.5)
+        )
+    }
+
+    private func estimateTruePeakDb(samples: [Float]) -> Double? {
+        guard !samples.isEmpty else {
+            return nil
+        }
+        var peak = 0.0
+        for index in samples.indices {
+            peak = max(peak, abs(Double(samples[index])))
+            guard index > samples.startIndex else {
+                continue
+            }
+            let previous = Double(samples[index - 1])
+            let current = Double(samples[index])
+            for step in 1...3 {
+                let t = Double(step) / 4
+                peak = max(peak, abs(previous + (current - previous) * t))
+            }
+        }
+        return db(peak)
+    }
+
+    private func applyBiquad(
+        samples: [Double],
+        coefficients: (b0: Double, b1: Double, b2: Double, a1: Double, a2: Double)
+    ) -> [Double] {
+        var output: [Double] = []
+        output.reserveCapacity(samples.count)
+        var x1 = 0.0
+        var x2 = 0.0
+        var y1 = 0.0
+        var y2 = 0.0
+        for sample in samples {
+            let y = coefficients.b0 * sample +
+                coefficients.b1 * x1 +
+                coefficients.b2 * x2 -
+                coefficients.a1 * y1 -
+                coefficients.a2 * y2
+            output.append(y)
+            x2 = x1
+            x1 = sample
+            y2 = y1
+            y1 = y
+        }
+        return output
+    }
+
+    private func highPassCoefficients(
+        sampleRate: Double,
+        frequency: Double,
+        q: Double
+    ) -> (b0: Double, b1: Double, b2: Double, a1: Double, a2: Double) {
+        let resolvedFrequency = clamped(frequency, min: 1, max: max(1, sampleRate * 0.45))
+        let omega = 2 * Double.pi * resolvedFrequency / sampleRate
+        let alpha = sin(omega) / (2 * q)
+        let cosOmega = cos(omega)
+        let a0 = 1 + alpha
+        return (
+            b0: ((1 + cosOmega) / 2) / a0,
+            b1: (-(1 + cosOmega)) / a0,
+            b2: ((1 + cosOmega) / 2) / a0,
+            a1: (-2 * cosOmega) / a0,
+            a2: (1 - alpha) / a0
+        )
+    }
+
+    private struct BiquadProcessor {
+        var coefficients: (b0: Double, b1: Double, b2: Double, a1: Double, a2: Double)
+        var x1 = 0.0
+        var x2 = 0.0
+        var y1 = 0.0
+        var y2 = 0.0
+
+        mutating func process(_ sample: Double) -> Double {
+            let y = coefficients.b0 * sample +
+                coefficients.b1 * x1 +
+                coefficients.b2 * x2 -
+                coefficients.a1 * y1 -
+                coefficients.a2 * y2
+            x2 = x1
+            x1 = sample
+            y2 = y1
+            y1 = y
+            return y
+        }
+    }
+
+    private func highShelfCoefficients(
+        sampleRate: Double,
+        frequency: Double,
+        gainDb: Double,
+        q: Double
+    ) -> (b0: Double, b1: Double, b2: Double, a1: Double, a2: Double) {
+        let amplitude = pow(10, gainDb / 40)
+        let resolvedFrequency = clamped(frequency, min: 1, max: max(1, sampleRate * 0.45))
+        let omega = 2 * Double.pi * resolvedFrequency / sampleRate
+        let sinOmega = sin(omega)
+        let cosOmega = cos(omega)
+        let alpha = sinOmega / (2 * q)
+        let beta = 2 * sqrt(amplitude) * alpha
+        let a0 = (amplitude + 1) - (amplitude - 1) * cosOmega + beta
+        return (
+            b0: amplitude * ((amplitude + 1) + (amplitude - 1) * cosOmega + beta) / a0,
+            b1: -2 * amplitude * ((amplitude - 1) + (amplitude + 1) * cosOmega) / a0,
+            b2: amplitude * ((amplitude + 1) + (amplitude - 1) * cosOmega - beta) / a0,
+            a1: 2 * ((amplitude - 1) - (amplitude + 1) * cosOmega) / a0,
+            a2: ((amplitude + 1) - (amplitude - 1) * cosOmega - beta) / a0
+        )
     }
 
     private func buildOnsetEnvelope(
@@ -805,65 +1275,469 @@ public struct NativeDSPAnalyzer: Sendable {
         return (Double(bestIndex) / Double(max(1, energyProfile.count - 1))) * durationSec
     }
 
+    private func snapToNearestBar(barGrid: [BarMarker], timeSec: Double) -> Double? {
+        guard let first = barGrid.first else {
+            return nil
+        }
+        var best = first
+        var bestDistance = abs(first.startSec - timeSec)
+        for bar in barGrid {
+            let distance = abs(bar.startSec - timeSec)
+            if distance < bestDistance {
+                best = bar
+                bestDistance = distance
+            }
+        }
+        return best.startSec
+    }
+
     private func buildCueCandidates(
         durationSec: Double,
         introCueSec: Double,
-        firstDownbeatSec: Double,
+        firstDownbeatSec: Double?,
         outroCueSec: Double?,
         lowEnergyBreakSec: Double?,
         highEnergyDropSec: Double?,
+        barGrid: [BarMarker],
+        energyProfile: [Double],
+        spectralBands: [SpectralBandPoint],
+        transientMarkers: [TransientMarker],
         beatGridQuality: Double,
+        downbeatConfidence: Double,
         transientQuality: Double
     ) -> [CueCandidate] {
+        let introEvidence = scoreIntroEvidence(
+            introCueSec: introCueSec,
+            firstDownbeatSec: firstDownbeatSec,
+            durationSec: durationSec,
+            energyProfile: energyProfile,
+            beatGridQuality: beatGridQuality,
+            downbeatConfidence: downbeatConfidence
+        )
         var cues = [
             CueCandidate(
                 id: "intro",
                 type: .intro,
                 startSec: introCueSec,
                 endSec: min(durationSec, introCueSec + 8),
-                confidence: clamped(0.36 + beatGridQuality * 0.2, min: 0, max: 0.8),
-                label: "Intro"
-            ),
-            CueCandidate(
+                confidence: clamped(0.36 + introEvidence.score * 0.32, min: 0, max: 0.8),
+                label: "Intro",
+                origin: introEvidence.derived ? .derived : .heuristicPlaceholder
+            )
+        ]
+        if let firstDownbeatSec {
+            let evidence = scoreFirstDownbeatEvidence(
+                timeSec: firstDownbeatSec,
+                barGrid: barGrid,
+                durationSec: durationSec,
+                spectralBands: spectralBands,
+                transientMarkers: transientMarkers,
+                beatGridQuality: beatGridQuality,
+                downbeatConfidence: downbeatConfidence,
+                transientQuality: transientQuality
+            )
+            cues.append(CueCandidate(
                 id: "first-downbeat",
                 type: .firstDownbeat,
                 startSec: firstDownbeatSec,
                 endSec: min(durationSec, firstDownbeatSec + 4),
-                confidence: clamped(0.34 + beatGridQuality * 0.32 + transientQuality * 0.16, min: 0, max: 0.86),
-                label: "First downbeat"
-            )
-        ]
+                confidence: clamped(0.3 + evidence.score * 0.58, min: 0, max: 0.88),
+                label: "First downbeat",
+                origin: evidence.derived ? .derived : .heuristicPlaceholder
+            ))
+        }
         if let outroCueSec {
+            let evidence = scoreOutroEvidence(
+                timeSec: outroCueSec,
+                durationSec: durationSec,
+                barGrid: barGrid,
+                energyProfile: energyProfile,
+                transientMarkers: transientMarkers,
+                beatGridQuality: beatGridQuality,
+                downbeatConfidence: downbeatConfidence
+            )
             cues.append(CueCandidate(
                 id: "outro",
                 type: .outro,
                 startSec: outroCueSec,
                 endSec: durationSec,
-                confidence: clamped(0.4 + beatGridQuality * 0.2, min: 0, max: 0.78),
-                label: "Outro mix-out"
+                confidence: clamped(0.34 + evidence.score * 0.46, min: 0, max: 0.82),
+                label: "Outro mix-out",
+                origin: evidence.derived ? .derived : .heuristicPlaceholder
             ))
         }
         if let lowEnergyBreakSec {
+            let evidence = scoreEnergyValleyEvidence(
+                timeSec: lowEnergyBreakSec,
+                durationSec: durationSec,
+                energyProfile: energyProfile,
+                barGrid: barGrid,
+                beatGridQuality: beatGridQuality
+            )
             cues.append(CueCandidate(
                 id: "low-energy-break",
                 type: .lowEnergyBreak,
                 startSec: lowEnergyBreakSec,
                 endSec: min(durationSec, lowEnergyBreakSec + 8),
-                confidence: clamped(0.42 + beatGridQuality * 0.18, min: 0, max: 0.72),
-                label: "Low-energy break"
+                confidence: clamped(0.34 + evidence.score * 0.42, min: 0, max: 0.78),
+                label: "Low-energy break",
+                origin: evidence.derived ? .derived : .heuristicPlaceholder
             ))
         }
         if let highEnergyDropSec {
+            let evidence = scoreEnergyDropEvidence(
+                timeSec: highEnergyDropSec,
+                durationSec: durationSec,
+                energyProfile: energyProfile,
+                spectralBands: spectralBands,
+                transientMarkers: transientMarkers,
+                barGrid: barGrid,
+                beatGridQuality: beatGridQuality
+            )
             cues.append(CueCandidate(
                 id: "high-energy-drop",
                 type: .highEnergyDrop,
                 startSec: highEnergyDropSec,
                 endSec: min(durationSec, highEnergyDropSec + 8),
-                confidence: clamped(0.4 + beatGridQuality * 0.18, min: 0, max: 0.72),
-                label: "High-energy drop"
+                confidence: clamped(0.32 + evidence.score * 0.46, min: 0, max: 0.78),
+                label: "High-energy drop",
+                origin: evidence.derived ? .derived : .heuristicPlaceholder
             ))
         }
         return cues
+    }
+
+    private func scoreIntroEvidence(
+        introCueSec: Double,
+        firstDownbeatSec: Double?,
+        durationSec: Double,
+        energyProfile: [Double],
+        beatGridQuality: Double,
+        downbeatConfidence: Double
+    ) -> (score: Double, derived: Bool) {
+        guard let firstDownbeatSec, durationSec > 0, firstDownbeatSec >= 1.5 else {
+            return (0, false)
+        }
+        let leadInEnergy = averageEnergy(
+            energyProfile: energyProfile,
+            durationSec: durationSec,
+            startSec: introCueSec,
+            endSec: min(firstDownbeatSec, introCueSec + 12)
+        )
+        let postEnergy = averageEnergy(
+            energyProfile: energyProfile,
+            durationSec: durationSec,
+            startSec: firstDownbeatSec,
+            endSec: min(durationSec, firstDownbeatSec + 12)
+        )
+        guard let leadInEnergy, let postEnergy else {
+            return (0, false)
+        }
+        let leadInDrop = clamped((postEnergy - leadInEnergy) / 0.22, min: 0, max: 1)
+        let downbeatScore = clamped(beatGridQuality * 0.5 + downbeatConfidence * 0.5, min: 0, max: 1)
+        let score = clamped(leadInDrop * 0.62 + downbeatScore * 0.38, min: 0, max: 1)
+        return (score, leadInDrop >= 0.45 && downbeatScore >= 0.45 && score >= 0.54)
+    }
+
+    private func scoreFirstDownbeatEvidence(
+        timeSec: Double,
+        barGrid: [BarMarker],
+        durationSec: Double,
+        spectralBands: [SpectralBandPoint],
+        transientMarkers: [TransientMarker],
+        beatGridQuality: Double,
+        downbeatConfidence: Double,
+        transientQuality: Double
+    ) -> (score: Double, derived: Bool) {
+        let transientScore = nearbyTransientScore(
+            transientMarkers: transientMarkers,
+            timeSec: timeSec,
+            windowSec: 0.18
+        )
+        let kickScore = lowBandDownbeatScore(
+            spectralBands: spectralBands,
+            durationSec: durationSec,
+            timeSec: timeSec
+        )
+        let phraseSupport = barGrid.first(where: { abs($0.startSec - timeSec) <= 0.25 }).map {
+            $0.index == 0 ? 1.0 : ($0.index % 8 == 0 ? 0.82 : 0.42)
+        } ?? 0
+        let earlySupport = clamped(1 - timeSec / max(1, min(48, durationSec * 0.35)), min: 0, max: 1)
+        let score = clamped(
+            beatGridQuality * 0.24 +
+                downbeatConfidence * 0.22 +
+                transientScore * 0.24 +
+                kickScore * 0.16 +
+                phraseSupport * 0.08 +
+                earlySupport * 0.06,
+            min: 0,
+            max: 1
+        )
+        let hasLocalAttack = transientScore >= 0.24 || kickScore >= 0.24
+        let hasGridSupport = beatGridQuality >= 0.38 && downbeatConfidence >= 0.22 && transientQuality >= 0.18
+        return (score, hasGridSupport && hasLocalAttack && score >= 0.48)
+    }
+
+    private func scoreOutroEvidence(
+        timeSec: Double,
+        durationSec: Double,
+        barGrid: [BarMarker],
+        energyProfile: [Double],
+        transientMarkers: [TransientMarker],
+        beatGridQuality: Double,
+        downbeatConfidence: Double
+    ) -> (score: Double, derived: Bool) {
+        guard durationSec > 0 else {
+            return (0, false)
+        }
+        let windowSec = min(18, max(6, durationSec * 0.08))
+        let beforeEnergy = averageEnergy(
+            energyProfile: energyProfile,
+            durationSec: durationSec,
+            startSec: max(0, timeSec - windowSec),
+            endSec: timeSec
+        )
+        let afterEnergy = averageEnergy(
+            energyProfile: energyProfile,
+            durationSec: durationSec,
+            startSec: timeSec,
+            endSec: min(durationSec, timeSec + windowSec)
+        )
+        guard let beforeEnergy, let afterEnergy else {
+            return (0, false)
+        }
+        let energyDrop = clamped((beforeEnergy - afterEnergy) / 0.22, min: 0, max: 1)
+        let beforeDensity = transientDensity(
+            transientMarkers: transientMarkers,
+            startSec: max(0, timeSec - windowSec),
+            endSec: timeSec
+        )
+        let afterDensity = transientDensity(
+            transientMarkers: transientMarkers,
+            startSec: timeSec,
+            endSec: min(durationSec, timeSec + windowSec)
+        )
+        let densityDrop = clamped((beforeDensity - afterDensity) / max(0.12, beforeDensity), min: 0, max: 1)
+        let remainingSec = durationSec - timeSec
+        let remainingSupport = clamped(remainingSec / max(1, min(24, durationSec * 0.18)), min: 0, max: 1)
+        let phraseSupport = barGrid.first(where: { abs($0.startSec - timeSec) <= 0.75 }).map {
+            $0.index % 8 == 0 ? 1.0 : ($0.index % 4 == 0 ? 0.58 : 0.28)
+        } ?? 0
+        let gridSupport = clamped(beatGridQuality * 0.65 + downbeatConfidence * 0.35, min: 0, max: 1)
+        let score = clamped(
+            energyDrop * 0.34 +
+                densityDrop * 0.22 +
+                phraseSupport * 0.16 +
+                remainingSupport * 0.14 +
+                gridSupport * 0.14,
+            min: 0,
+            max: 1
+        )
+        return (
+            score,
+            energyDrop >= 0.28 &&
+                densityDrop >= 0.18 &&
+                remainingSec >= min(8, durationSec * 0.08) &&
+                gridSupport >= 0.36 &&
+                score >= 0.5
+        )
+    }
+
+    private func scoreEnergyValleyEvidence(
+        timeSec: Double,
+        durationSec: Double,
+        energyProfile: [Double],
+        barGrid: [BarMarker],
+        beatGridQuality: Double
+    ) -> (score: Double, derived: Bool) {
+        guard durationSec > 0 else {
+            return (0, false)
+        }
+        let windowSec = min(12, max(4, durationSec * 0.06))
+        let before = averageEnergy(
+            energyProfile: energyProfile,
+            durationSec: durationSec,
+            startSec: max(0, timeSec - windowSec),
+            endSec: timeSec
+        )
+        let center = averageEnergy(
+            energyProfile: energyProfile,
+            durationSec: durationSec,
+            startSec: max(0, timeSec - windowSec * 0.35),
+            endSec: min(durationSec, timeSec + windowSec * 0.35)
+        )
+        let after = averageEnergy(
+            energyProfile: energyProfile,
+            durationSec: durationSec,
+            startSec: timeSec,
+            endSec: min(durationSec, timeSec + windowSec)
+        )
+        guard let before, let center, let after else {
+            return (0, false)
+        }
+        let valleyDepth = clamped((min(before, after) - center) / 0.18, min: 0, max: 1)
+        let surroundingEnergy = clamped(max(before, after) / 0.22, min: 0, max: 1)
+        let phraseSupport = barGrid.first(where: { abs($0.startSec - timeSec) <= 0.75 }).map {
+            $0.index % 4 == 0 ? 1.0 : 0.35
+        } ?? 0
+        let score = clamped(
+            valleyDepth * 0.52 +
+                surroundingEnergy * 0.2 +
+                phraseSupport * 0.16 +
+                beatGridQuality * 0.12,
+            min: 0,
+            max: 1
+        )
+        return (score, valleyDepth >= 0.42 && surroundingEnergy >= 0.45 && score >= 0.54)
+    }
+
+    private func scoreEnergyDropEvidence(
+        timeSec: Double,
+        durationSec: Double,
+        energyProfile: [Double],
+        spectralBands: [SpectralBandPoint],
+        transientMarkers: [TransientMarker],
+        barGrid: [BarMarker],
+        beatGridQuality: Double
+    ) -> (score: Double, derived: Bool) {
+        guard durationSec > 0 else {
+            return (0, false)
+        }
+        let windowSec = min(10, max(3, durationSec * 0.05))
+        let before = averageEnergy(
+            energyProfile: energyProfile,
+            durationSec: durationSec,
+            startSec: max(0, timeSec - windowSec),
+            endSec: timeSec
+        )
+        let after = averageEnergy(
+            energyProfile: energyProfile,
+            durationSec: durationSec,
+            startSec: timeSec,
+            endSec: min(durationSec, timeSec + windowSec)
+        )
+        guard let before, let after else {
+            return (0, false)
+        }
+        let energyRise = clamped((after - before) / 0.2, min: 0, max: 1)
+        let transientScore = nearbyTransientScore(
+            transientMarkers: transientMarkers,
+            timeSec: timeSec,
+            windowSec: 0.25
+        )
+        let spectralScore = spectralChangeScore(
+            spectralBands: spectralBands,
+            durationSec: durationSec,
+            timeSec: timeSec,
+            windowSec: windowSec
+        )
+        let phraseSupport = barGrid.first(where: { abs($0.startSec - timeSec) <= 0.75 }).map {
+            $0.index % 8 == 0 ? 1.0 : ($0.index % 4 == 0 ? 0.64 : 0.32)
+        } ?? 0
+        let score = clamped(
+            energyRise * 0.38 +
+                transientScore * 0.24 +
+                spectralScore * 0.14 +
+                phraseSupport * 0.14 +
+                beatGridQuality * 0.1,
+            min: 0,
+            max: 1
+        )
+        return (score, energyRise >= 0.34 && (transientScore >= 0.22 || spectralScore >= 0.28) && score >= 0.52)
+    }
+
+    private func nearbyTransientScore(
+        transientMarkers: [TransientMarker],
+        timeSec: Double,
+        windowSec: Double
+    ) -> Double {
+        guard windowSec > 0 else {
+            return 0
+        }
+        return transientMarkers.reduce(0.0) { best, marker in
+            let distance = abs(marker.timeSec - timeSec)
+            guard distance <= windowSec else {
+                return best
+            }
+            return max(best, marker.strength * (1 - distance / windowSec))
+        }
+    }
+
+    private func transientDensity(
+        transientMarkers: [TransientMarker],
+        startSec: Double,
+        endSec: Double
+    ) -> Double {
+        guard endSec > startSec else {
+            return 0
+        }
+        let strength = transientMarkers.reduce(0.0) { sum, marker in
+            marker.timeSec >= startSec && marker.timeSec < endSec
+                ? sum + clamped(marker.strength, min: 0, max: 1)
+                : sum
+        }
+        return strength / max(0.001, endSec - startSec)
+    }
+
+    private func spectralChangeScore(
+        spectralBands: [SpectralBandPoint],
+        durationSec: Double,
+        timeSec: Double,
+        windowSec: Double
+    ) -> Double {
+        guard let before = averageSpectralBand(
+            spectralBands: spectralBands,
+            durationSec: durationSec,
+            startSec: max(0, timeSec - windowSec),
+            endSec: timeSec
+        ), let after = averageSpectralBand(
+            spectralBands: spectralBands,
+            durationSec: durationSec,
+            startSec: timeSec,
+            endSec: min(durationSec, timeSec + windowSec)
+        ) else {
+            return 0
+        }
+        let positiveDelta = max(0, after.low - before.low) +
+            max(0, after.mid - before.mid) +
+            max(0, after.high - before.high)
+        return clamped(positiveDelta / 0.22, min: 0, max: 1)
+    }
+
+    private func averageSpectralBand(
+        spectralBands: [SpectralBandPoint],
+        durationSec: Double,
+        startSec: Double,
+        endSec: Double
+    ) -> SpectralBandPoint? {
+        guard !spectralBands.isEmpty, durationSec > 0, endSec > startSec else {
+            return nil
+        }
+        let clampedStart = clamped(startSec, min: 0, max: durationSec)
+        let clampedEnd = clamped(endSec, min: clampedStart, max: durationSec)
+        guard clampedEnd > clampedStart else {
+            return nil
+        }
+        var low = 0.0
+        var mid = 0.0
+        var high = 0.0
+        var weight = 0.0
+        for (index, band) in spectralBands.enumerated() {
+            let bucketStart = (Double(index) / Double(spectralBands.count)) * durationSec
+            let bucketEnd = (Double(index + 1) / Double(spectralBands.count)) * durationSec
+            let overlap = min(bucketEnd, clampedEnd) - max(bucketStart, clampedStart)
+            guard overlap > 0 else {
+                continue
+            }
+            low += band.low * overlap
+            mid += band.mid * overlap
+            high += band.high * overlap
+            weight += overlap
+        }
+        guard weight > 0 else {
+            return nil
+        }
+        return SpectralBandPoint(timeSec: clampedStart, low: low / weight, mid: mid / weight, high: high / weight)
     }
 
     private func buildWarnings(
@@ -871,7 +1745,9 @@ public struct NativeDSPAnalyzer: Sendable {
         bpmConfidence: Double,
         metadataMismatch: Bool,
         durationSec: Double,
-        energyProfile: [Double]
+        energyProfile: [Double],
+        musicalKey: MusicalKeyEstimate?,
+        loudness: LoudnessAnalysis?
     ) -> [AnalysisWarning] {
         var warnings: [AnalysisWarning] = []
         if bpm == nil {
@@ -892,7 +1768,59 @@ public struct NativeDSPAnalyzer: Sendable {
         if (energyProfile.max() ?? 0) < 0.05 {
             warnings.append(.flatEnergy)
         }
+        if musicalKey == nil {
+            warnings.append(.keyUnavailable)
+        } else if (musicalKey?.confidence ?? 0) < Self.keyLowConfidenceThreshold {
+            warnings.append(.keyLowConfidence)
+        }
+        if loudness == nil || (loudness?.confidence ?? 0) < Self.loudnessLowConfidenceThreshold {
+            warnings.append(.loudnessLowConfidence)
+        }
+        if let loudness, loudness.headroomDb < Self.headroomLowThresholdDb {
+            warnings.append(.headroomLow)
+        }
         return warnings
+    }
+
+    private func pitchWeight(_ frequency: Double) -> Double {
+        if frequency < 90 {
+            return 0.35
+        }
+        if frequency > 2_500 {
+            return 0.45
+        }
+        return 1
+    }
+
+    private func keyCorrelationCandidates(chroma: [Double]) -> [(root: Int, mode: MusicalKeyMode, score: Double)] {
+        var candidates: [(root: Int, mode: MusicalKeyMode, score: Double)] = []
+        for root in 0..<12 {
+            candidates.append((root, .major, keyCorrelation(chroma: chroma, profile: Self.majorKeyProfile, root: root)))
+            candidates.append((root, .minor, keyCorrelation(chroma: chroma, profile: Self.minorKeyProfile, root: root)))
+        }
+        return candidates.sorted { $0.score > $1.score }
+    }
+
+    private func keyCorrelation(chroma: [Double], profile: [Double], root: Int) -> Double {
+        guard chroma.count == 12, profile.count == 12 else {
+            return 0
+        }
+        let chromaMean = chroma.reduce(0, +) / 12
+        let profileMean = profile.reduce(0, +) / 12
+        var numerator = 0.0
+        var chromaEnergy = 0.0
+        var profileEnergy = 0.0
+        for index in 0..<12 {
+            let chromaValue = chroma[(index + root) % 12] - chromaMean
+            let profileValue = profile[index] - profileMean
+            numerator += chromaValue * profileValue
+            chromaEnergy += chromaValue * chromaValue
+            profileEnergy += profileValue * profileValue
+        }
+        guard chromaEnergy > 0, profileEnergy > 0 else {
+            return 0
+        }
+        return max(0, numerator / sqrt(chromaEnergy * profileEnergy))
     }
 
     private func sampleStats(samples: [Float], start: Int, end: Int) -> (peak: Double, rms: Double, min: Double, max: Double) {
@@ -974,6 +1902,28 @@ public struct NativeDSPAnalyzer: Sendable {
             }
             return count > 0 ? sum / Double(count) : values[index]
         }
+    }
+
+    private func percentile(_ values: [Double], _ percentile: Double) -> Double {
+        guard !values.isEmpty else {
+            return 0
+        }
+        let sorted = values.sorted()
+        let clampedPercentile = clamped(percentile, min: 0, max: 1)
+        let index = Int((Double(sorted.count - 1) * clampedPercentile).rounded())
+        return sorted[clampedInt(index, min: 0, max: sorted.count - 1)]
+    }
+
+    private func db(_ linear: Double) -> Double {
+        guard linear.isFinite, linear > 0 else {
+            return -60
+        }
+        return max(-60, 20 * log10(linear))
+    }
+
+    private func rounded(_ value: Double, digits: Int = 3) -> Double {
+        let multiplier = pow(10, Double(max(0, digits)))
+        return (value * multiplier).rounded() / multiplier
     }
 
     private func hannWindow(size: Int) -> [Double] {

@@ -86,7 +86,7 @@ const baseRequest = {
 };
 
 const buildLargeAnalysis = (trackId: string) => ({
-  schemaVersion: 5,
+  schemaVersion: 6,
   trackId,
   generatedAt: '2026-05-29T00:00:00Z',
   source: 'native_dsp',

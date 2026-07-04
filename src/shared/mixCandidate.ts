@@ -82,6 +82,7 @@ interface CandidatePoint {
   evidenceLevel: MixEvidenceLevel;
   confidence: number;
   reason: string;
+  isPlaceholder?: boolean;
 }
 
 const hasDetailedAnalysis = (analysis: TrackAnalysis | null): boolean => {
@@ -89,13 +90,18 @@ const hasDetailedAnalysis = (analysis: TrackAnalysis | null): boolean => {
 };
 
 const hasPendingAnalysisUpgrade = (analysis: TrackAnalysis | null): boolean => {
-  return !analysis || analysis.waveformDetail.length === 0 || analysis.analysisWarnings.includes('analysis_upgrade_available');
+  return !hasDetailedAnalysis(analysis);
 };
 
 const dedupePoints = (points: CandidatePoint[]): CandidatePoint[] => {
   const sorted = [...points].sort((left, right) => {
     const sourceRank = { analysis: 0, cue: 1, tail_fallback: 2 };
-    return sourceRank[left.source] - sourceRank[right.source] || left.timeSec - right.timeSec;
+    return (
+      sourceRank[left.source] - sourceRank[right.source] ||
+      Number(Boolean(left.isPlaceholder)) - Number(Boolean(right.isPlaceholder)) ||
+      right.confidence - left.confidence ||
+      left.timeSec - right.timeSec
+    );
   });
   const result: CandidatePoint[] = [];
   for (const point of sorted) {
@@ -184,7 +190,11 @@ const buildCueOutPoints = (analysis: TrackAnalysis | null): CandidatePoint[] => 
         source: 'cue' as const,
         evidenceLevel: cue.confidence >= 0.65 ? 'strong' as const : 'partial' as const,
         confidence: cue.confidence,
-        reason: cue.label
+        reason:
+          cue.origin === 'heuristic_placeholder'
+            ? `${cue.label} (heuristic placeholder)`
+            : cue.label,
+        isPlaceholder: cue.origin === 'heuristic_placeholder'
       })) ?? []),
     ...(typeof analysis?.outroCueSec === 'number'
       ? [
@@ -193,7 +203,8 @@ const buildCueOutPoints = (analysis: TrackAnalysis | null): CandidatePoint[] => 
             source: 'cue' as const,
             evidenceLevel: 'partial' as const,
             confidence: 0.48,
-            reason: 'outro cue'
+            reason: 'outro cue (heuristic placeholder)',
+            isPlaceholder: true
           }
         ]
       : [])
@@ -209,19 +220,24 @@ const buildCueInPoints = (analysis: TrackAnalysis | null): CandidatePoint[] => {
         source: 'cue' as const,
         evidenceLevel: cue.confidence >= 0.65 ? 'strong' as const : 'partial' as const,
         confidence: cue.confidence,
-        reason: cue.label
+        reason:
+          cue.origin === 'heuristic_placeholder'
+            ? `${cue.label} (heuristic placeholder)`
+            : cue.label,
+        isPlaceholder: cue.origin === 'heuristic_placeholder'
       })) ?? []),
     ...(typeof analysis?.introCueSec === 'number'
       ? [
           {
-          timeSec: analysis.introCueSec,
-          source: 'cue' as const,
-          evidenceLevel: 'partial' as const,
-          confidence: 0.48,
-          reason: 'intro cue'
-        }
+            timeSec: analysis.introCueSec,
+            source: 'cue' as const,
+            evidenceLevel: 'partial' as const,
+            confidence: 0.48,
+            reason: 'intro cue (heuristic placeholder)',
+            isPlaceholder: true
+          }
         ]
-      : []),
+      : [])
   ]);
 
   if (cuePoints.length > 0) {
@@ -234,7 +250,8 @@ const buildCueInPoints = (analysis: TrackAnalysis | null): CandidatePoint[] => {
       source: 'cue' as const,
       evidenceLevel: 'partial' as const,
       confidence: 0.36,
-      reason: 'track start'
+      reason: 'track start (heuristic placeholder)',
+      isPlaceholder: true
     }
   ];
 };
@@ -340,7 +357,9 @@ export const buildMixPairContext = (input: {
       ? [...nextAnalysisPoints, ...nextCuePoints]
       : nextCuePoints;
   const hasAnalysisCandidate = currentAnalysisPoints.length > 0 && nextAnalysisPoints.length > 0;
-  const hasCueCandidate = currentCuePoints.length > 0 && nextCuePoints.length > 0;
+  const hasCueCandidate =
+    currentCuePoints.some((point) => !point.isPlaceholder) &&
+    nextCuePoints.some((point) => !point.isPlaceholder);
   const readiness: MixPairReadiness =
     hasAnalysisCandidate || hasCueCandidate
       ? 'ready'
@@ -419,7 +438,7 @@ export const buildMixPairContext = (input: {
         nextTrackId: input.nextTrack.id,
         source,
         evidenceLevel,
-        requiresAnalysisUpgrade,
+        requiresAnalysisUpgrade: requiresAnalysisUpgrade || Boolean(outPoint.isPlaceholder) || Boolean(inPoint.isPlaceholder),
         currentMixOutSec,
         nextMixInSec,
         currentBarIndex,
@@ -450,7 +469,8 @@ export const buildMixPairContext = (input: {
   )
     .sort((left, right) => right.score - left.score)
     .slice(0, input.maxCandidates ?? 5);
-  const recommended = deduped.find((candidate) => candidate.source !== 'tail_fallback') ?? null;
+  const recommended =
+    deduped.find((candidate) => candidate.source !== 'tail_fallback' && !candidate.requiresAnalysisUpgrade) ?? null;
 
   return {
     currentTrackId: input.currentTrack.id,

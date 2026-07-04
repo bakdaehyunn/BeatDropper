@@ -468,7 +468,7 @@ if (!options.preRelease) {
   const plannerBenchmarkEvidence = (plannerBenchmarkReport?.results || [])
     .flatMap((result) => result?.plan?.evidence || []);
   const plannerBenchmarkPassed =
-    plannerBenchmarkReport?.schemaVersion === 1 &&
+    Number(plannerBenchmarkReport?.schemaVersion) >= 1 &&
     plannerBenchmarkReport?.status === 'PASS' &&
     Number(plannerBenchmarkReport?.summary?.passCount) >= 6 &&
     Number(plannerBenchmarkReport?.summary?.failCount) === 0 &&

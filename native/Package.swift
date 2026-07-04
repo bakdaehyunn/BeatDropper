@@ -27,6 +27,10 @@ let package = Package(
         .executable(
             name: "BeatDropperNativeLibraryStress",
             targets: ["BeatDropperNativeLibraryStress"]
+        ),
+        .executable(
+            name: "BeatDropperNativeLoudnessValidation",
+            targets: ["BeatDropperNativeLoudnessValidation"]
         )
     ],
     targets: [
@@ -53,6 +57,13 @@ let package = Package(
         .executableTarget(
             name: "BeatDropperNativeLibraryStress",
             dependencies: ["BeatDropperCore"]
+        ),
+        .executableTarget(
+            name: "BeatDropperNativeLoudnessValidation",
+            dependencies: ["BeatDropperCore"],
+            linkerSettings: [
+                .linkedFramework("AVFoundation")
+            ]
         ),
         .testTarget(
             name: "BeatDropperCoreTests",

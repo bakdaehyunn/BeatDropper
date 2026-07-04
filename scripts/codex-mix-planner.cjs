@@ -225,7 +225,8 @@ const compactCueCandidate = (cue) => {
     startSec: cue.startSec,
     endSec: cue.endSec,
     confidence: cue.confidence,
-    label: cue.label
+    label: cue.label,
+    origin: cue.origin
   };
 };
 

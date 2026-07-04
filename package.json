@@ -52,7 +52,9 @@
     "native:stress:open-import": "node scripts/stress-native-open-import.cjs",
     "native:stress:playback": "node scripts/stress-native-playback.cjs",
     "native:stress:session": "node scripts/stress-native-session.cjs",
-    "native:stress:session:extended": "node scripts/stress-native-session.cjs --extended"
+    "native:stress:session:extended": "node scripts/stress-native-session.cjs --extended",
+    "native:validate:loudness-reference": "node scripts/validate-loudness-reference.cjs",
+    "native:validate:real-folder": "node scripts/validate-native-real-folder.cjs"
   },
   "dependencies": {
     "lucide-react": "^1.14.0",

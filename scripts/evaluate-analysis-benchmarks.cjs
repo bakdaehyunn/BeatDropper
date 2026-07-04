@@ -120,6 +120,65 @@ const formatDistanceMetric = (metric) => {
   ].join(', ');
 };
 
+const formatKeyMetric = (metric) => {
+  if (!metric) {
+    return '--';
+  }
+  const expected = [metric.expectedTonic, metric.expectedMode].filter(Boolean).join(' ');
+  const actual = [metric.actualTonic, metric.actualMode].filter(Boolean).join(' ');
+  return `expected ${expected || '--'}, actual ${actual || '--'}, confidence ${formatMetric(metric.confidence)}, matched ${metric.matched ?? '--'}`;
+};
+
+const formatLoudnessMetric = (metric) => {
+  if (!metric) {
+    return '--';
+  }
+  return [
+    `RMS ${formatMetric(metric.actualIntegratedRMSDb, ' dB')} delta ${formatMetric(metric.integratedRMSDeltaDb, ' dB')}`,
+    `LUFS ${formatMetric(metric.actualIntegratedLUFS, ' LUFS')} delta ${formatMetric(metric.integratedLUFSDelta, ' LU')}`,
+    `peak ${formatMetric(metric.actualPeakDb, ' dB')} delta ${formatMetric(metric.peakDeltaDb, ' dB')}`,
+    `true peak ${formatMetric(metric.actualTruePeakDb, ' dBTP')} delta ${formatMetric(metric.truePeakDeltaDb, ' dB')}`,
+    `headroom ${formatMetric(metric.headroomDb, ' dB')}`,
+    `LRA ${formatMetric(metric.loudnessRangeLU, ' LU')}`,
+    `measurement ${metric.measurement ?? '--'}`,
+    `confidence ${formatMetric(metric.confidence)}`
+  ].join(', ');
+};
+
+const formatStereoMetric = (metric) => {
+  if (!metric) {
+    return '--';
+  }
+  return [
+    `channels ${metric.actualChannelCount ?? '--'}`,
+    `width ${formatMetric(metric.stereoWidth)}`,
+    `phase ${formatMetric(metric.phaseCorrelation)}`,
+    `mid/side ${formatMetric(metric.midSideBalance)}`,
+    `confidence ${formatMetric(metric.confidence)}`
+  ].join(', ');
+};
+
+const formatCueMetrics = (metrics) => {
+  if (!Array.isArray(metrics) || metrics.length === 0) {
+    return '--';
+  }
+  return metrics
+    .map((metric) =>
+      `${metric.type} expected ${formatMetric(metric.expectedSec, 's')} actual ${formatMetric(metric.actualSec, 's')} distance ${formatMetric(metric.distanceSec, 's')} confidence ${formatMetric(metric.confidence)} origin ${metric.origin ?? '--'}`
+    )
+    .join(' | ');
+};
+
+const formatMixReadinessMetric = (metric) => {
+  if (!metric) {
+    return '--';
+  }
+  const warnings = Array.isArray(metric.forbiddenWarningsPresent)
+    ? metric.forbiddenWarningsPresent.join(',')
+    : '';
+  return `analysis ${formatMetric(metric.analysisConfidence)}, harmonic ${formatMetric(metric.harmonicKeyQuality)}, loudness ${formatMetric(metric.loudnessConfidence)}, forbidden warnings ${warnings || '--'}`;
+};
+
 const main = () => {
   const options = parseArgs(process.argv.slice(2));
   const { evaluateAnalysisBenchmarkSuite } = loadBenchmarkModule();
@@ -167,7 +226,12 @@ const main = () => {
         `Phrase: checked ${result.metrics.phraseBoundaries.checkedCount}, avg distance ${formatMetric(result.metrics.phraseBoundaries.averageDistanceSec, 's')}, max distance ${formatMetric(result.metrics.phraseBoundaries.maxDistanceSec, 's')}`,
         `Planner ready match: ${
           result.metrics.plannerReadyMatch === null ? '--' : result.metrics.plannerReadyMatch
-        }`
+        }`,
+        `Key: ${formatKeyMetric(result.metrics.musicalKey)}`,
+        `Loudness: ${formatLoudnessMetric(result.metrics.loudness)}`,
+        `Stereo: ${formatStereoMetric(result.metrics.stereo)}`,
+        `Cue calibration: ${formatCueMetrics(result.metrics.cueCandidates)}`,
+        `Mix readiness: ${formatMixReadinessMetric(result.metrics.mixReadiness)}`
       ].join('\n') + '\n'
     );
 

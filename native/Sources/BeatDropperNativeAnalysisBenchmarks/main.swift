@@ -208,6 +208,11 @@ enum BenchmarkCLI {
             print("Bar grid: checked \(benchmark.barGrid.checkedCount), avg drift \(formatMetric(benchmark.barGrid.averageDistanceSec, suffix: "s")), max drift \(formatMetric(benchmark.barGrid.maxDistanceSec, suffix: "s"))")
             print("Phrase: checked \(benchmark.phraseBoundaries.checkedCount), avg distance \(formatMetric(benchmark.phraseBoundaries.averageDistanceSec, suffix: "s")), max distance \(formatMetric(benchmark.phraseBoundaries.maxDistanceSec, suffix: "s"))")
             print("Planner ready match: \(benchmark.plannerReadyMatch.map(String.init(describing:)) ?? "--")")
+            print("Key: \(formatKeyMetric(benchmark.musicalKey))")
+            print("Loudness: \(formatLoudnessMetric(benchmark.loudness))")
+            print("Stereo: \(formatStereoMetric(benchmark.stereo))")
+            print("Cue calibration: \(formatCueMetrics(benchmark.cueCandidates))")
+            print("Mix readiness: \(formatMixReadinessMetric(benchmark.mixReadiness))")
             if benchmark.issues.isEmpty {
                 print("- no issues")
             } else {
@@ -291,6 +296,61 @@ enum BenchmarkCLI {
             "actual \(formatMetric(metric.actualSec, suffix: "s"))",
             "distance \(formatMetric(metric.distanceSec, suffix: "s"))"
         ].joined(separator: ", ")
+    }
+
+    private static func formatKeyMetric(_ metric: AnalysisBenchmarkKeyMetric?) -> String {
+        guard let metric else {
+            return "--"
+        }
+        let expected = [metric.expectedTonic, metric.expectedMode?.rawValue].compactMap { $0 }.joined(separator: " ")
+        let actual = [metric.actualTonic, metric.actualMode?.rawValue].compactMap { $0 }.joined(separator: " ")
+        return "expected \(expected.isEmpty ? "--" : expected), actual \(actual.isEmpty ? "--" : actual), confidence \(formatMetric(metric.confidence)), matched \(metric.matched.map(String.init(describing:)) ?? "--")"
+    }
+
+    private static func formatLoudnessMetric(_ metric: AnalysisBenchmarkLoudnessMetric?) -> String {
+        guard let metric else {
+            return "--"
+        }
+        return [
+            "RMS \(formatMetric(metric.actualIntegratedRMSDb, suffix: " dB")) delta \(formatMetric(metric.integratedRMSDeltaDb, suffix: " dB"))",
+            "LUFS \(formatMetric(metric.actualIntegratedLUFS, suffix: " LUFS")) delta \(formatMetric(metric.integratedLUFSDelta, suffix: " LU"))",
+            "peak \(formatMetric(metric.actualPeakDb, suffix: " dB")) delta \(formatMetric(metric.peakDeltaDb, suffix: " dB"))",
+            "true peak \(formatMetric(metric.actualTruePeakDb, suffix: " dBTP")) delta \(formatMetric(metric.truePeakDeltaDb, suffix: " dB"))",
+            "headroom \(formatMetric(metric.headroomDb, suffix: " dB"))",
+            "LRA \(formatMetric(metric.loudnessRangeLU, suffix: " LU"))",
+            "measurement \(metric.measurement ?? "--")",
+            "confidence \(formatMetric(metric.confidence))"
+        ].joined(separator: ", ")
+    }
+
+    private static func formatStereoMetric(_ metric: AnalysisBenchmarkStereoMetric?) -> String {
+        guard let metric else {
+            return "--"
+        }
+        return [
+            "channels \(metric.actualChannelCount.map(String.init) ?? "--")",
+            "width \(formatMetric(metric.stereoWidth))",
+            "phase \(formatMetric(metric.phaseCorrelation))",
+            "mid/side \(formatMetric(metric.midSideBalance))",
+            "confidence \(formatMetric(metric.confidence))"
+        ].joined(separator: ", ")
+    }
+
+    private static func formatCueMetrics(_ metrics: [AnalysisBenchmarkCueMetric]) -> String {
+        guard !metrics.isEmpty else {
+            return "--"
+        }
+        return metrics.map {
+            "\($0.type.rawValue) expected \(formatMetric($0.expectedSec, suffix: "s")) actual \(formatMetric($0.actualSec, suffix: "s")) distance \(formatMetric($0.distanceSec, suffix: "s")) confidence \(formatMetric($0.confidence)) origin \($0.origin?.rawValue ?? "--")"
+        }.joined(separator: " | ")
+    }
+
+    private static func formatMixReadinessMetric(_ metric: AnalysisBenchmarkMixReadinessMetric?) -> String {
+        guard let metric else {
+            return "--"
+        }
+        let warnings = metric.forbiddenWarningsPresent.map(\.rawValue).joined(separator: ",")
+        return "analysis \(formatMetric(metric.analysisConfidence)), harmonic \(formatMetric(metric.harmonicKeyQuality)), loudness \(formatMetric(metric.loudnessConfidence)), forbidden warnings \(warnings.isEmpty ? "--" : warnings)"
     }
 }
 

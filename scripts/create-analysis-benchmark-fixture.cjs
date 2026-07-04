@@ -31,6 +31,8 @@ const printUsage = () => {
       '  --tags <a,b,c>               Comma-separated tags.',
       '  --notes <text>               Optional private notes.',
       '  --expected-grade <grade>     pass, warn, or fail. Default: pass.',
+      '  --labels-file <path>         Use an editable ground-truth labels JSON file as expected values.',
+      '  --write-labels <path>        Write editable ground-truth labels JSON for review.',
       '',
       'Expected timing options:',
       '  --expected-bpm <number>',
@@ -39,6 +41,8 @@ const printUsage = () => {
       '  --bar-grid <sec,sec,...>',
       '  --phrase-boundaries <sec,sec,...>',
       '  --planner-ready <true|false>',
+      '  --expected-lufs <number>',
+      '  --expected-true-peak <number>',
       '',
       'Safety:',
       '  --overwrite                  Replace an existing fixture file.',
@@ -143,6 +147,10 @@ const parseArgs = (argv) => {
       options.notes = next();
     } else if (arg === '--expected-grade') {
       options.expectedGrade = parseGrade(next());
+    } else if (arg === '--labels-file') {
+      options.labelsFile = path.resolve(process.cwd(), next());
+    } else if (arg === '--write-labels') {
+      options.writeLabels = path.resolve(process.cwd(), next());
     } else if (arg === '--expected-bpm') {
       options.expectedBpm = parseNumber(next(), '--expected-bpm');
     } else if (arg === '--first-downbeat') {
@@ -155,6 +163,10 @@ const parseArgs = (argv) => {
       options.phraseBoundarySec = parseNumberList(next(), '--phrase-boundaries');
     } else if (arg === '--planner-ready') {
       options.plannerReady = parseBoolean(next(), '--planner-ready');
+    } else if (arg === '--expected-lufs') {
+      options.expectedLUFS = parseNumber(next(), '--expected-lufs');
+    } else if (arg === '--expected-true-peak') {
+      options.expectedTruePeakDb = parseNumber(next(), '--expected-true-peak');
     } else if (arg === '--overwrite') {
       options.overwrite = true;
     } else {
@@ -322,6 +334,30 @@ const compactAnalysis = (analysis) => {
   };
 };
 
+const loadGroundTruthLabels = (filePath) => {
+  const labels = readJsonFile(filePath);
+  if (!labels || typeof labels !== 'object' || !labels.expected || typeof labels.expected !== 'object') {
+    throw new Error(`Ground-truth labels file must contain an expected object: ${filePath}`);
+  }
+  return {
+    schemaVersion: Number.isInteger(labels.schemaVersion) ? labels.schemaVersion : 1,
+    ...(typeof labels.reviewedBy === 'string' ? { reviewedBy: labels.reviewedBy } : {}),
+    ...(typeof labels.reviewedAt === 'string' ? { reviewedAt: labels.reviewedAt } : {}),
+    ...(typeof labels.notes === 'string' ? { notes: labels.notes } : {}),
+    expected: labels.expected
+  };
+};
+
+const buildGroundTruthLabels = (expected, options) => ({
+  schemaVersion: 1,
+  reviewedBy: options.reviewedBy ?? 'user',
+  reviewedAt: new Date().toISOString(),
+  notes:
+    options.notes ??
+    'Editable BeatDropper DSP ground-truth labels. Review values before using them as calibration truth.',
+  expected
+});
+
 const buildFixture = (analysis, options) => {
   const baseId = options.id ?? analysis.trackId ?? options.trackTitle ?? 'analysis-snapshot';
   const id = slugify(baseId);
@@ -358,6 +394,35 @@ const buildFixture = (analysis, options) => {
   expected.plannerReady =
     typeof options.plannerReady === 'boolean' ? options.plannerReady : inferPlannerReady(analysis);
 
+  const expectedLUFS = firstFinite(options.expectedLUFS, analysis.loudness?.integratedLUFS);
+  const expectedTruePeakDb = firstFinite(options.expectedTruePeakDb, analysis.loudness?.truePeakDb);
+  if (
+    expectedLUFS !== null ||
+    expectedTruePeakDb !== null ||
+    isFiniteNumber(analysis.loudness?.integratedRMSDb) ||
+    isFiniteNumber(analysis.loudness?.peakDb)
+  ) {
+    expected.loudness = {
+      ...(isFiniteNumber(analysis.loudness?.integratedRMSDb)
+        ? { integratedRMSDb: rounded(analysis.loudness.integratedRMSDb) }
+        : {}),
+      ...(expectedLUFS !== null ? { integratedLUFS: rounded(expectedLUFS) } : {}),
+      ...(isFiniteNumber(analysis.loudness?.peakDb) ? { peakDb: rounded(analysis.loudness.peakDb) } : {}),
+      ...(expectedTruePeakDb !== null ? { truePeakDb: rounded(expectedTruePeakDb) } : {}),
+      ...(isFiniteNumber(analysis.loudness?.headroomDb)
+        ? { minHeadroomDb: rounded(Math.max(0, Math.min(analysis.loudness.headroomDb, 1))) }
+        : {}),
+      ...(isFiniteNumber(analysis.loudness?.confidence)
+        ? { minConfidence: rounded(Math.max(0.45, Math.min(analysis.loudness.confidence, 0.8))) }
+        : {})
+    };
+  }
+
+  const groundTruthLabels = options.labelsFile
+    ? loadGroundTruthLabels(options.labelsFile)
+    : buildGroundTruthLabels(expected, options);
+  const authoritativeExpected = groundTruthLabels.expected;
+
   return {
     id,
     title: options.title ?? `Private snapshot: ${id}`,
@@ -372,9 +437,22 @@ const buildFixture = (analysis, options) => {
         'Bootstrapped from analyzer output. Review expected timing values manually.'
     },
     expectedGrade: options.expectedGrade,
-    expected,
+    expected: authoritativeExpected,
+    groundTruthLabels,
     analysis: compactAnalysis(analysis)
   };
+};
+
+const writeLabels = (labels, options) => {
+  if (!options.writeLabels) {
+    return null;
+  }
+  fs.mkdirSync(path.dirname(options.writeLabels), { recursive: true });
+  if (fs.existsSync(options.writeLabels) && !options.overwrite) {
+    throw new Error(`Labels file already exists: ${options.writeLabels}. Use --overwrite to replace it.`);
+  }
+  fs.writeFileSync(options.writeLabels, `${JSON.stringify(labels, null, 2)}\n`, 'utf8');
+  return options.writeLabels;
 };
 
 const writeFixture = (fixture, options) => {
@@ -398,13 +476,15 @@ const main = () => {
 
   const analysis = readAnalysis(options);
   const fixture = buildFixture(analysis, options);
+  const labelsPath = writeLabels(fixture.groundTruthLabels, options);
   const filePath = writeFixture(fixture, options);
 
   process.stdout.write(
     [
       `Created ${filePath}`,
+      ...(labelsPath ? [`Wrote editable labels ${labelsPath}`] : []),
       `Fixture id: ${fixture.id}`,
-      'Review expected timing values manually before treating this as ground truth.',
+      'Review groundTruthLabels.expected values manually before treating this as calibration truth.',
       `Run: npm run native:benchmark:analysis -- --no-default-fixtures --fixture-dir ${options.outDir}`
     ].join('\n') + '\n'
   );

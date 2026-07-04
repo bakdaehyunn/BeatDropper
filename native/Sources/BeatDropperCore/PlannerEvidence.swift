@@ -12,12 +12,20 @@ public struct PlannerCueSummary: Codable, Hashable, Sendable {
     public var startSec: Double
     public var confidence: Double
     public var label: String
+    public var origin: CueCandidateOrigin
 
-    public init(type: CueCandidateType, startSec: Double, confidence: Double, label: String) {
+    public init(
+        type: CueCandidateType,
+        startSec: Double,
+        confidence: Double,
+        label: String,
+        origin: CueCandidateOrigin = .derived
+    ) {
         self.type = type
         self.startSec = startSec
         self.confidence = confidence
         self.label = label
+        self.origin = origin
     }
 }
 
@@ -99,6 +107,45 @@ public struct PlannerPhraseSummary: Codable, Hashable, Sendable {
     }
 }
 
+public struct PlannerHarmonicSummary: Codable, Hashable, Sendable {
+    public var key: String?
+    public var mode: MusicalKeyMode?
+    public var confidence: Double
+    public var evidence: MixEvidenceLevel
+
+    public init(key: String?, mode: MusicalKeyMode?, confidence: Double, evidence: MixEvidenceLevel) {
+        self.key = key
+        self.mode = mode
+        self.confidence = confidence
+        self.evidence = evidence
+    }
+}
+
+public struct PlannerLoudnessSummary: Codable, Hashable, Sendable {
+    public var integratedRMSDb: Double?
+    public var peakDb: Double?
+    public var headroomDb: Double?
+    public var dynamicRangeDb: Double?
+    public var confidence: Double
+    public var evidence: MixEvidenceLevel
+
+    public init(
+        integratedRMSDb: Double?,
+        peakDb: Double?,
+        headroomDb: Double?,
+        dynamicRangeDb: Double?,
+        confidence: Double,
+        evidence: MixEvidenceLevel
+    ) {
+        self.integratedRMSDb = integratedRMSDb
+        self.peakDb = peakDb
+        self.headroomDb = headroomDb
+        self.dynamicRangeDb = dynamicRangeDb
+        self.confidence = confidence
+        self.evidence = evidence
+    }
+}
+
 public enum PlannerMixWindowKind: String, Codable, Sendable {
     case intro
     case firstDownbeat = "first_downbeat"
@@ -159,6 +206,8 @@ public struct PlannerAnalysisTrackSummary: Codable, Hashable, Sendable {
     public var beatStability: PlannerBeatStabilitySummary
     public var transients: PlannerTransientSummary
     public var phrases: PlannerPhraseSummary
+    public var harmonic: PlannerHarmonicSummary
+    public var loudness: PlannerLoudnessSummary
     public var mixWindows: PlannerMixWindowGroupSummary
 
     public init(
@@ -175,6 +224,8 @@ public struct PlannerAnalysisTrackSummary: Codable, Hashable, Sendable {
         beatStability: PlannerBeatStabilitySummary,
         transients: PlannerTransientSummary,
         phrases: PlannerPhraseSummary,
+        harmonic: PlannerHarmonicSummary,
+        loudness: PlannerLoudnessSummary,
         mixWindows: PlannerMixWindowGroupSummary
     ) {
         self.trackId = trackId
@@ -190,6 +241,8 @@ public struct PlannerAnalysisTrackSummary: Codable, Hashable, Sendable {
         self.beatStability = beatStability
         self.transients = transients
         self.phrases = phrases
+        self.harmonic = harmonic
+        self.loudness = loudness
         self.mixWindows = mixWindows
     }
 }
@@ -352,8 +405,9 @@ public enum PlannerEvidenceBuilder {
             : currentAnalysisPoints + currentCuePoints + tailFallbackPoints
         let nextInCandidates = nextAnalysisPoints.isEmpty ? nextCuePoints : nextAnalysisPoints + nextCuePoints
         let hasAnalysisCandidate = !currentAnalysisPoints.isEmpty && !nextAnalysisPoints.isEmpty
-        let hasCueCandidate = !currentCuePoints.isEmpty && !nextCuePoints.isEmpty
-        let readiness: MixPairReadiness = if hasAnalysisCandidate || hasCueCandidate {
+        let hasDerivedCueCandidate = currentCuePoints.contains { !$0.isPlaceholder } &&
+            nextCuePoints.contains { !$0.isPlaceholder }
+        let readiness: MixPairReadiness = if hasAnalysisCandidate || hasDerivedCueCandidate {
             .ready
         } else if hasPendingAnalysisUpgrade(currentAnalysis) || hasPendingAnalysisUpgrade(nextAnalysis) {
             .analysisPending
@@ -412,13 +466,14 @@ public enum PlannerEvidenceBuilder {
                 )
                 let style = resolveStyle(phraseAlignment: phraseAlignment, bpmDelta: bpmDelta, energyDelta: energyDelta)
                 let id = "\(source.rawValue):\(currentTrack.id):\(Int((currentMixOutSec * 100).rounded()))->\(nextTrack.id):\(Int((nextMixInSec * 100).rounded()))"
+                let candidateRequiresAnalysisUpgrade = requiresAnalysisUpgrade || outPoint.isPlaceholder || inPoint.isPlaceholder
                 candidates.append(MixCandidate(
                     id: id,
                     currentTrackId: currentTrack.id,
                     nextTrackId: nextTrack.id,
                     source: source,
                     evidenceLevel: evidenceLevel,
-                    requiresAnalysisUpgrade: requiresAnalysisUpgrade,
+                    requiresAnalysisUpgrade: candidateRequiresAnalysisUpgrade,
                     currentMixOutSec: currentMixOutSec,
                     nextMixInSec: nextMixInSec,
                     currentBarIndex: currentBarIndex,
@@ -446,7 +501,7 @@ public enum PlannerEvidenceBuilder {
             }
             .sorted { $0.score > $1.score }
             .prefix(maxCandidates)
-        let recommended = deduped.first { $0.source != .tailFallback }
+        let recommended = deduped.first { $0.source != .tailFallback && !$0.requiresAnalysisUpgrade }
 
         return MixPairContext(
             currentTrackId: currentTrack.id,
@@ -493,7 +548,8 @@ public enum PlannerEvidenceBuilder {
                 waveformDetail: rounded(clamped(analysis.analysisQuality.waveformDetail, min: 0, max: 1)),
                 spectralBands: rounded(clamped(analysis.analysisQuality.spectralBands, min: 0, max: 1)),
                 transientMarkers: rounded(clamped(analysis.analysisQuality.transientMarkers, min: 0, max: 1)),
-                beatGrid: rounded(beatGridQuality)
+                beatGrid: rounded(beatGridQuality),
+                harmonicKey: rounded(clamped(analysis.analysisQuality.harmonicKey, min: 0, max: 1))
             ),
             analysisWarnings: analysis.analysisWarnings,
             cues: PlannerCueGroupSummary(
@@ -518,6 +574,8 @@ public enum PlannerEvidenceBuilder {
                 phraseCount: analysis.phraseMarkers.count,
                 strongestBoundaries: Array(strongestBoundaries)
             ),
+            harmonic: buildHarmonicSummary(analysis: analysis),
+            loudness: buildLoudnessSummary(analysis: analysis),
             mixWindows: buildMixWindows(analysis: analysis, durationSec: durationSec)
         )
     }
@@ -533,14 +591,15 @@ public enum PlannerEvidenceBuilder {
             analysis.analysisQuality.beatGrid >= 0.35 &&
             analysis.bpmConfidence >= 0.45 &&
             !analysis.analysisWarnings.contains(.analysisUpgradeAvailable) &&
-            !analysis.analysisWarnings.contains(.bpmLowConfidence)
+            !analysis.analysisWarnings.contains(.bpmLowConfidence) &&
+            !analysis.analysisWarnings.contains(.flatEnergy)
     }
 
     private static func hasPendingAnalysisUpgrade(_ analysis: TrackAnalysis?) -> Bool {
         guard let analysis else {
             return true
         }
-        return analysis.waveformDetail.isEmpty || analysis.analysisWarnings.contains(.analysisUpgradeAvailable)
+        return !hasPlannerReadyTrackAnalysis(analysis)
     }
 
     private static func buildAnalysisOutPoints(analysis: TrackAnalysis?, durationSec: Double) -> [CandidatePoint] {
@@ -615,7 +674,8 @@ public enum PlannerEvidenceBuilder {
                     source: .cue,
                     evidenceLevel: $0.confidence >= 0.65 ? .strong : .partial,
                     confidence: $0.confidence,
-                    reason: $0.label
+                    reason: cueReason($0),
+                    isPlaceholder: isPlaceholderCue($0)
                 )
             } ?? []
         if let outroCueSec = analysis?.outroCueSec {
@@ -624,7 +684,8 @@ public enum PlannerEvidenceBuilder {
                 source: .cue,
                 evidenceLevel: .partial,
                 confidence: 0.48,
-                reason: "outro cue"
+                reason: "outro cue (heuristic placeholder)",
+                isPlaceholder: true
             ))
         }
         return dedupePoints(points)
@@ -639,7 +700,8 @@ public enum PlannerEvidenceBuilder {
                     source: .cue,
                     evidenceLevel: $0.confidence >= 0.65 ? .strong : .partial,
                     confidence: $0.confidence,
-                    reason: $0.label
+                    reason: cueReason($0),
+                    isPlaceholder: isPlaceholderCue($0)
                 )
             } ?? []
         if let introCueSec = analysis?.introCueSec {
@@ -648,12 +710,13 @@ public enum PlannerEvidenceBuilder {
                 source: .cue,
                 evidenceLevel: .partial,
                 confidence: 0.48,
-                reason: "intro cue"
+                reason: "intro cue (heuristic placeholder)",
+                isPlaceholder: true
             ))
         }
         let deduped = dedupePoints(points)
         return deduped.isEmpty
-            ? [CandidatePoint(timeSec: 0, source: .cue, evidenceLevel: .partial, confidence: 0.36, reason: "track start")]
+            ? [CandidatePoint(timeSec: 0, source: .cue, evidenceLevel: .partial, confidence: 0.36, reason: "track start (heuristic placeholder)", isPlaceholder: true)]
             : deduped
     }
 
@@ -864,9 +927,16 @@ public enum PlannerEvidenceBuilder {
 
     private static func dedupePoints(_ points: [CandidatePoint]) -> [CandidatePoint] {
         let sorted = points.sorted {
-            sourceRank($0.source) == sourceRank($1.source)
-                ? $0.timeSec < $1.timeSec
-                : sourceRank($0.source) < sourceRank($1.source)
+            if sourceRank($0.source) != sourceRank($1.source) {
+                return sourceRank($0.source) < sourceRank($1.source)
+            }
+            if $0.isPlaceholder != $1.isPlaceholder {
+                return !$0.isPlaceholder
+            }
+            if $0.confidence != $1.confidence {
+                return $0.confidence > $1.confidence
+            }
+            return $0.timeSec < $1.timeSec
         }
         var result: [CandidatePoint] = []
         for point in sorted where !result.contains(where: { abs($0.timeSec - point.timeSec) < 0.75 }) {
@@ -1001,18 +1071,60 @@ public enum PlannerEvidenceBuilder {
         )
     }
 
+    private static func buildHarmonicSummary(analysis: TrackAnalysis) -> PlannerHarmonicSummary {
+        guard let key = analysis.musicalKey else {
+            return PlannerHarmonicSummary(key: nil, mode: nil, confidence: 0, evidence: .fallback)
+        }
+        let confidence = rounded(clamped(key.confidence, min: 0, max: 1))
+        let evidence: MixEvidenceLevel = confidence >= 0.62 ? .strong : confidence >= 0.35 ? .partial : .fallback
+        return PlannerHarmonicSummary(
+            key: key.tonic,
+            mode: key.mode,
+            confidence: confidence,
+            evidence: evidence
+        )
+    }
+
+    private static func buildLoudnessSummary(analysis: TrackAnalysis) -> PlannerLoudnessSummary {
+        guard let loudness = analysis.loudness else {
+            return PlannerLoudnessSummary(
+                integratedRMSDb: nil,
+                peakDb: nil,
+                headroomDb: nil,
+                dynamicRangeDb: nil,
+                confidence: 0,
+                evidence: .fallback
+            )
+        }
+        let confidence = rounded(clamped(loudness.confidence, min: 0, max: 1))
+        let evidence: MixEvidenceLevel = confidence >= 0.68 ? .strong : confidence >= 0.45 ? .partial : .fallback
+        return PlannerLoudnessSummary(
+            integratedRMSDb: rounded(loudness.integratedRMSDb, digits: 2),
+            peakDb: rounded(loudness.peakDb, digits: 2),
+            headroomDb: rounded(loudness.headroomDb, digits: 2),
+            dynamicRangeDb: rounded(loudness.dynamicRangeDb, digits: 2),
+            confidence: confidence,
+            evidence: evidence
+        )
+    }
+
     private static func pickBestCue(analysis: TrackAnalysis, types: [CueCandidateType]) -> PlannerCueSummary? {
         if let cue = analysis.cueCandidates
             .filter({ types.contains($0.type) })
-            .sorted(by: { $0.confidence > $1.confidence })
+            .sorted(by: {
+                if isPlaceholderCue($0) != isPlaceholderCue($1) {
+                    return !isPlaceholderCue($0)
+                }
+                return $0.confidence > $1.confidence
+            })
             .first {
             return cueToSummary(cue)
         }
         if types.contains(.intro), let introCueSec = analysis.introCueSec {
-            return PlannerCueSummary(type: .intro, startSec: rounded(introCueSec, digits: 2), confidence: 0.42, label: "Intro")
+            return PlannerCueSummary(type: .intro, startSec: rounded(introCueSec, digits: 2), confidence: 0.42, label: "Intro", origin: .heuristicPlaceholder)
         }
         if types.contains(.outro), let outroCueSec = analysis.outroCueSec {
-            return PlannerCueSummary(type: .outro, startSec: rounded(outroCueSec, digits: 2), confidence: 0.42, label: "Outro mix-out")
+            return PlannerCueSummary(type: .outro, startSec: rounded(outroCueSec, digits: 2), confidence: 0.42, label: "Outro mix-out", origin: .heuristicPlaceholder)
         }
         return nil
     }
@@ -1022,8 +1134,17 @@ public enum PlannerEvidenceBuilder {
             type: cue.type,
             startSec: rounded(cue.startSec, digits: 2),
             confidence: rounded(clamped(cue.confidence, min: 0, max: 1)),
-            label: cue.label
+            label: cue.label,
+            origin: cue.origin
         )
+    }
+
+    private static func isPlaceholderCue(_ cue: CueCandidate) -> Bool {
+        cue.origin == .heuristicPlaceholder
+    }
+
+    private static func cueReason(_ cue: CueCandidate) -> String {
+        isPlaceholderCue(cue) ? "\(cue.label) (heuristic placeholder)" : cue.label
     }
 
     private static func average(_ values: [Double]) -> Double? {
@@ -1040,6 +1161,7 @@ private struct CandidatePoint {
     var evidenceLevel: MixEvidenceLevel
     var confidence: Double
     var reason: String
+    var isPlaceholder: Bool = false
 }
 
 private func rounded(_ value: Double, digits: Int = 3) -> Double {

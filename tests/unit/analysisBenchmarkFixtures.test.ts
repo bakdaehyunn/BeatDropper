@@ -22,14 +22,15 @@ describe('analysis benchmark fixtures', () => {
 
     expect(fixtures.map((fixture) => fixture.id).sort()).toEqual([
       'clean-124-phrase',
+      'schema-v7-calibration-pass',
       'shifted-downbeat-warn',
       'weak-ambiguous-fail'
     ]);
-    expect(fixtures.every((fixture) => fixture.kind === 'synthetic')).toBe(true);
+    expect(fixtures.every((fixture) => fixture.kind === 'synthetic' || fixture.kind === 'snapshot')).toBe(true);
     for (const fixture of fixtures) {
       const result = results.find((item) => item.fixtureId === fixture.id);
       expect(result?.grade).toBe(fixture.expectedGrade);
-      expect(result?.kind).toBe('synthetic');
+      expect(result?.kind).toBe(fixture.kind);
     }
   });
 
@@ -37,10 +38,10 @@ describe('analysis benchmark fixtures', () => {
     const suite = evaluateAnalysisBenchmarkSuite(loadFixtures());
 
     expect(suite.grade).toBe('fail');
-    expect(suite.passed).toBe(1);
+    expect(suite.passed).toBe(2);
     expect(suite.warned).toBe(1);
     expect(suite.failed).toBe(1);
-    expect(suite.results).toHaveLength(3);
+    expect(suite.results).toHaveLength(4);
     expect(suite.byKind).toEqual([
       expect.objectContaining({
         kind: 'synthetic',
@@ -48,6 +49,13 @@ describe('analysis benchmark fixtures', () => {
         passed: 1,
         warned: 1,
         failed: 1
+      }),
+      expect.objectContaining({
+        kind: 'snapshot',
+        total: 1,
+        passed: 1,
+        warned: 0,
+        failed: 0
       })
     ]);
     expect(suite.score).toBeGreaterThan(0);

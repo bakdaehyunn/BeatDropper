@@ -28,6 +28,8 @@ struct NativeDSPAnalyzerTests {
         #expect(analysis.beatGridSec.count >= 24)
         #expect(!analysis.barGrid.isEmpty)
         #expect(analysis.cueCandidates.contains { $0.type == .firstDownbeat })
+        #expect(analysis.cueCandidates.first { $0.type == .intro }?.origin == .heuristicPlaceholder)
+        #expect(analysis.cueCandidates.first { $0.type == .firstDownbeat }?.origin == .derived)
     }
 
     @Test func stableRMSFrequencyChangesBuildSpectralFluxTransients() {
@@ -44,6 +46,72 @@ struct NativeDSPAnalyzerTests {
         #expect(hasTransient(near: 2, in: analysis.transientMarkers, toleranceSec: 0.25))
         #expect(hasTransient(near: 4, in: analysis.transientMarkers, toleranceSec: 0.25))
         #expect(hasTransient(near: 6, in: analysis.transientMarkers, toleranceSec: 0.25))
+    }
+
+    @Test func harmonicTriadProducesKeyEstimate() throws {
+        let sampleRate = 44_100.0
+        let samples = chordSignal(frequencies: [261.63, 329.63, 392.0], durationSec: 4, sampleRate: sampleRate)
+        let analysis = analyze(samples: samples, sampleRate: sampleRate)
+        let key = try #require(analysis.musicalKey)
+
+        #expect(key.tonic == "C")
+        #expect(key.mode == .major)
+        #expect(key.confidence >= 0.35)
+        #expect(analysis.analysisQuality.harmonicKey == key.confidence)
+        #expect(!analysis.analysisWarnings.contains(.keyUnavailable))
+    }
+
+    @Test func loudnessAnalysisReportsHeadroomAndDynamicRange() throws {
+        let sampleRate = 44_100.0
+        let quiet = sineWave(frequency: 220, durationSec: 2, sampleRate: sampleRate, amplitude: 0.2)
+        let loud = sineWave(frequency: 220, durationSec: 2, sampleRate: sampleRate, amplitude: 0.98)
+        let analysis = analyze(samples: quiet + loud, sampleRate: sampleRate)
+        let loudness = try #require(analysis.loudness)
+
+        #expect(loudness.peakDb > -2)
+        #expect(loudness.truePeakDb != nil)
+        #expect((loudness.truePeakDb ?? -60) >= loudness.peakDb - 0.2)
+        #expect(loudness.integratedLUFS != nil)
+        #expect((loudness.integratedLUFS ?? -70) > -30)
+        #expect(loudness.headroomDb < 2)
+        #expect(loudness.integratedRMSDb < loudness.peakDb)
+        #expect(loudness.measurement == "ebu_r128_k_weighted_gated_mono")
+        #expect(loudness.dynamicRangeDb > 6)
+        #expect(loudness.confidence > 0.4)
+        #expect(analysis.analysisWarnings.contains(.headroomLow))
+    }
+
+    @Test func stereoAnalysisReportsChannelAndPhaseEvidence() throws {
+        let sampleRate = 1_000.0
+        let durationSec = 2.0
+        let sampleCount = Int(sampleRate * durationSec)
+        let left = (0..<sampleCount).map { index in
+            Float(sin((2 * Double.pi * 10 * Double(index)) / sampleRate) * 0.7)
+        }
+        let right = (0..<sampleCount).map { index in
+            Float(cos((2 * Double.pi * 10 * Double(index)) / sampleRate) * 0.35)
+        }
+        let mono = zip(left, right).map { ($0 + $1) / 2 }
+        let analysis = NativeDSPAnalyzer().analyze(
+            track: Track(id: "stereo-synthetic", title: "Stereo Synthetic", durationSec: durationSec, format: .wav),
+            buffer: PCMAnalysisBuffer(
+                samples: mono,
+                channelSamples: [left, right],
+                sampleRate: sampleRate,
+                durationSec: durationSec
+            ),
+            generatedAt: "2026-05-25T00:00:00Z"
+        )
+        let stereo = try #require(analysis.stereo)
+
+        #expect(stereo.channelCount == 2)
+        #expect(stereo.leftPeakDb != nil)
+        #expect(stereo.rightPeakDb != nil)
+        #expect((stereo.leftRMSDb ?? -120) > (stereo.rightRMSDb ?? -120))
+        #expect(stereo.stereoWidth > 0.2)
+        #expect(abs(stereo.phaseCorrelation) < 0.1)
+        #expect(stereo.midSideBalance > 0)
+        #expect(stereo.confidence >= 0.75)
     }
 
     @Test func phraseConfidenceHighlightsEnergySectionChanges() throws {
@@ -94,6 +162,86 @@ struct NativeDSPAnalyzerTests {
         #expect(analysis.analysisWarnings.contains(.flatEnergy))
     }
 
+    @Test func metadataBackedSilenceDoesNotBecomePlannerReady() {
+        let sampleRate = 1_000.0
+        let durationSec = 32.0
+        let samples = Array(repeating: Float(0), count: Int(sampleRate * durationSec))
+        let buffer = PCMAnalysisBuffer(samples: samples, sampleRate: sampleRate, durationSec: durationSec)
+        let currentTrack = Track(id: "silent-current", title: "Silent Current", durationSec: durationSec, format: .wav, bpm: 120)
+        let nextTrack = Track(id: "silent-next", title: "Silent Next", durationSec: durationSec, format: .wav, bpm: 120)
+        let analyzer = NativeDSPAnalyzer()
+        let currentAnalysis = analyzer.analyze(track: currentTrack, buffer: buffer, generatedAt: "2026-05-25T00:00:00Z")
+        let nextAnalysis = analyzer.analyze(track: nextTrack, buffer: buffer, generatedAt: "2026-05-25T00:00:00Z")
+
+        #expect(currentAnalysis.bpm == 120)
+        #expect(currentAnalysis.analysisWarnings.contains(.flatEnergy))
+        #expect(currentAnalysis.cueCandidates.allSatisfy { $0.origin == .heuristicPlaceholder })
+
+        let context = PlannerEvidenceBuilder.buildMixPairContext(
+            currentTrack: currentTrack,
+            nextTrack: nextTrack,
+            currentAnalysis: currentAnalysis,
+            nextAnalysis: nextAnalysis
+        )
+
+        #expect(context.readiness == .analysisPending)
+        #expect(context.recommendedCandidateId == nil)
+        #expect(context.candidates.allSatisfy { $0.requiresAnalysisUpgrade })
+    }
+
+    @Test func flatNonzeroEnergyDoesNotCreateDerivedEnergyCues() {
+        let sampleRate = 1_000.0
+        let durationSec = 48.0
+        let samples = sineWave(frequency: 120, durationSec: durationSec, sampleRate: sampleRate)
+        let analysis = NativeDSPAnalyzer().analyze(
+            track: Track(id: "flat-tone", title: "Flat Tone", durationSec: durationSec, format: .wav, bpm: 120),
+            buffer: PCMAnalysisBuffer(samples: samples, sampleRate: sampleRate, durationSec: durationSec),
+            generatedAt: "2026-05-25T00:00:00Z"
+        )
+
+        let energyCues = analysis.cueCandidates.filter {
+            $0.type == .lowEnergyBreak || $0.type == .highEnergyDrop || $0.type == .outro
+        }
+        #expect(!energyCues.isEmpty)
+        #expect(energyCues.allSatisfy { $0.origin == .heuristicPlaceholder })
+    }
+
+    @Test func gradualFadeDoesNotCreateDerivedOutroCue() throws {
+        let sampleRate = 1_000.0
+        let durationSec = 96.0
+        let samples = gradualFadePulseTrain(bpm: 120, durationSec: durationSec, sampleRate: sampleRate)
+        let analysis = NativeDSPAnalyzer().analyze(
+            track: Track(id: "gradual-fade", title: "Gradual Fade", durationSec: durationSec, format: .wav, bpm: 120),
+            buffer: PCMAnalysisBuffer(samples: samples, sampleRate: sampleRate, durationSec: durationSec),
+            generatedAt: "2026-05-25T00:00:00Z"
+        )
+
+        let outro = try #require(analysis.cueCandidates.first { $0.type == .outro })
+        #expect(outro.origin == .heuristicPlaceholder)
+    }
+
+    @Test func sectionLiftCreatesDerivedHighEnergyDropCue() throws {
+        let sampleRate = 1_000.0
+        let durationSec = 64.0
+        let samples = sectionedPulseTrain(
+            bpm: 120,
+            durationSec: durationSec,
+            sampleRate: sampleRate,
+            sectionDurationSec: 16,
+            amplitudes: [0.18, 0.95, 0.95, 0.95]
+        )
+        let analysis = NativeDSPAnalyzer().analyze(
+            track: Track(id: "section-lift", title: "Section Lift", durationSec: durationSec, format: .wav, bpm: 120),
+            buffer: PCMAnalysisBuffer(samples: samples, sampleRate: sampleRate, durationSec: durationSec),
+            generatedAt: "2026-05-25T00:00:00Z"
+        )
+
+        let drop = try #require(analysis.cueCandidates.first { $0.type == .highEnergyDrop })
+        #expect(drop.origin == .derived)
+        #expect(drop.startSec >= 14)
+        #expect(drop.startSec <= 18)
+    }
+
     private func analyze(samples: [Float], sampleRate: Double) -> TrackAnalysis {
         let durationSec = Double(samples.count) / sampleRate
         return NativeDSPAnalyzer().analyze(
@@ -103,10 +251,26 @@ struct NativeDSPAnalyzerTests {
         )
     }
 
-    private func sineWave(frequency: Double, durationSec: Double, sampleRate: Double) -> [Float] {
+    private func sineWave(
+        frequency: Double,
+        durationSec: Double,
+        sampleRate: Double,
+        amplitude: Double = 0.8
+    ) -> [Float] {
         let sampleCount = Int(durationSec * sampleRate)
         return (0..<sampleCount).map { index in
-            Float(sin((2 * Double.pi * frequency * Double(index)) / sampleRate) * 0.8)
+            Float(sin((2 * Double.pi * frequency * Double(index)) / sampleRate) * amplitude)
+        }
+    }
+
+    private func chordSignal(frequencies: [Double], durationSec: Double, sampleRate: Double) -> [Float] {
+        let sampleCount = Int(durationSec * sampleRate)
+        let divisor = max(1, Double(frequencies.count))
+        return (0..<sampleCount).map { index in
+            let sample = frequencies.reduce(0.0) { sum, frequency in
+                sum + sin((2 * Double.pi * frequency * Double(index)) / sampleRate)
+            } / divisor
+            return Float(sample * 0.72)
         }
     }
 
@@ -218,6 +382,22 @@ struct NativeDSPAnalyzerTests {
         while start < sampleCount {
             for offset in 0..<30 where start + offset < sampleCount {
                 samples[start + offset] = Float(1 - (Double(offset) / 30))
+            }
+            start += intervalSamples
+        }
+        return samples
+    }
+
+    private func gradualFadePulseTrain(bpm: Double, durationSec: Double, sampleRate: Double) -> [Float] {
+        let sampleCount = Int(durationSec * sampleRate)
+        let intervalSamples = Int((60 / bpm) * sampleRate)
+        var samples = Array(repeating: Float(0), count: sampleCount)
+        var start = 0
+        while start < sampleCount {
+            let timeSec = Double(start) / sampleRate
+            let fade = max(0.12, 1 - timeSec / durationSec)
+            for offset in 0..<30 where start + offset < sampleCount {
+                samples[start + offset] = Float(fade * (1 - (Double(offset) / 30)))
             }
             start += intervalSamples
         }

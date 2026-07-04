@@ -15,6 +15,9 @@ describe('sanitizeTrackAnalysis', () => {
     expect(analysis.spectralBands).toEqual([]);
     expect(analysis.transientMarkers).toEqual([]);
     expect(analysis.analysisQuality.waveformDetail).toBe(0);
+    expect(analysis.analysisQuality.harmonicKey).toBe(0);
+    expect(analysis.musicalKey).toBeNull();
+    expect(analysis.loudness).toBeNull();
     expect(analysis.analysisWarnings).toContain('analysis_upgrade_available');
   });
 
@@ -91,5 +94,99 @@ describe('sanitizeTrackAnalysis', () => {
       transientMarkers: 0,
       beatGrid: 0.7
     });
+  });
+
+  it('treats cue candidates without an origin as heuristic placeholders', () => {
+    const analysis = sanitizeTrackAnalysis('track-1', {
+      schemaVersion: TRACK_ANALYSIS_SCHEMA_VERSION,
+      cueCandidates: [
+        {
+          id: 'legacy-outro',
+          type: 'outro',
+          startSec: 84,
+          endSec: 96,
+          confidence: 0.7,
+          label: 'Legacy outro'
+        }
+      ]
+    });
+
+    expect(analysis.cueCandidates[0]?.origin).toBe('heuristic_placeholder');
+  });
+
+  it('sanitizes key, loudness, and stereo evidence for schema v7 analysis', () => {
+    const analysis = sanitizeTrackAnalysis('track-1', {
+      schemaVersion: TRACK_ANALYSIS_SCHEMA_VERSION,
+      musicalKey: {
+        tonic: 'C#',
+        mode: 'minor',
+        confidence: 1.5,
+        chromaEnergy: -1
+      },
+      loudness: {
+        integratedRMSDb: -18.3,
+        integratedLUFS: -17.8,
+        peakDb: 2,
+        truePeakDb: 2.4,
+        headroomDb: -4,
+        crestFactorDb: 200,
+        dynamicRangeDb: 9.4,
+        loudnessRangeLU: 3.8,
+        measurement: 'ebu_r128_k_weighted_gated_mono',
+        confidence: 2
+      },
+      stereo: {
+        channelCount: 2.8,
+        leftPeakDb: 16,
+        rightPeakDb: -140,
+        leftRMSDb: -18.4,
+        rightRMSDb: 18,
+        stereoWidth: 2,
+        phaseCorrelation: -2,
+        midSideBalance: 20,
+        confidence: 2
+      },
+      analysisQuality: {
+        waveformDetail: 0.8,
+        spectralBands: 0.8,
+        transientMarkers: 0.6,
+        beatGrid: 0.8,
+        harmonicKey: 2
+      },
+      analysisWarnings: ['key_low_confidence', 'headroom_low']
+    });
+
+    expect(analysis.musicalKey).toMatchObject({
+      tonic: 'C#',
+      mode: 'minor',
+      confidence: 1,
+      chromaEnergy: 0
+    });
+    expect(analysis.loudness).toMatchObject({
+      integratedRMSDb: -18.3,
+      integratedLUFS: -17.8,
+      peakDb: 2,
+      truePeakDb: 2.4,
+      headroomDb: 0,
+      crestFactorDb: 80,
+      dynamicRangeDb: 9.4,
+      loudnessRangeLU: 3.8,
+      measurement: 'ebu_r128_k_weighted_gated_mono',
+      confidence: 1
+    });
+    expect(analysis.stereo).toMatchObject({
+      channelCount: 2,
+      leftPeakDb: 12,
+      rightPeakDb: -120,
+      leftRMSDb: -18.4,
+      rightRMSDb: 12,
+      stereoWidth: 1,
+      phaseCorrelation: -1,
+      midSideBalance: 12,
+      confidence: 1
+    });
+    expect(analysis.analysisQuality.harmonicKey).toBe(1);
+    expect(analysis.analysisWarnings).toContain('key_low_confidence');
+    expect(analysis.analysisWarnings).toContain('headroom_low');
   });
 });

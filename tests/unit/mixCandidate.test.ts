@@ -56,7 +56,8 @@ describe('buildMixPairContext', () => {
           startSec: 160,
           endSec: 180,
           confidence: 0.8,
-          label: 'Outro'
+          label: 'Outro',
+          origin: 'derived'
         }
       ]
     });
@@ -94,7 +95,8 @@ describe('buildMixPairContext', () => {
           startSec: 7.6,
           endSec: 12,
           confidence: 0.8,
-          label: 'First downbeat'
+          label: 'First downbeat',
+          origin: 'derived'
         }
       ]
     });
@@ -240,7 +242,8 @@ describe('buildMixPairContext', () => {
           startSec: 160,
           endSec: 180,
           confidence: 0.78,
-          label: 'Outro'
+          label: 'Outro',
+          origin: 'derived'
         }
       ]
     });
@@ -263,7 +266,8 @@ describe('buildMixPairContext', () => {
           startSec: 8,
           endSec: 12,
           confidence: 0.76,
-          label: 'First downbeat'
+          label: 'First downbeat',
+          origin: 'derived'
         }
       ]
     });

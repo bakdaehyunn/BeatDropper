@@ -18,7 +18,8 @@ struct BeatDropperNativeApp: App {
         let environment = ProcessInfo.processInfo.environment
         let requiresIsolatedState =
             environment["BEATDROPPER_NATIVE_SESSION_STRESS"] == "1" ||
-            environment["BEATDROPPER_NATIVE_OPEN_IMPORT_STRESS"] == "1"
+            environment["BEATDROPPER_NATIVE_OPEN_IMPORT_STRESS"] == "1" ||
+            environment["BEATDROPPER_NATIVE_REAL_FOLDER_VALIDATION"] == "1"
         guard requiresIsolatedState else {
             return BeatDropperAppModel()
         }
@@ -213,6 +214,7 @@ final class BeatDropperApplicationDelegate: NSObject, NSApplicationDelegate {
         openPendingFinderItemsIfNeeded()
         scheduleOpenImportStressIfNeeded()
         scheduleSessionStressIfNeeded()
+        scheduleRealFolderValidationIfNeeded()
         schedulePlaybackStressIfNeeded()
         scheduleSmokeExitIfNeeded()
     }
@@ -376,6 +378,68 @@ final class BeatDropperApplicationDelegate: NSObject, NSApplicationDelegate {
                 NSApp.terminate(nil)
             } catch {
                 let message = "BEATDROPPER_NATIVE_SESSION_STRESS_FAILED reason=\"\(error.localizedDescription)\"\n"
+                FileHandle.standardError.write(Data(message.utf8))
+                NSApp.terminate(nil)
+            }
+        }
+    }
+
+    private func scheduleRealFolderValidationIfNeeded() {
+        guard ProcessInfo.processInfo.environment["BEATDROPPER_NATIVE_REAL_FOLDER_VALIDATION"] == "1" else {
+            return
+        }
+
+        Task { @MainActor in
+            do {
+                let result = try await runRealFolderValidation()
+                let message = [
+                    "BEATDROPPER_NATIVE_REAL_FOLDER_VALIDATION_READY",
+                    "imported=\(result.importedCount)",
+                    "analyzed=\(result.analyzedCount)",
+                    "sourceFolders=\(result.sourceFolderCount)",
+                    "maxRunning=\(result.maxRunningAnalysisCount)",
+                    "planConfidence=\(String(format: "%.2f", result.planConfidence))",
+                    "planSource=\(result.planSource)",
+                    "phraseAlignment=\(result.phraseAlignment)",
+                    "tempoSync=\(result.tempoSyncEnabled ? "true" : "false")",
+                    "evidenceCount=\(result.evidenceCount)",
+                    "keyAvailable=\(result.keyAvailableCount)",
+                    "keyStrong=\(result.keyStrongCount)",
+                    "keyPartial=\(result.keyPartialCount)",
+                    "keyFallback=\(result.keyFallbackCount)",
+                    "keyLowConfidence=\(result.keyLowConfidenceCount)",
+                    "keyUnavailable=\(result.keyUnavailableCount)",
+                    "keyConfidenceAvg=\(String(format: "%.3f", result.keyConfidenceAverage))",
+                    "keyConfidenceMin=\(String(format: "%.3f", result.keyConfidenceMin))",
+                    "loudnessAvailable=\(result.loudnessAvailableCount)",
+                    "loudnessStrong=\(result.loudnessStrongCount)",
+                    "loudnessPartial=\(result.loudnessPartialCount)",
+                    "loudnessFallback=\(result.loudnessFallbackCount)",
+                    "loudnessLowConfidence=\(result.loudnessLowConfidenceCount)",
+                    "headroomLow=\(result.headroomLowCount)",
+                    "rmsAvgDb=\(String(format: "%.2f", result.rmsAverageDb))",
+                    "rmsMinDb=\(String(format: "%.2f", result.rmsMinDb))",
+                    "rmsMaxDb=\(String(format: "%.2f", result.rmsMaxDb))",
+                    "lufsAvg=\(String(format: "%.2f", result.lufsAverage))",
+                    "lufsMin=\(String(format: "%.2f", result.lufsMin))",
+                    "lufsMax=\(String(format: "%.2f", result.lufsMax))",
+                    "peakMaxDb=\(String(format: "%.2f", result.peakMaxDb))",
+                    "truePeakMaxDb=\(String(format: "%.2f", result.truePeakMaxDb))",
+                    "headroomMinDb=\(String(format: "%.2f", result.headroomMinDb))",
+                    "loudnessRangeAvgLU=\(String(format: "%.2f", result.loudnessRangeAverageLU))",
+                    "dynamicRangeAvgDb=\(String(format: "%.2f", result.dynamicRangeAverageDb))",
+                    "stereoAvailable=\(result.stereoAvailableCount)",
+                    "stereoTracks=\(result.stereoTrackCount)",
+                    "channelCountMax=\(result.channelCountMax)",
+                    "stereoWidthAvg=\(String(format: "%.3f", result.stereoWidthAverage))",
+                    "phaseCorrelationAvg=\(String(format: "%.3f", result.phaseCorrelationAverage))",
+                    "midSideBalanceAvg=\(String(format: "%.3f", result.midSideBalanceAverage))",
+                    "state=\(Self.model?.audioEngine.state.rawValue ?? "unknown")"
+                ].joined(separator: " ") + "\n"
+                FileHandle.standardOutput.write(Data(message.utf8))
+                NSApp.terminate(nil)
+            } catch {
+                let message = "BEATDROPPER_NATIVE_REAL_FOLDER_VALIDATION_FAILED reason=\"\(error.localizedDescription)\"\n"
                 FileHandle.standardError.write(Data(message.utf8))
                 NSApp.terminate(nil)
             }
@@ -552,6 +616,172 @@ final class BeatDropperApplicationDelegate: NSObject, NSApplicationDelegate {
             planConfidence: minPlanConfidence,
             transitionsCompleted: completedTransitions
         )
+    }
+
+    private func runRealFolderValidation() async throws -> NativeRealFolderValidationResult {
+        guard let model = Self.model else {
+            throw NativeRealFolderValidationError.modelMissing
+        }
+        guard let folderPath = ProcessInfo.processInfo.environment["BEATDROPPER_NATIVE_REAL_FOLDER_PATH"],
+              !folderPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
+            throw NativeRealFolderValidationError.folderPathMissing
+        }
+
+        let folderURL = URL(fileURLWithPath: folderPath, isDirectory: true).standardizedFileURL
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: folderURL.path, isDirectory: &isDirectory),
+              isDirectory.boolValue
+        else {
+            throw NativeRealFolderValidationError.folderMissing
+        }
+
+        defer {
+            if let rootURL = Self.automationStateRootURL {
+                try? FileManager.default.removeItem(at: rootURL)
+            }
+        }
+
+        let importedCount = await model.importFolderForAutomation(folderURL)
+        guard importedCount >= 2,
+              model.playlist.count >= 2,
+              model.libraryRecords.count >= importedCount,
+              model.librarySourceFolders.count == 1
+        else {
+            throw NativeRealFolderValidationError.importFailed
+        }
+
+        var maxRunningAnalysisCount = model.runningAnalysisTrackCount
+        try await waitUntil(
+            timeoutSec: configuredRealFolderAnalysisTimeoutSec() ?? max(30, TimeInterval(importedCount) * 6),
+            failure: { NativeRealFolderValidationError.analysisTimedOut }
+        ) {
+            maxRunningAnalysisCount = max(maxRunningAnalysisCount, model.runningAnalysisTrackCount)
+            return model.queuedAnalysisTrackCount == 0 &&
+                model.runningAnalysisTrackCount == 0 &&
+                model.trackAnalysesById.count >= importedCount
+        }
+
+        guard maxRunningAnalysisCount <= NativeAnalysisQueueState.recommendedConcurrency(
+            activeProcessorCount: ProcessInfo.processInfo.activeProcessorCount
+        ) else {
+            throw NativeRealFolderValidationError.analysisQueueExceededLimit
+        }
+
+        let current = model.playlist[0]
+        let next = model.playlist[1]
+        let plan = try await requestSessionStressPlan(
+            model: model,
+            current: current,
+            next: next
+        )
+
+        guard plan.confidence > 0 else {
+            throw NativeRealFolderValidationError.plannerFailed("confidence was not positive")
+        }
+        guard model.audioEngine.state == .idle else {
+            throw NativeRealFolderValidationError.playbackStateChanged
+        }
+
+        let planSource = plan.evidence.first { $0.hasPrefix("source ") }?
+            .replacingOccurrences(of: "source ", with: "") ?? "unknown"
+        let evidenceSummary = realFolderEvidenceSummary(Array(model.trackAnalysesById.values))
+        return NativeRealFolderValidationResult(
+            importedCount: importedCount,
+            analyzedCount: model.trackAnalysesById.count,
+            sourceFolderCount: model.librarySourceFolders.count,
+            maxRunningAnalysisCount: maxRunningAnalysisCount,
+            planConfidence: plan.confidence,
+            planSource: planSource,
+            phraseAlignment: plan.phraseAlignment?.rawValue ?? "unknown",
+            tempoSyncEnabled: plan.tempoSync.enabled,
+            evidenceCount: plan.evidence.count,
+            keyAvailableCount: evidenceSummary.keyAvailableCount,
+            keyStrongCount: evidenceSummary.keyStrongCount,
+            keyPartialCount: evidenceSummary.keyPartialCount,
+            keyFallbackCount: evidenceSummary.keyFallbackCount,
+            keyLowConfidenceCount: evidenceSummary.keyLowConfidenceCount,
+            keyUnavailableCount: evidenceSummary.keyUnavailableCount,
+            keyConfidenceAverage: evidenceSummary.keyConfidenceAverage,
+            keyConfidenceMin: evidenceSummary.keyConfidenceMin,
+            loudnessAvailableCount: evidenceSummary.loudnessAvailableCount,
+            loudnessStrongCount: evidenceSummary.loudnessStrongCount,
+            loudnessPartialCount: evidenceSummary.loudnessPartialCount,
+            loudnessFallbackCount: evidenceSummary.loudnessFallbackCount,
+            loudnessLowConfidenceCount: evidenceSummary.loudnessLowConfidenceCount,
+            headroomLowCount: evidenceSummary.headroomLowCount,
+            rmsAverageDb: evidenceSummary.rmsAverageDb,
+            rmsMinDb: evidenceSummary.rmsMinDb,
+            rmsMaxDb: evidenceSummary.rmsMaxDb,
+            lufsAverage: evidenceSummary.lufsAverage,
+            lufsMin: evidenceSummary.lufsMin,
+            lufsMax: evidenceSummary.lufsMax,
+            peakMaxDb: evidenceSummary.peakMaxDb,
+            truePeakMaxDb: evidenceSummary.truePeakMaxDb,
+            headroomMinDb: evidenceSummary.headroomMinDb,
+            loudnessRangeAverageLU: evidenceSummary.loudnessRangeAverageLU,
+            dynamicRangeAverageDb: evidenceSummary.dynamicRangeAverageDb,
+            stereoAvailableCount: evidenceSummary.stereoAvailableCount,
+            stereoTrackCount: evidenceSummary.stereoTrackCount,
+            channelCountMax: evidenceSummary.channelCountMax,
+            stereoWidthAverage: evidenceSummary.stereoWidthAverage,
+            phaseCorrelationAverage: evidenceSummary.phaseCorrelationAverage,
+            midSideBalanceAverage: evidenceSummary.midSideBalanceAverage
+        )
+    }
+
+    private func realFolderEvidenceSummary(_ analyses: [TrackAnalysis]) -> NativeRealFolderEvidenceSummary {
+        let keyConfidences = analyses.compactMap { $0.musicalKey?.confidence }
+        let loudnessValues = analyses.compactMap(\.loudness)
+        let loudnessConfidences = loudnessValues.map(\.confidence)
+        let lufsValues = loudnessValues.compactMap(\.integratedLUFS)
+        let truePeakValues = loudnessValues.compactMap(\.truePeakDb)
+        let loudnessRangeValues = loudnessValues.compactMap(\.loudnessRangeLU)
+        let stereoValues = analyses.compactMap(\.stereo)
+        return NativeRealFolderEvidenceSummary(
+            keyAvailableCount: keyConfidences.count,
+            keyStrongCount: keyConfidences.filter { $0 >= 0.62 }.count,
+            keyPartialCount: keyConfidences.filter { $0 >= 0.35 && $0 < 0.62 }.count,
+            keyFallbackCount: analyses.count - keyConfidences.filter { $0 >= 0.35 }.count,
+            keyLowConfidenceCount: analyses.filter { $0.analysisWarnings.contains(.keyLowConfidence) }.count,
+            keyUnavailableCount: analyses.filter { $0.analysisWarnings.contains(.keyUnavailable) }.count,
+            keyConfidenceAverage: average(keyConfidences),
+            keyConfidenceMin: keyConfidences.min() ?? 0,
+            loudnessAvailableCount: loudnessValues.count,
+            loudnessStrongCount: loudnessConfidences.filter { $0 >= 0.68 }.count,
+            loudnessPartialCount: loudnessConfidences.filter { $0 >= 0.45 && $0 < 0.68 }.count,
+            loudnessFallbackCount: analyses.count - loudnessConfidences.filter { $0 >= 0.45 }.count,
+            loudnessLowConfidenceCount: analyses.filter { $0.analysisWarnings.contains(.loudnessLowConfidence) }.count,
+            headroomLowCount: analyses.filter { $0.analysisWarnings.contains(.headroomLow) }.count,
+            rmsAverageDb: average(loudnessValues.map(\.integratedRMSDb)),
+            rmsMinDb: loudnessValues.map(\.integratedRMSDb).min() ?? 0,
+            rmsMaxDb: loudnessValues.map(\.integratedRMSDb).max() ?? 0,
+            lufsAverage: average(lufsValues),
+            lufsMin: lufsValues.min() ?? 0,
+            lufsMax: lufsValues.max() ?? 0,
+            peakMaxDb: loudnessValues.map(\.peakDb).max() ?? 0,
+            truePeakMaxDb: truePeakValues.max() ?? 0,
+            headroomMinDb: loudnessValues.map(\.headroomDb).min() ?? 0,
+            loudnessRangeAverageLU: average(loudnessRangeValues),
+            dynamicRangeAverageDb: average(loudnessValues.map(\.dynamicRangeDb)),
+            stereoAvailableCount: stereoValues.count,
+            stereoTrackCount: stereoValues.filter { $0.channelCount >= 2 }.count,
+            channelCountMax: stereoValues.map(\.channelCount).max() ?? 0,
+            stereoWidthAverage: average(stereoValues.map(\.stereoWidth)),
+            phaseCorrelationAverage: average(stereoValues.map(\.phaseCorrelation)),
+            midSideBalanceAverage: average(stereoValues.map(\.midSideBalance))
+        )
+    }
+
+    private func configuredRealFolderAnalysisTimeoutSec() -> TimeInterval? {
+        guard let rawValue = ProcessInfo.processInfo.environment["BEATDROPPER_NATIVE_REAL_FOLDER_ANALYSIS_TIMEOUT_SEC"],
+              let value = Double(rawValue),
+              value.isFinite,
+              value >= 30
+        else {
+            return nil
+        }
+        return value
     }
 
     private func requestSessionStressPlan(
@@ -799,6 +1029,90 @@ private struct NativeSessionStressResult {
     var transitionsCompleted: Int
 }
 
+private struct NativeRealFolderValidationResult {
+    var importedCount: Int
+    var analyzedCount: Int
+    var sourceFolderCount: Int
+    var maxRunningAnalysisCount: Int
+    var planConfidence: Double
+    var planSource: String
+    var phraseAlignment: String
+    var tempoSyncEnabled: Bool
+    var evidenceCount: Int
+    var keyAvailableCount: Int
+    var keyStrongCount: Int
+    var keyPartialCount: Int
+    var keyFallbackCount: Int
+    var keyLowConfidenceCount: Int
+    var keyUnavailableCount: Int
+    var keyConfidenceAverage: Double
+    var keyConfidenceMin: Double
+    var loudnessAvailableCount: Int
+    var loudnessStrongCount: Int
+    var loudnessPartialCount: Int
+    var loudnessFallbackCount: Int
+    var loudnessLowConfidenceCount: Int
+    var headroomLowCount: Int
+    var rmsAverageDb: Double
+    var rmsMinDb: Double
+    var rmsMaxDb: Double
+    var lufsAverage: Double
+    var lufsMin: Double
+    var lufsMax: Double
+    var peakMaxDb: Double
+    var truePeakMaxDb: Double
+    var headroomMinDb: Double
+    var loudnessRangeAverageLU: Double
+    var dynamicRangeAverageDb: Double
+    var stereoAvailableCount: Int
+    var stereoTrackCount: Int
+    var channelCountMax: Int
+    var stereoWidthAverage: Double
+    var phaseCorrelationAverage: Double
+    var midSideBalanceAverage: Double
+}
+
+private struct NativeRealFolderEvidenceSummary {
+    var keyAvailableCount: Int
+    var keyStrongCount: Int
+    var keyPartialCount: Int
+    var keyFallbackCount: Int
+    var keyLowConfidenceCount: Int
+    var keyUnavailableCount: Int
+    var keyConfidenceAverage: Double
+    var keyConfidenceMin: Double
+    var loudnessAvailableCount: Int
+    var loudnessStrongCount: Int
+    var loudnessPartialCount: Int
+    var loudnessFallbackCount: Int
+    var loudnessLowConfidenceCount: Int
+    var headroomLowCount: Int
+    var rmsAverageDb: Double
+    var rmsMinDb: Double
+    var rmsMaxDb: Double
+    var lufsAverage: Double
+    var lufsMin: Double
+    var lufsMax: Double
+    var peakMaxDb: Double
+    var truePeakMaxDb: Double
+    var headroomMinDb: Double
+    var loudnessRangeAverageLU: Double
+    var dynamicRangeAverageDb: Double
+    var stereoAvailableCount: Int
+    var stereoTrackCount: Int
+    var channelCountMax: Int
+    var stereoWidthAverage: Double
+    var phaseCorrelationAverage: Double
+    var midSideBalanceAverage: Double
+}
+
+private func average(_ values: [Double]) -> Double {
+    guard !values.isEmpty else {
+        return 0
+    }
+    return values.reduce(0, +) / Double(values.count)
+}
+
 private struct NativeSessionStressConfiguration {
     var trackCount: Int
     var transitionCount: Int
@@ -867,6 +1181,38 @@ private enum NativeSessionStressError: LocalizedError {
             return "session crossfade did not complete on the target deck: \(detail)"
         case .stopFailed:
             return "session stop did not return to idle state"
+        }
+    }
+}
+
+private enum NativeRealFolderValidationError: LocalizedError {
+    case modelMissing
+    case folderPathMissing
+    case folderMissing
+    case importFailed
+    case analysisTimedOut
+    case analysisQueueExceededLimit
+    case plannerFailed(String)
+    case playbackStateChanged
+
+    var errorDescription: String? {
+        switch self {
+        case .modelMissing:
+            return "application model is missing"
+        case .folderPathMissing:
+            return "BEATDROPPER_NATIVE_REAL_FOLDER_PATH is missing"
+        case .folderMissing:
+            return "real-track validation folder does not exist or is not a directory"
+        case .importFailed:
+            return "real-track folder import did not produce at least two supported tracks"
+        case .analysisTimedOut:
+            return "real-track analysis queue did not finish before timeout"
+        case .analysisQueueExceededLimit:
+            return "real-track analysis queue exceeded its concurrency limit"
+        case .plannerFailed(let reason):
+            return "real-track planner did not return a usable plan: \(reason)"
+        case .playbackStateChanged:
+            return "real-track validation changed playback state unexpectedly"
         }
     }
 }

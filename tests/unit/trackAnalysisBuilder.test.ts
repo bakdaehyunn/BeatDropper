@@ -136,6 +136,49 @@ const buildSpectralShiftPulseBuffer = ({
   return new TestAudioBuffer(data, sampleRate);
 };
 
+const buildConstantToneBuffer = ({
+  durationSec,
+  sampleRate = 22050,
+  frequency = 120,
+  amplitude = 0.32
+}: {
+  durationSec: number;
+  sampleRate?: number;
+  frequency?: number;
+  amplitude?: number;
+}): TestAudioBuffer => {
+  const length = Math.floor(durationSec * sampleRate);
+  const data = new Float32Array(length);
+  for (let index = 0; index < length; index += 1) {
+    const timeSec = index / sampleRate;
+    data[index] = amplitude * Math.sin(timeSec * Math.PI * 2 * frequency);
+  }
+  return new TestAudioBuffer(data, sampleRate);
+};
+
+const buildGradualFadePulseBuffer = ({
+  bpm,
+  durationSec,
+  offsetSec = 0.1,
+  sampleRate = 22050
+}: {
+  bpm: number;
+  durationSec: number;
+  offsetSec?: number;
+  sampleRate?: number;
+}): TestAudioBuffer => {
+  return buildSectionedPulseBuffer({
+    bpm,
+    durationSec,
+    offsetSec,
+    sampleRate,
+    gainAt: (timeSec, beatIndex) => {
+      const accent = beatIndex % 4 === 0 ? 1 : 0.45;
+      return accent * Math.max(0.12, 1 - timeSec / durationSec);
+    }
+  });
+};
+
 const buildNoisyOffGridTransientBuffer = (
   durationSec: number,
   sampleRate = 22050
@@ -495,6 +538,75 @@ describe('buildTrackAnalysisFromAudioBuffer', () => {
         (bar) => Math.abs(bar.startSec - (firstDownbeat?.startSec ?? -1)) < 0.001
       )
     ).toBe(true);
+  });
+
+  it('does not mark flat nonzero energy cues as derived', () => {
+    const track: Track = {
+      id: 'flat-tone',
+      title: 'Flat Tone',
+      durationSec: 48,
+      format: 'wav',
+      bpm: 120
+    };
+
+    const analysis = buildTrackAnalysisFromAudioBuffer(
+      track,
+      buildConstantToneBuffer({ durationSec: 48 })
+    );
+    const energyCues = analysis.cueCandidates.filter((cue) =>
+      cue.type === 'low_energy_break' || cue.type === 'high_energy_drop' || cue.type === 'outro'
+    );
+
+    expect(energyCues.length).toBeGreaterThan(0);
+    expect(energyCues.every((cue) => cue.origin === 'heuristic_placeholder')).toBe(true);
+  });
+
+  it('does not mark a gradual fade as a derived outro cue', () => {
+    const track: Track = {
+      id: 'gradual-fade',
+      title: 'Gradual Fade',
+      durationSec: 96,
+      format: 'wav',
+      bpm: 120
+    };
+
+    const analysis = buildTrackAnalysisFromAudioBuffer(
+      track,
+      buildGradualFadePulseBuffer({ bpm: 120, durationSec: 96 })
+    );
+    const outro = analysis.cueCandidates.find((cue) => cue.type === 'outro');
+
+    expect(outro).toBeDefined();
+    expect(outro?.origin).toBe('heuristic_placeholder');
+  });
+
+  it('marks a section lift with local attack as a derived high-energy drop', () => {
+    const track: Track = {
+      id: 'section-lift',
+      title: 'Section Lift',
+      durationSec: 64,
+      format: 'wav',
+      bpm: 120
+    };
+
+    const analysis = buildTrackAnalysisFromAudioBuffer(
+      track,
+      buildSectionedPulseBuffer({
+        bpm: 120,
+        durationSec: 64,
+        offsetSec: 0.1,
+        gainAt: (timeSec, beatIndex) => {
+          const accent = beatIndex % 4 === 0 ? 1 : 0.45;
+          return timeSec < 16 ? accent * 0.18 : accent;
+        }
+      })
+    );
+    const drop = analysis.cueCandidates.find((cue) => cue.type === 'high_energy_drop');
+
+    expect(drop).toBeDefined();
+    expect(drop?.origin).toBe('derived');
+    expect(drop?.startSec ?? 0).toBeGreaterThanOrEqual(14);
+    expect(drop?.startSec ?? 99).toBeLessThanOrEqual(18);
   });
 
   it('prefers high-confidence derived BPM over mismatched metadata BPM', () => {

@@ -150,4 +150,89 @@ describe('create-analysis-benchmark-fixture script', () => {
     expect(result.stdout).toContain('private/track a');
     expect(result.stdout).toContain('bpm 124.20');
   });
+
+  it('writes and loads editable ground-truth label files', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'beatdropper-labels-'));
+    const analysisPath = path.join(tempDir, 'analysis.json');
+    const labelsPath = path.join(tempDir, 'labels.json');
+    const outDir = path.join(tempDir, 'snapshots');
+    fs.writeFileSync(
+      analysisPath,
+      JSON.stringify(
+        {
+          ...buildAnalysis(),
+          loudness: {
+            integratedRMSDb: -10.2,
+            integratedLUFS: -9.8,
+            peakDb: -0.7,
+            truePeakDb: -0.55,
+            headroomDb: 0.55,
+            crestFactorDb: 9.5,
+            dynamicRangeDb: 12.8,
+            loudnessRangeLU: 4.1,
+            measurement: 'ebu_r128_k_weighted_gated_mono',
+            confidence: 0.82
+          }
+        },
+        null,
+        2
+      ),
+      'utf8'
+    );
+
+    const writeResult = spawnSync(
+      'node',
+      [
+        'scripts/create-analysis-benchmark-fixture.cjs',
+        '--analysis-file',
+        analysisPath,
+        '--out-dir',
+        outDir,
+        '--id',
+        'label-fixture',
+        '--write-labels',
+        labelsPath
+      ],
+      {
+        cwd: repoRoot,
+        encoding: 'utf8'
+      }
+    );
+    expect(writeResult.status).toBe(0);
+    const labels = JSON.parse(fs.readFileSync(labelsPath, 'utf8'));
+    expect(labels.expected.loudness).toMatchObject({
+      integratedLUFS: -9.8,
+      truePeakDb: -0.55
+    });
+
+    labels.expected.bpm = 123;
+    labels.reviewedBy = 'calibration-reviewer';
+    fs.writeFileSync(labelsPath, JSON.stringify(labels, null, 2), 'utf8');
+
+    const loadResult = spawnSync(
+      'node',
+      [
+        'scripts/create-analysis-benchmark-fixture.cjs',
+        '--analysis-file',
+        analysisPath,
+        '--out-dir',
+        outDir,
+        '--id',
+        'label-fixture',
+        '--labels-file',
+        labelsPath,
+        '--overwrite'
+      ],
+      {
+        cwd: repoRoot,
+        encoding: 'utf8'
+      }
+    );
+    const fixture = JSON.parse(fs.readFileSync(path.join(outDir, 'label-fixture.json'), 'utf8'));
+
+    expect(loadResult.status).toBe(0);
+    expect(fixture.expected.bpm).toBe(123);
+    expect(fixture.groundTruthLabels.reviewedBy).toBe('calibration-reviewer');
+    expect(fixture.groundTruthLabels.expected.loudness.integratedLUFS).toBe(-9.8);
+  });
 });

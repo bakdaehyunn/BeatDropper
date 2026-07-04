@@ -1,4 +1,4 @@
-export const TRACK_ANALYSIS_SCHEMA_VERSION = 5;
+export const TRACK_ANALYSIS_SCHEMA_VERSION = 7;
 
 export type TrackAnalysisSource = 'metadata' | 'derived' | 'external';
 export type CueCandidateType =
@@ -7,6 +7,7 @@ export type CueCandidateType =
   | 'outro'
   | 'low_energy_break'
   | 'high_energy_drop';
+export type CueCandidateOrigin = 'derived' | 'heuristic_placeholder' | 'user';
 export type AnalysisWarning =
   | 'bpm_unavailable'
   | 'bpm_low_confidence'
@@ -14,7 +15,44 @@ export type AnalysisWarning =
   | 'beat_grid_estimated'
   | 'short_track'
   | 'flat_energy'
-  | 'analysis_upgrade_available';
+  | 'analysis_upgrade_available'
+  | 'key_unavailable'
+  | 'key_low_confidence'
+  | 'loudness_low_confidence'
+  | 'headroom_low';
+export type MusicalKeyMode = 'major' | 'minor';
+
+export interface MusicalKeyEstimate {
+  tonic: string;
+  mode: MusicalKeyMode;
+  confidence: number;
+  chromaEnergy: number;
+}
+
+export interface LoudnessAnalysis {
+  integratedRMSDb: number;
+  integratedLUFS?: number | null;
+  peakDb: number;
+  truePeakDb?: number | null;
+  headroomDb: number;
+  crestFactorDb: number;
+  dynamicRangeDb: number;
+  loudnessRangeLU?: number | null;
+  measurement?: string | null;
+  confidence: number;
+}
+
+export interface StereoAnalysis {
+  channelCount: number;
+  leftPeakDb?: number | null;
+  rightPeakDb?: number | null;
+  leftRMSDb?: number | null;
+  rightRMSDb?: number | null;
+  stereoWidth: number;
+  phaseCorrelation: number;
+  midSideBalance: number;
+  confidence: number;
+}
 
 export interface WaveformPeak {
   timeSec: number;
@@ -45,6 +83,7 @@ export interface AnalysisQuality {
   spectralBands: number;
   transientMarkers: number;
   beatGrid: number;
+  harmonicKey?: number;
 }
 
 export interface TrackFileRevision {
@@ -72,6 +111,7 @@ export interface CueCandidate {
   endSec: number;
   confidence: number;
   label: string;
+  origin: CueCandidateOrigin;
 }
 
 export interface TrackAnalysis {
@@ -94,6 +134,9 @@ export interface TrackAnalysis {
   spectralBands: SpectralBandPoint[];
   transientMarkers: TransientMarker[];
   cueCandidates: CueCandidate[];
+  musicalKey?: MusicalKeyEstimate | null;
+  loudness?: LoudnessAnalysis | null;
+  stereo?: StereoAnalysis | null;
   analysisConfidence: number;
   analysisQuality: AnalysisQuality;
   analysisWarnings: AnalysisWarning[];
@@ -248,7 +291,11 @@ const asCueCandidates = (value: unknown): CueCandidate[] => {
         startSec,
         endSec,
         confidence: isFiniteNumber(item.confidence) ? clamp(item.confidence, 0, 1) : 0,
-        label: typeof item.label === 'string' && item.label.length > 0 ? item.label : type
+        label: typeof item.label === 'string' && item.label.length > 0 ? item.label : type,
+        origin:
+          item.origin === 'derived' || item.origin === 'user'
+            ? item.origin
+            : 'heuristic_placeholder'
       };
     });
 };
@@ -265,7 +312,11 @@ const asAnalysisWarnings = (value: unknown): AnalysisWarning[] => {
     item === 'beat_grid_estimated' ||
     item === 'short_track' ||
     item === 'flat_energy' ||
-    item === 'analysis_upgrade_available'
+    item === 'analysis_upgrade_available' ||
+    item === 'key_unavailable' ||
+    item === 'key_low_confidence' ||
+    item === 'loudness_low_confidence' ||
+    item === 'headroom_low'
   );
 };
 
@@ -275,7 +326,8 @@ const asAnalysisQuality = (value: unknown): AnalysisQuality => {
       waveformDetail: 0,
       spectralBands: 0,
       transientMarkers: 0,
-      beatGrid: 0
+      beatGrid: 0,
+      harmonicKey: 0
     };
   }
 
@@ -283,7 +335,65 @@ const asAnalysisQuality = (value: unknown): AnalysisQuality => {
     waveformDetail: isFiniteNumber(value.waveformDetail) ? clamp(value.waveformDetail, 0, 1) : 0,
     spectralBands: isFiniteNumber(value.spectralBands) ? clamp(value.spectralBands, 0, 1) : 0,
     transientMarkers: isFiniteNumber(value.transientMarkers) ? clamp(value.transientMarkers, 0, 1) : 0,
-    beatGrid: isFiniteNumber(value.beatGrid) ? clamp(value.beatGrid, 0, 1) : 0
+    beatGrid: isFiniteNumber(value.beatGrid) ? clamp(value.beatGrid, 0, 1) : 0,
+    harmonicKey: isFiniteNumber(value.harmonicKey) ? clamp(value.harmonicKey, 0, 1) : 0
+  };
+};
+
+const asMusicalKey = (value: unknown): MusicalKeyEstimate | null => {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const tonic = typeof value.tonic === 'string' ? value.tonic : '';
+  if (!/^[A-G](#|b)?$/.test(tonic)) {
+    return null;
+  }
+  if (value.mode !== 'major' && value.mode !== 'minor') {
+    return null;
+  }
+  return {
+    tonic,
+    mode: value.mode,
+    confidence: isFiniteNumber(value.confidence) ? clamp(value.confidence, 0, 1) : 0,
+    chromaEnergy: isFiniteNumber(value.chromaEnergy) ? Math.max(0, value.chromaEnergy) : 0
+  };
+};
+
+const asLoudness = (value: unknown): LoudnessAnalysis | null => {
+  if (!isRecord(value)) {
+    return null;
+  }
+  if (!isFiniteNumber(value.integratedRMSDb) || !isFiniteNumber(value.peakDb)) {
+    return null;
+  }
+  return {
+    integratedRMSDb: clamp(value.integratedRMSDb, -120, 12),
+    integratedLUFS: isFiniteNumber(value.integratedLUFS) ? clamp(value.integratedLUFS, -120, 12) : null,
+    peakDb: clamp(value.peakDb, -120, 12),
+    truePeakDb: isFiniteNumber(value.truePeakDb) ? clamp(value.truePeakDb, -120, 12) : null,
+    headroomDb: isFiniteNumber(value.headroomDb) ? clamp(value.headroomDb, 0, 120) : 0,
+    crestFactorDb: isFiniteNumber(value.crestFactorDb) ? clamp(value.crestFactorDb, 0, 80) : 0,
+    dynamicRangeDb: isFiniteNumber(value.dynamicRangeDb) ? clamp(value.dynamicRangeDb, 0, 80) : 0,
+    loudnessRangeLU: isFiniteNumber(value.loudnessRangeLU) ? clamp(value.loudnessRangeLU, 0, 80) : null,
+    measurement: typeof value.measurement === 'string' && value.measurement.length > 0 ? value.measurement : null,
+    confidence: isFiniteNumber(value.confidence) ? clamp(value.confidence, 0, 1) : 0
+  };
+};
+
+const asStereo = (value: unknown): StereoAnalysis | null => {
+  if (!isRecord(value) || !isFiniteNumber(value.channelCount)) {
+    return null;
+  }
+  return {
+    channelCount: Math.max(1, Math.floor(value.channelCount)),
+    leftPeakDb: isFiniteNumber(value.leftPeakDb) ? clamp(value.leftPeakDb, -120, 12) : null,
+    rightPeakDb: isFiniteNumber(value.rightPeakDb) ? clamp(value.rightPeakDb, -120, 12) : null,
+    leftRMSDb: isFiniteNumber(value.leftRMSDb) ? clamp(value.leftRMSDb, -120, 12) : null,
+    rightRMSDb: isFiniteNumber(value.rightRMSDb) ? clamp(value.rightRMSDb, -120, 12) : null,
+    stereoWidth: isFiniteNumber(value.stereoWidth) ? clamp(value.stereoWidth, 0, 1) : 0,
+    phaseCorrelation: isFiniteNumber(value.phaseCorrelation) ? clamp(value.phaseCorrelation, -1, 1) : 1,
+    midSideBalance: isFiniteNumber(value.midSideBalance) ? clamp(value.midSideBalance, 0, 12) : 1,
+    confidence: isFiniteNumber(value.confidence) ? clamp(value.confidence, 0, 1) : 0
   };
 };
 
@@ -355,6 +465,9 @@ export const sanitizeTrackAnalysis = (
     spectralBands,
     transientMarkers,
     cueCandidates: asCueCandidates(candidate?.cueCandidates),
+    musicalKey: asMusicalKey(candidate?.musicalKey),
+    loudness: asLoudness(candidate?.loudness),
+    stereo: asStereo(candidate?.stereo),
     analysisConfidence: clamp(confidence, 0, 1),
     analysisQuality: quality,
     analysisWarnings: upgradeWarnings
@@ -374,6 +487,7 @@ export const hasPlannerReadyTrackAnalysis = (analysis: TrackAnalysis | null | un
     analysis.analysisQuality.beatGrid >= PLANNER_READY_MIN_BEAT_GRID_QUALITY &&
     analysis.bpmConfidence >= PLANNER_READY_MIN_BPM_CONFIDENCE &&
     !analysis.analysisWarnings.includes('analysis_upgrade_available') &&
-    !analysis.analysisWarnings.includes('bpm_low_confidence')
+    !analysis.analysisWarnings.includes('bpm_low_confidence') &&
+    !analysis.analysisWarnings.includes('flat_energy')
   );
 };

@@ -18,6 +18,11 @@ public struct AnalysisBenchmarkExpectation: Codable, Hashable, Sendable {
     public var barGridSec: [Double]?
     public var phraseBoundarySec: [Double]?
     public var plannerReady: Bool?
+    public var musicalKey: AnalysisBenchmarkKeyExpectation?
+    public var loudness: AnalysisBenchmarkLoudnessExpectation?
+    public var stereo: AnalysisBenchmarkStereoExpectation?
+    public var cueCandidates: [AnalysisBenchmarkCueExpectation]?
+    public var mixReadiness: AnalysisBenchmarkMixReadinessExpectation?
 
     public init(
         bpm: Double? = nil,
@@ -25,7 +30,12 @@ public struct AnalysisBenchmarkExpectation: Codable, Hashable, Sendable {
         outroCueSec: Double? = nil,
         barGridSec: [Double]? = nil,
         phraseBoundarySec: [Double]? = nil,
-        plannerReady: Bool? = nil
+        plannerReady: Bool? = nil,
+        musicalKey: AnalysisBenchmarkKeyExpectation? = nil,
+        loudness: AnalysisBenchmarkLoudnessExpectation? = nil,
+        stereo: AnalysisBenchmarkStereoExpectation? = nil,
+        cueCandidates: [AnalysisBenchmarkCueExpectation]? = nil,
+        mixReadiness: AnalysisBenchmarkMixReadinessExpectation? = nil
     ) {
         self.bpm = bpm
         self.firstDownbeatSec = firstDownbeatSec
@@ -33,6 +43,106 @@ public struct AnalysisBenchmarkExpectation: Codable, Hashable, Sendable {
         self.barGridSec = barGridSec
         self.phraseBoundarySec = phraseBoundarySec
         self.plannerReady = plannerReady
+        self.musicalKey = musicalKey
+        self.loudness = loudness
+        self.stereo = stereo
+        self.cueCandidates = cueCandidates
+        self.mixReadiness = mixReadiness
+    }
+}
+
+public struct AnalysisBenchmarkKeyExpectation: Codable, Hashable, Sendable {
+    public var tonic: String?
+    public var mode: MusicalKeyMode?
+    public var minConfidence: Double?
+
+    public init(tonic: String? = nil, mode: MusicalKeyMode? = nil, minConfidence: Double? = nil) {
+        self.tonic = tonic
+        self.mode = mode
+        self.minConfidence = minConfidence
+    }
+}
+
+public struct AnalysisBenchmarkLoudnessExpectation: Codable, Hashable, Sendable {
+    public var integratedRMSDb: Double?
+    public var integratedLUFS: Double?
+    public var peakDb: Double?
+    public var truePeakDb: Double?
+    public var minHeadroomDb: Double?
+    public var minConfidence: Double?
+
+    public init(
+        integratedRMSDb: Double? = nil,
+        integratedLUFS: Double? = nil,
+        peakDb: Double? = nil,
+        truePeakDb: Double? = nil,
+        minHeadroomDb: Double? = nil,
+        minConfidence: Double? = nil
+    ) {
+        self.integratedRMSDb = integratedRMSDb
+        self.integratedLUFS = integratedLUFS
+        self.peakDb = peakDb
+        self.truePeakDb = truePeakDb
+        self.minHeadroomDb = minHeadroomDb
+        self.minConfidence = minConfidence
+    }
+}
+
+public struct AnalysisBenchmarkCueExpectation: Codable, Hashable, Sendable {
+    public var type: CueCandidateType
+    public var startSec: Double
+    public var minConfidence: Double?
+    public var origin: CueCandidateOrigin?
+
+    public init(type: CueCandidateType, startSec: Double, minConfidence: Double? = nil, origin: CueCandidateOrigin? = nil) {
+        self.type = type
+        self.startSec = startSec
+        self.minConfidence = minConfidence
+        self.origin = origin
+    }
+}
+
+public struct AnalysisBenchmarkMixReadinessExpectation: Codable, Hashable, Sendable {
+    public var minAnalysisConfidence: Double?
+    public var minHarmonicKeyQuality: Double?
+    public var minLoudnessConfidence: Double?
+    public var forbiddenWarnings: [AnalysisWarning]?
+
+    public init(
+        minAnalysisConfidence: Double? = nil,
+        minHarmonicKeyQuality: Double? = nil,
+        minLoudnessConfidence: Double? = nil,
+        forbiddenWarnings: [AnalysisWarning]? = nil
+    ) {
+        self.minAnalysisConfidence = minAnalysisConfidence
+        self.minHarmonicKeyQuality = minHarmonicKeyQuality
+        self.minLoudnessConfidence = minLoudnessConfidence
+        self.forbiddenWarnings = forbiddenWarnings
+    }
+}
+
+public struct AnalysisBenchmarkStereoExpectation: Codable, Hashable, Sendable {
+    public var channelCount: Int?
+    public var minStereoWidth: Double?
+    public var maxStereoWidth: Double?
+    public var minPhaseCorrelation: Double?
+    public var maxMidSideBalance: Double?
+    public var minConfidence: Double?
+
+    public init(
+        channelCount: Int? = nil,
+        minStereoWidth: Double? = nil,
+        maxStereoWidth: Double? = nil,
+        minPhaseCorrelation: Double? = nil,
+        maxMidSideBalance: Double? = nil,
+        minConfidence: Double? = nil
+    ) {
+        self.channelCount = channelCount
+        self.minStereoWidth = minStereoWidth
+        self.maxStereoWidth = maxStereoWidth
+        self.minPhaseCorrelation = minPhaseCorrelation
+        self.maxMidSideBalance = maxMidSideBalance
+        self.minConfidence = minConfidence
     }
 }
 
@@ -47,6 +157,14 @@ public struct AnalysisBenchmarkThresholds: Codable, Hashable, Sendable {
     public var barFailMaxDriftSec: Double
     public var phraseWarnAverageDistanceSec: Double
     public var phraseFailAverageDistanceSec: Double
+    public var keyWarnConfidence: Double
+    public var keyFailConfidence: Double
+    public var loudnessWarnDeltaDb: Double
+    public var loudnessFailDeltaDb: Double
+    public var headroomWarnDb: Double
+    public var headroomFailDb: Double
+    public var cueWarnConfidence: Double
+    public var cueFailConfidence: Double
 
     public init(
         bpmWarnError: Double = 1.5,
@@ -58,7 +176,15 @@ public struct AnalysisBenchmarkThresholds: Codable, Hashable, Sendable {
         barWarnMaxDriftSec: Double = 0.45,
         barFailMaxDriftSec: Double = 1.25,
         phraseWarnAverageDistanceSec: Double = 2,
-        phraseFailAverageDistanceSec: Double = 8
+        phraseFailAverageDistanceSec: Double = 8,
+        keyWarnConfidence: Double = 0.35,
+        keyFailConfidence: Double = 0.24,
+        loudnessWarnDeltaDb: Double = 1.5,
+        loudnessFailDeltaDb: Double = 3,
+        headroomWarnDb: Double = 1,
+        headroomFailDb: Double = 0.2,
+        cueWarnConfidence: Double = 0.55,
+        cueFailConfidence: Double = 0.35
     ) {
         self.bpmWarnError = bpmWarnError
         self.bpmFailError = bpmFailError
@@ -70,6 +196,14 @@ public struct AnalysisBenchmarkThresholds: Codable, Hashable, Sendable {
         self.barFailMaxDriftSec = barFailMaxDriftSec
         self.phraseWarnAverageDistanceSec = phraseWarnAverageDistanceSec
         self.phraseFailAverageDistanceSec = phraseFailAverageDistanceSec
+        self.keyWarnConfidence = keyWarnConfidence
+        self.keyFailConfidence = keyFailConfidence
+        self.loudnessWarnDeltaDb = loudnessWarnDeltaDb
+        self.loudnessFailDeltaDb = loudnessFailDeltaDb
+        self.headroomWarnDb = headroomWarnDb
+        self.headroomFailDb = headroomFailDb
+        self.cueWarnConfidence = cueWarnConfidence
+        self.cueFailConfidence = cueFailConfidence
     }
 }
 
@@ -109,6 +243,81 @@ public struct AnalysisBenchmarkSeriesMetric: Codable, Hashable, Sendable {
     }
 }
 
+public struct AnalysisBenchmarkKeyMetric: Codable, Hashable, Sendable {
+    public var expectedTonic: String?
+    public var expectedMode: MusicalKeyMode?
+    public var actualTonic: String?
+    public var actualMode: MusicalKeyMode?
+    public var confidence: Double?
+    public var matched: Bool?
+}
+
+public struct AnalysisBenchmarkLoudnessMetric: Codable, Hashable, Sendable {
+    public var expectedIntegratedRMSDb: Double?
+    public var actualIntegratedRMSDb: Double?
+    public var integratedRMSDeltaDb: Double?
+    public var expectedIntegratedLUFS: Double?
+    public var actualIntegratedLUFS: Double?
+    public var integratedLUFSDelta: Double?
+    public var expectedPeakDb: Double?
+    public var actualPeakDb: Double?
+    public var peakDeltaDb: Double?
+    public var expectedTruePeakDb: Double?
+    public var actualTruePeakDb: Double?
+    public var truePeakDeltaDb: Double?
+    public var headroomDb: Double?
+    public var loudnessRangeLU: Double?
+    public var measurement: String?
+    public var confidence: Double?
+}
+
+public struct AnalysisBenchmarkGroundTruthLabels: Codable, Hashable, Sendable {
+    public var schemaVersion: Int?
+    public var reviewedBy: String?
+    public var reviewedAt: String?
+    public var notes: String?
+    public var expected: AnalysisBenchmarkExpectation
+
+    public init(
+        schemaVersion: Int? = nil,
+        reviewedBy: String? = nil,
+        reviewedAt: String? = nil,
+        notes: String? = nil,
+        expected: AnalysisBenchmarkExpectation
+    ) {
+        self.schemaVersion = schemaVersion
+        self.reviewedBy = reviewedBy
+        self.reviewedAt = reviewedAt
+        self.notes = notes
+        self.expected = expected
+    }
+}
+
+public struct AnalysisBenchmarkCueMetric: Codable, Hashable, Sendable {
+    public var type: CueCandidateType
+    public var expectedSec: Double
+    public var actualSec: Double?
+    public var distanceSec: Double?
+    public var confidence: Double?
+    public var origin: CueCandidateOrigin?
+}
+
+public struct AnalysisBenchmarkMixReadinessMetric: Codable, Hashable, Sendable {
+    public var analysisConfidence: Double
+    public var harmonicKeyQuality: Double
+    public var loudnessConfidence: Double?
+    public var forbiddenWarningsPresent: [AnalysisWarning]
+}
+
+public struct AnalysisBenchmarkStereoMetric: Codable, Hashable, Sendable {
+    public var expectedChannelCount: Int?
+    public var actualChannelCount: Int?
+    public var stereoWidth: Double?
+    public var phaseCorrelation: Double?
+    public var midSideBalance: Double?
+    public var confidence: Double?
+}
+
 public struct AnalysisBenchmarkResult: Codable, Hashable, Sendable {
     public var grade: AnalysisBenchmarkGrade
     public var score: Double
@@ -119,6 +328,11 @@ public struct AnalysisBenchmarkResult: Codable, Hashable, Sendable {
     public var barGrid: AnalysisBenchmarkSeriesMetric
     public var phraseBoundaries: AnalysisBenchmarkSeriesMetric
     public var plannerReadyMatch: Bool?
+    public var musicalKey: AnalysisBenchmarkKeyMetric?
+    public var loudness: AnalysisBenchmarkLoudnessMetric?
+    public var stereo: AnalysisBenchmarkStereoMetric?
+    public var cueCandidates: [AnalysisBenchmarkCueMetric]
+    public var mixReadiness: AnalysisBenchmarkMixReadinessMetric?
 
     public init(
         grade: AnalysisBenchmarkGrade,
@@ -129,7 +343,12 @@ public struct AnalysisBenchmarkResult: Codable, Hashable, Sendable {
         outro: AnalysisBenchmarkDistanceMetric?,
         barGrid: AnalysisBenchmarkSeriesMetric,
         phraseBoundaries: AnalysisBenchmarkSeriesMetric,
-        plannerReadyMatch: Bool?
+        plannerReadyMatch: Bool?,
+        musicalKey: AnalysisBenchmarkKeyMetric? = nil,
+        loudness: AnalysisBenchmarkLoudnessMetric? = nil,
+        stereo: AnalysisBenchmarkStereoMetric? = nil,
+        cueCandidates: [AnalysisBenchmarkCueMetric] = [],
+        mixReadiness: AnalysisBenchmarkMixReadinessMetric? = nil
     ) {
         self.grade = grade
         self.score = score
@@ -140,6 +359,11 @@ public struct AnalysisBenchmarkResult: Codable, Hashable, Sendable {
         self.barGrid = barGrid
         self.phraseBoundaries = phraseBoundaries
         self.plannerReadyMatch = plannerReadyMatch
+        self.musicalKey = musicalKey
+        self.loudness = loudness
+        self.stereo = stereo
+        self.cueCandidates = cueCandidates
+        self.mixReadiness = mixReadiness
     }
 }
 
@@ -198,6 +422,7 @@ public struct AnalysisBenchmarkFixture: Decodable, Sendable {
     public var tags: [String]?
     public var expectedGrade: AnalysisBenchmarkGrade?
     public var expected: AnalysisBenchmarkExpectation
+    public var groundTruthLabels: AnalysisBenchmarkGroundTruthLabels?
     public var analysis: AnalysisBenchmarkTrackAnalysisSnapshot
     public var thresholds: AnalysisBenchmarkThresholds?
 
@@ -208,6 +433,7 @@ public struct AnalysisBenchmarkFixture: Decodable, Sendable {
         tags: [String]? = nil,
         expectedGrade: AnalysisBenchmarkGrade? = nil,
         expected: AnalysisBenchmarkExpectation,
+        groundTruthLabels: AnalysisBenchmarkGroundTruthLabels? = nil,
         analysis: AnalysisBenchmarkTrackAnalysisSnapshot,
         thresholds: AnalysisBenchmarkThresholds? = nil
     ) {
@@ -217,6 +443,7 @@ public struct AnalysisBenchmarkFixture: Decodable, Sendable {
         self.tags = tags
         self.expectedGrade = expectedGrade
         self.expected = expected
+        self.groundTruthLabels = groundTruthLabels
         self.analysis = analysis
         self.thresholds = thresholds
     }
@@ -239,6 +466,9 @@ public struct AnalysisBenchmarkTrackAnalysisSnapshot: Decodable, Sendable {
     public var spectralBands: [SpectralBandPoint]?
     public var transientMarkers: [TransientMarker]?
     public var cueCandidates: [CueCandidate]?
+    public var musicalKey: MusicalKeyEstimate?
+    public var loudness: LoudnessAnalysis?
+    public var stereo: StereoAnalysis?
     public var analysisConfidence: Double?
     public var analysisQuality: AnalysisQuality?
     public var analysisWarnings: [AnalysisWarning]?
@@ -260,6 +490,9 @@ public struct AnalysisBenchmarkTrackAnalysisSnapshot: Decodable, Sendable {
         spectralBands: [SpectralBandPoint]? = nil,
         transientMarkers: [TransientMarker]? = nil,
         cueCandidates: [CueCandidate]? = nil,
+        musicalKey: MusicalKeyEstimate? = nil,
+        loudness: LoudnessAnalysis? = nil,
+        stereo: StereoAnalysis? = nil,
         analysisConfidence: Double? = nil,
         analysisQuality: AnalysisQuality? = nil,
         analysisWarnings: [AnalysisWarning]? = nil
@@ -280,6 +513,9 @@ public struct AnalysisBenchmarkTrackAnalysisSnapshot: Decodable, Sendable {
         self.spectralBands = spectralBands
         self.transientMarkers = transientMarkers
         self.cueCandidates = cueCandidates
+        self.musicalKey = musicalKey
+        self.loudness = loudness
+        self.stereo = stereo
         self.analysisConfidence = analysisConfidence
         self.analysisQuality = analysisQuality
         self.analysisWarnings = analysisWarnings
@@ -304,6 +540,9 @@ public struct AnalysisBenchmarkTrackAnalysisSnapshot: Decodable, Sendable {
             spectralBands: spectralBands ?? [],
             transientMarkers: transientMarkers ?? [],
             cueCandidates: cueCandidates ?? [],
+            musicalKey: musicalKey,
+            loudness: loudness,
+            stereo: stereo,
             analysisConfidence: analysisConfidence ?? 0,
             analysisQuality: analysisQuality ?? AnalysisQuality(
                 waveformDetail: 0,
@@ -319,9 +558,10 @@ public struct AnalysisBenchmarkTrackAnalysisSnapshot: Decodable, Sendable {
 public enum AnalysisBenchmarkEvaluator {
     public static func evaluateFixture(_ fixture: AnalysisBenchmarkFixture) -> AnalysisBenchmarkFixtureResult {
         let analysis = fixture.analysis.toTrackAnalysis(trackId: fixture.id)
+        let expected = fixture.groundTruthLabels?.expected ?? fixture.expected
         let result = evaluate(
             analysis: analysis,
-            expected: fixture.expected,
+            expected: expected,
             thresholds: fixture.thresholds ?? AnalysisBenchmarkThresholds()
         )
         return AnalysisBenchmarkFixtureResult(
@@ -468,6 +708,22 @@ public enum AnalysisBenchmarkEvaluator {
             ))
         }
 
+        let musicalKey = expected.musicalKey.map {
+            evaluateMusicalKey(analysis: analysis, expected: $0, thresholds: thresholds, issues: &issues)
+        }
+        let loudness = expected.loudness.map {
+            evaluateLoudness(analysis: analysis, expected: $0, thresholds: thresholds, issues: &issues)
+        }
+        let stereo = expected.stereo.map {
+            evaluateStereo(analysis: analysis, expected: $0, issues: &issues)
+        }
+        let cueCandidates = (expected.cueCandidates ?? []).map {
+            evaluateCueCandidate(analysis: analysis, expected: $0, thresholds: thresholds, issues: &issues)
+        }
+        let mixReadiness = expected.mixReadiness.map {
+            evaluateMixReadiness(analysis: analysis, expected: $0, issues: &issues)
+        }
+
         let scoreParts = [
             bpmError.map { scoreDistance($0, warn: thresholds.bpmWarnError, fail: thresholds.bpmFailError) },
             firstDownbeat.map { scoreDistance($0.distanceSec, warn: thresholds.cueWarnDistanceSec, fail: thresholds.cueFailDistanceSec) },
@@ -482,7 +738,14 @@ public enum AnalysisBenchmarkEvaluator {
                 warn: thresholds.phraseWarnAverageDistanceSec,
                 fail: thresholds.phraseFailAverageDistanceSec
             ),
-            plannerReadyMatch.map { $0 ? 1 : 0.5 }
+            plannerReadyMatch.map { $0 ? 1 : 0.5 },
+            musicalKey.map { keyScore($0, expected: expected.musicalKey, thresholds: thresholds) },
+            loudness.map { loudnessScore($0, expected: expected.loudness, thresholds: thresholds) },
+            stereo.map { stereoScore($0, expected: expected.stereo) },
+            cueCandidates.isEmpty ? nil : average(cueCandidates.map {
+                scoreDistance($0.distanceSec, warn: thresholds.cueWarnDistanceSec, fail: thresholds.cueFailDistanceSec)
+            }),
+            mixReadiness.map { mixReadinessScore($0, expected: expected.mixReadiness) }
         ].compactMap { $0 }
 
         return AnalysisBenchmarkResult(
@@ -494,7 +757,12 @@ public enum AnalysisBenchmarkEvaluator {
             outro: outro,
             barGrid: barGrid,
             phraseBoundaries: phraseBoundaries,
-            plannerReadyMatch: plannerReadyMatch
+            plannerReadyMatch: plannerReadyMatch,
+            musicalKey: musicalKey,
+            loudness: loudness,
+            stereo: stereo,
+            cueCandidates: cueCandidates,
+            mixReadiness: mixReadiness
         )
     }
 
@@ -517,6 +785,337 @@ public enum AnalysisBenchmarkEvaluator {
             passed: passed,
             warned: warned,
             failed: failed
+        )
+    }
+
+    private static func evaluateMusicalKey(
+        analysis: TrackAnalysis,
+        expected: AnalysisBenchmarkKeyExpectation,
+        thresholds: AnalysisBenchmarkThresholds,
+        issues: inout [AnalysisBenchmarkIssue]
+    ) -> AnalysisBenchmarkKeyMetric {
+        let key = analysis.musicalKey
+        let confidence = key?.confidence
+        let tonicMatches = expected.tonic == nil || key?.tonic == expected.tonic
+        let modeMatches = expected.mode == nil || key?.mode == expected.mode
+        let matched = key == nil ? Optional<Bool>.none : tonicMatches && modeMatches
+
+        if key == nil {
+            issues.append(AnalysisBenchmarkIssue(code: "key_missing", grade: .fail, message: "Musical key evidence is missing."))
+        } else if matched == false {
+            issues.append(AnalysisBenchmarkIssue(
+                code: "key_mismatch",
+                grade: (confidence ?? 0) >= thresholds.keyWarnConfidence ? .fail : .warn,
+                message: "Musical key expected \(expected.tonic ?? "--") \(expected.mode?.rawValue ?? "--"), got \(key?.tonic ?? "--") \(key?.mode.rawValue ?? "--")."
+            ))
+        }
+
+        if let minConfidence = expected.minConfidence,
+           (confidence ?? 0) < minConfidence {
+            issues.append(AnalysisBenchmarkIssue(
+                code: "key_confidence_low",
+                grade: (confidence ?? 0) < thresholds.keyFailConfidence ? .fail : .warn,
+                message: "Musical key confidence \(format(confidence ?? 0)) is below expected \(format(minConfidence))."
+            ))
+        }
+
+        return AnalysisBenchmarkKeyMetric(
+            expectedTonic: expected.tonic,
+            expectedMode: expected.mode,
+            actualTonic: key?.tonic,
+            actualMode: key?.mode,
+            confidence: confidence.map { rounded($0) },
+            matched: matched
+        )
+    }
+
+    private static func evaluateLoudness(
+        analysis: TrackAnalysis,
+        expected: AnalysisBenchmarkLoudnessExpectation,
+        thresholds: AnalysisBenchmarkThresholds,
+        issues: inout [AnalysisBenchmarkIssue]
+    ) -> AnalysisBenchmarkLoudnessMetric {
+        guard let loudness = analysis.loudness else {
+            issues.append(AnalysisBenchmarkIssue(code: "loudness_missing", grade: .fail, message: "Loudness evidence is missing."))
+            return AnalysisBenchmarkLoudnessMetric(
+                expectedIntegratedRMSDb: expected.integratedRMSDb,
+                actualIntegratedRMSDb: nil,
+                integratedRMSDeltaDb: nil,
+                expectedIntegratedLUFS: expected.integratedLUFS,
+                actualIntegratedLUFS: nil,
+                integratedLUFSDelta: nil,
+                expectedPeakDb: expected.peakDb,
+                actualPeakDb: nil,
+                peakDeltaDb: nil,
+                expectedTruePeakDb: expected.truePeakDb,
+                actualTruePeakDb: nil,
+                truePeakDeltaDb: nil,
+                headroomDb: nil,
+                loudnessRangeLU: nil,
+                measurement: nil,
+                confidence: nil
+            )
+        }
+
+        let rmsDelta = expected.integratedRMSDb.map { rounded(abs(loudness.integratedRMSDb - $0), digits: 2) }
+        evaluateDbDeltaIssue(
+            delta: rmsDelta,
+            code: "loudness_rms_delta_high",
+            label: "Integrated RMS",
+            thresholds: thresholds,
+            issues: &issues
+        )
+
+        let lufsDelta = expected.integratedLUFS.flatMap { expectedLUFS in
+            loudness.integratedLUFS.map { rounded(abs($0 - expectedLUFS), digits: 2) }
+        }
+        if expected.integratedLUFS != nil && loudness.integratedLUFS == nil {
+            issues.append(AnalysisBenchmarkIssue(
+                code: "loudness_lufs_missing",
+                grade: .fail,
+                message: "Integrated LUFS evidence is missing."
+            ))
+        }
+        evaluateDbDeltaIssue(
+            delta: lufsDelta,
+            code: "loudness_lufs_delta_high",
+            label: "Integrated LUFS",
+            thresholds: thresholds,
+            issues: &issues
+        )
+
+        let peakDelta = expected.peakDb.map { rounded(abs(loudness.peakDb - $0), digits: 2) }
+        evaluateDbDeltaIssue(
+            delta: peakDelta,
+            code: "loudness_peak_delta_high",
+            label: "Peak",
+            thresholds: thresholds,
+            issues: &issues
+        )
+
+        let truePeakDelta = expected.truePeakDb.flatMap { expectedPeak in
+            loudness.truePeakDb.map { rounded(abs($0 - expectedPeak), digits: 2) }
+        }
+        if expected.truePeakDb != nil && loudness.truePeakDb == nil {
+            issues.append(AnalysisBenchmarkIssue(
+                code: "loudness_true_peak_missing",
+                grade: .fail,
+                message: "True-peak evidence is missing."
+            ))
+        }
+        evaluateDbDeltaIssue(
+            delta: truePeakDelta,
+            code: "loudness_true_peak_delta_high",
+            label: "True peak",
+            thresholds: thresholds,
+            issues: &issues
+        )
+
+        if let minHeadroom = expected.minHeadroomDb,
+           loudness.headroomDb < minHeadroom {
+            issues.append(AnalysisBenchmarkIssue(
+                code: "headroom_low",
+                grade: loudness.headroomDb < thresholds.headroomFailDb ? .fail : .warn,
+                message: "Headroom \(format(loudness.headroomDb)) dB is below expected \(format(minHeadroom)) dB."
+            ))
+        }
+
+        if let minConfidence = expected.minConfidence,
+           loudness.confidence < minConfidence {
+            issues.append(AnalysisBenchmarkIssue(
+                code: "loudness_confidence_low",
+                grade: loudness.confidence < 0.45 ? .fail : .warn,
+                message: "Loudness confidence \(format(loudness.confidence)) is below expected \(format(minConfidence))."
+            ))
+        }
+
+        return AnalysisBenchmarkLoudnessMetric(
+            expectedIntegratedRMSDb: expected.integratedRMSDb,
+            actualIntegratedRMSDb: rounded(loudness.integratedRMSDb, digits: 2),
+            integratedRMSDeltaDb: rmsDelta,
+            expectedIntegratedLUFS: expected.integratedLUFS,
+            actualIntegratedLUFS: loudness.integratedLUFS.map { rounded($0, digits: 2) },
+            integratedLUFSDelta: lufsDelta,
+            expectedPeakDb: expected.peakDb,
+            actualPeakDb: rounded(loudness.peakDb, digits: 2),
+            peakDeltaDb: peakDelta,
+            expectedTruePeakDb: expected.truePeakDb,
+            actualTruePeakDb: loudness.truePeakDb.map { rounded($0, digits: 2) },
+            truePeakDeltaDb: truePeakDelta,
+            headroomDb: rounded(loudness.headroomDb, digits: 2),
+            loudnessRangeLU: loudness.loudnessRangeLU.map { rounded($0, digits: 2) },
+            measurement: loudness.measurement,
+            confidence: rounded(loudness.confidence)
+        )
+    }
+
+    private static func evaluateCueCandidate(
+        analysis: TrackAnalysis,
+        expected: AnalysisBenchmarkCueExpectation,
+        thresholds: AnalysisBenchmarkThresholds,
+        issues: inout [AnalysisBenchmarkIssue]
+    ) -> AnalysisBenchmarkCueMetric {
+        let candidates = analysis.cueCandidates.filter { $0.type == expected.type }
+        let nearest = candidates
+            .map { cue in (cue: cue, distance: abs(cue.startSec - expected.startSec)) }
+            .min { $0.distance < $1.distance }
+        if nearest == nil {
+            issues.append(AnalysisBenchmarkIssue(code: "cue_missing", grade: .fail, message: "Cue \(expected.type.rawValue) is missing."))
+        } else if let distance = nearest?.distance {
+            if distance > thresholds.cueFailDistanceSec {
+                issues.append(AnalysisBenchmarkIssue(code: "cue_far", grade: .fail, message: "Cue \(expected.type.rawValue) is \(format(distance))s from expected."))
+            } else if distance > thresholds.cueWarnDistanceSec {
+                issues.append(AnalysisBenchmarkIssue(code: "cue_far", grade: .warn, message: "Cue \(expected.type.rawValue) is \(format(distance))s from expected."))
+            }
+        }
+
+        if let minConfidence = expected.minConfidence,
+           (nearest?.cue.confidence ?? 0) < minConfidence {
+            issues.append(AnalysisBenchmarkIssue(
+                code: "cue_confidence_low",
+                grade: (nearest?.cue.confidence ?? 0) < thresholds.cueFailConfidence ? .fail : .warn,
+                message: "Cue \(expected.type.rawValue) confidence \(format(nearest?.cue.confidence ?? 0)) is below expected \(format(minConfidence))."
+            ))
+        }
+
+        if let origin = expected.origin,
+           nearest?.cue.origin != origin {
+            issues.append(AnalysisBenchmarkIssue(
+                code: "cue_origin_mismatch",
+                grade: .warn,
+                message: "Cue \(expected.type.rawValue) origin expected \(origin.rawValue), got \(nearest?.cue.origin.rawValue ?? "--")."
+            ))
+        }
+
+        return AnalysisBenchmarkCueMetric(
+            type: expected.type,
+            expectedSec: expected.startSec,
+            actualSec: nearest.map { rounded($0.cue.startSec) },
+            distanceSec: nearest.map { rounded($0.distance) },
+            confidence: nearest.map { rounded($0.cue.confidence) },
+            origin: nearest?.cue.origin
+        )
+    }
+
+    private static func evaluateStereo(
+        analysis: TrackAnalysis,
+        expected: AnalysisBenchmarkStereoExpectation,
+        issues: inout [AnalysisBenchmarkIssue]
+    ) -> AnalysisBenchmarkStereoMetric {
+        guard let stereo = analysis.stereo else {
+            issues.append(AnalysisBenchmarkIssue(code: "stereo_missing", grade: .fail, message: "Stereo evidence is missing."))
+            return AnalysisBenchmarkStereoMetric(
+                expectedChannelCount: expected.channelCount,
+                actualChannelCount: nil,
+                stereoWidth: nil,
+                phaseCorrelation: nil,
+                midSideBalance: nil,
+                confidence: nil
+            )
+        }
+
+        if let channelCount = expected.channelCount,
+           stereo.channelCount != channelCount {
+            issues.append(AnalysisBenchmarkIssue(
+                code: "stereo_channel_count_mismatch",
+                grade: .fail,
+                message: "Channel count expected \(channelCount), got \(stereo.channelCount)."
+            ))
+        }
+        if let minStereoWidth = expected.minStereoWidth,
+           stereo.stereoWidth < minStereoWidth {
+            issues.append(AnalysisBenchmarkIssue(
+                code: "stereo_width_low",
+                grade: .warn,
+                message: "Stereo width \(format(stereo.stereoWidth)) is below expected \(format(minStereoWidth))."
+            ))
+        }
+        if let maxStereoWidth = expected.maxStereoWidth,
+           stereo.stereoWidth > maxStereoWidth {
+            issues.append(AnalysisBenchmarkIssue(
+                code: "stereo_width_high",
+                grade: .warn,
+                message: "Stereo width \(format(stereo.stereoWidth)) is above expected \(format(maxStereoWidth))."
+            ))
+        }
+        if let minPhaseCorrelation = expected.minPhaseCorrelation,
+           stereo.phaseCorrelation < minPhaseCorrelation {
+            issues.append(AnalysisBenchmarkIssue(
+                code: "stereo_phase_correlation_low",
+                grade: stereo.phaseCorrelation < 0 ? .fail : .warn,
+                message: "Phase correlation \(format(stereo.phaseCorrelation)) is below expected \(format(minPhaseCorrelation))."
+            ))
+        }
+        if let maxMidSideBalance = expected.maxMidSideBalance,
+           stereo.midSideBalance > maxMidSideBalance {
+            issues.append(AnalysisBenchmarkIssue(
+                code: "stereo_mid_side_balance_high",
+                grade: .warn,
+                message: "Mid/side balance \(format(stereo.midSideBalance)) is above expected \(format(maxMidSideBalance))."
+            ))
+        }
+        if let minConfidence = expected.minConfidence,
+           stereo.confidence < minConfidence {
+            issues.append(AnalysisBenchmarkIssue(
+                code: "stereo_confidence_low",
+                grade: .warn,
+                message: "Stereo confidence \(format(stereo.confidence)) is below expected \(format(minConfidence))."
+            ))
+        }
+
+        return AnalysisBenchmarkStereoMetric(
+            expectedChannelCount: expected.channelCount,
+            actualChannelCount: stereo.channelCount,
+            stereoWidth: rounded(stereo.stereoWidth),
+            phaseCorrelation: rounded(stereo.phaseCorrelation),
+            midSideBalance: rounded(stereo.midSideBalance),
+            confidence: rounded(stereo.confidence)
+        )
+    }
+
+    private static func evaluateMixReadiness(
+        analysis: TrackAnalysis,
+        expected: AnalysisBenchmarkMixReadinessExpectation,
+        issues: inout [AnalysisBenchmarkIssue]
+    ) -> AnalysisBenchmarkMixReadinessMetric {
+        if let minAnalysisConfidence = expected.minAnalysisConfidence,
+           analysis.analysisConfidence < minAnalysisConfidence {
+            issues.append(AnalysisBenchmarkIssue(
+                code: "analysis_confidence_low",
+                grade: .warn,
+                message: "Analysis confidence \(format(analysis.analysisConfidence)) is below expected \(format(minAnalysisConfidence))."
+            ))
+        }
+        if let minHarmonicKeyQuality = expected.minHarmonicKeyQuality,
+           analysis.analysisQuality.harmonicKey < minHarmonicKeyQuality {
+            issues.append(AnalysisBenchmarkIssue(
+                code: "harmonic_key_quality_low",
+                grade: .warn,
+                message: "Harmonic key quality \(format(analysis.analysisQuality.harmonicKey)) is below expected \(format(minHarmonicKeyQuality))."
+            ))
+        }
+        if let minLoudnessConfidence = expected.minLoudnessConfidence,
+           (analysis.loudness?.confidence ?? 0) < minLoudnessConfidence {
+            issues.append(AnalysisBenchmarkIssue(
+                code: "loudness_confidence_low",
+                grade: .warn,
+                message: "Loudness confidence \(format(analysis.loudness?.confidence ?? 0)) is below expected \(format(minLoudnessConfidence))."
+            ))
+        }
+        let forbiddenWarnings = expected.forbiddenWarnings ?? []
+        let presentWarnings = forbiddenWarnings.filter { analysis.analysisWarnings.contains($0) }
+        for warning in presentWarnings {
+            issues.append(AnalysisBenchmarkIssue(
+                code: "forbidden_warning_present",
+                grade: .warn,
+                message: "Forbidden analysis warning is present: \(warning.rawValue)."
+            ))
+        }
+        return AnalysisBenchmarkMixReadinessMetric(
+            analysisConfidence: rounded(analysis.analysisConfidence),
+            harmonicKeyQuality: rounded(analysis.analysisQuality.harmonicKey),
+            loudnessConfidence: analysis.loudness.map { rounded($0.confidence) },
+            forbiddenWarningsPresent: presentWarnings
         )
     }
 
@@ -591,6 +1190,23 @@ public enum AnalysisBenchmarkEvaluator {
         }
     }
 
+    private static func evaluateDbDeltaIssue(
+        delta: Double?,
+        code: String,
+        label: String,
+        thresholds: AnalysisBenchmarkThresholds,
+        issues: inout [AnalysisBenchmarkIssue]
+    ) {
+        guard let delta else {
+            return
+        }
+        if delta > thresholds.loudnessFailDeltaDb {
+            issues.append(AnalysisBenchmarkIssue(code: code, grade: .fail, message: "\(label) delta is \(format(delta)) dB."))
+        } else if delta > thresholds.loudnessWarnDeltaDb {
+            issues.append(AnalysisBenchmarkIssue(code: code, grade: .warn, message: "\(label) delta is \(format(delta)) dB."))
+        }
+    }
+
     private static func nearestValue(
         _ values: [Double],
         expected: Double
@@ -612,6 +1228,112 @@ public enum AnalysisBenchmarkEvaluator {
             return 0
         }
         return min(1, max(0, 1 - (value - warn) / (fail - warn)))
+    }
+
+    private static func keyScore(
+        _ metric: AnalysisBenchmarkKeyMetric,
+        expected: AnalysisBenchmarkKeyExpectation?,
+        thresholds: AnalysisBenchmarkThresholds
+    ) -> Double {
+        guard metric.actualTonic != nil else {
+            return 0
+        }
+        let matchScore = metric.matched == false ? 0.0 : 1.0
+        let confidenceScore = scoreLowerBound(
+            metric.confidence,
+            warn: expected?.minConfidence ?? thresholds.keyWarnConfidence,
+            fail: thresholds.keyFailConfidence
+        )
+        return (matchScore * 0.68) + (confidenceScore * 0.32)
+    }
+
+    private static func loudnessScore(
+        _ metric: AnalysisBenchmarkLoudnessMetric,
+        expected: AnalysisBenchmarkLoudnessExpectation?,
+        thresholds: AnalysisBenchmarkThresholds
+    ) -> Double {
+        var parts: [Double] = []
+        if expected?.integratedRMSDb != nil {
+            parts.append(scoreDistance(metric.integratedRMSDeltaDb, warn: thresholds.loudnessWarnDeltaDb, fail: thresholds.loudnessFailDeltaDb))
+        }
+        if expected?.integratedLUFS != nil {
+            parts.append(scoreDistance(metric.integratedLUFSDelta, warn: thresholds.loudnessWarnDeltaDb, fail: thresholds.loudnessFailDeltaDb))
+        }
+        if expected?.peakDb != nil {
+            parts.append(scoreDistance(metric.peakDeltaDb, warn: thresholds.loudnessWarnDeltaDb, fail: thresholds.loudnessFailDeltaDb))
+        }
+        if expected?.truePeakDb != nil {
+            parts.append(scoreDistance(metric.truePeakDeltaDb, warn: thresholds.loudnessWarnDeltaDb, fail: thresholds.loudnessFailDeltaDb))
+        }
+        if expected?.minHeadroomDb != nil {
+            parts.append(scoreLowerBound(metric.headroomDb, warn: thresholds.headroomWarnDb, fail: thresholds.headroomFailDb))
+        }
+        if expected?.minConfidence != nil {
+            parts.append(scoreLowerBound(metric.confidence, warn: expected?.minConfidence ?? 0.68, fail: 0.45))
+        }
+        return average(parts) ?? (metric.actualIntegratedRMSDb == nil && metric.actualIntegratedLUFS == nil ? 0 : 1)
+    }
+
+    private static func stereoScore(
+        _ metric: AnalysisBenchmarkStereoMetric,
+        expected: AnalysisBenchmarkStereoExpectation?
+    ) -> Double {
+        guard metric.actualChannelCount != nil else {
+            return 0
+        }
+        var parts: [Double] = []
+        if let channelCount = expected?.channelCount {
+            parts.append(metric.actualChannelCount == channelCount ? 1 : 0)
+        }
+        if let minStereoWidth = expected?.minStereoWidth {
+            parts.append((metric.stereoWidth ?? 0) >= minStereoWidth ? 1 : 0.5)
+        }
+        if let maxStereoWidth = expected?.maxStereoWidth {
+            parts.append((metric.stereoWidth ?? 1) <= maxStereoWidth ? 1 : 0.5)
+        }
+        if let minPhaseCorrelation = expected?.minPhaseCorrelation {
+            parts.append((metric.phaseCorrelation ?? -1) >= minPhaseCorrelation ? 1 : 0.5)
+        }
+        if let maxMidSideBalance = expected?.maxMidSideBalance {
+            parts.append((metric.midSideBalance ?? 99) <= maxMidSideBalance ? 1 : 0.5)
+        }
+        if let minConfidence = expected?.minConfidence {
+            parts.append((metric.confidence ?? 0) >= minConfidence ? 1 : 0.5)
+        }
+        return average(parts) ?? 1
+    }
+
+    private static func mixReadinessScore(
+        _ metric: AnalysisBenchmarkMixReadinessMetric,
+        expected: AnalysisBenchmarkMixReadinessExpectation?
+    ) -> Double {
+        var parts: [Double] = []
+        if let minAnalysisConfidence = expected?.minAnalysisConfidence {
+            parts.append(metric.analysisConfidence >= minAnalysisConfidence ? 1 : 0.5)
+        }
+        if let minHarmonicKeyQuality = expected?.minHarmonicKeyQuality {
+            parts.append(metric.harmonicKeyQuality >= minHarmonicKeyQuality ? 1 : 0.5)
+        }
+        if let minLoudnessConfidence = expected?.minLoudnessConfidence {
+            parts.append((metric.loudnessConfidence ?? 0) >= minLoudnessConfidence ? 1 : 0.5)
+        }
+        if expected?.forbiddenWarnings?.isEmpty == false {
+            parts.append(metric.forbiddenWarningsPresent.isEmpty ? 1 : 0.5)
+        }
+        return average(parts) ?? 1
+    }
+
+    private static func scoreLowerBound(_ value: Double?, warn: Double, fail: Double) -> Double {
+        guard let value else {
+            return 0
+        }
+        if value >= warn {
+            return 1
+        }
+        if value <= fail {
+            return 0
+        }
+        return min(1, max(0, (value - fail) / (warn - fail)))
     }
 
     private static func grade(from issues: [AnalysisBenchmarkIssue]) -> AnalysisBenchmarkGrade {

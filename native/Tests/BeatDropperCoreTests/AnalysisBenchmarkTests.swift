@@ -80,6 +80,119 @@ struct AnalysisBenchmarkTests {
         #expect(suite.byKind.first?.total == 2)
     }
 
+    @Test func schemaV7CalibrationChecksKeyLoudnessStereoCueAndReadiness() {
+        let analysis = Self.analysis(
+            trackId: "schema-v7",
+            bpm: 124,
+            bars: [0, 8, 16, 24],
+            phrases: [0, 64],
+            firstDownbeat: 0,
+            outro: 96,
+            ready: true
+        ).resultAnalysis
+        let fixture = AnalysisBenchmarkFixture(
+            id: "schema-v7",
+            title: "Schema v7 calibration",
+            kind: .snapshot,
+            tags: ["schema-v7", "key", "loudness", "stereo"],
+            expectedGrade: .pass,
+            expected: AnalysisBenchmarkExpectation(
+                bpm: 124,
+                firstDownbeatSec: 0,
+                outroCueSec: 96,
+                barGridSec: [0, 8, 16, 24],
+                phraseBoundarySec: [0, 64],
+                plannerReady: true,
+                musicalKey: AnalysisBenchmarkKeyExpectation(tonic: "C", mode: .minor, minConfidence: 0.4),
+                loudness: AnalysisBenchmarkLoudnessExpectation(
+                    integratedRMSDb: -10.2,
+                    integratedLUFS: -9.8,
+                    peakDb: -0.7,
+                    truePeakDb: -0.55,
+                    minHeadroomDb: 0.5,
+                    minConfidence: 0.7
+                ),
+                stereo: AnalysisBenchmarkStereoExpectation(
+                    channelCount: 2,
+                    minStereoWidth: 0.2,
+                    maxStereoWidth: 0.8,
+                    minPhaseCorrelation: 0.4,
+                    maxMidSideBalance: 4,
+                    minConfidence: 0.7
+                ),
+                cueCandidates: [
+                    AnalysisBenchmarkCueExpectation(type: .firstDownbeat, startSec: 0, minConfidence: 0.7, origin: .derived),
+                    AnalysisBenchmarkCueExpectation(type: .outro, startSec: 96, minConfidence: 0.7, origin: .derived)
+                ],
+                mixReadiness: AnalysisBenchmarkMixReadinessExpectation(
+                    minAnalysisConfidence: 0.78,
+                    minHarmonicKeyQuality: 0.4,
+                    minLoudnessConfidence: 0.7,
+                    forbiddenWarnings: [.keyUnavailable, .loudnessLowConfidence]
+                )
+            ),
+            analysis: AnalysisBenchmarkTrackAnalysisSnapshot.from(analysis),
+            thresholds: nil
+        )
+
+        let result = AnalysisBenchmarkEvaluator.evaluateFixture(fixture).result
+
+        #expect(result.grade == .pass)
+        #expect(result.musicalKey?.matched == true)
+        #expect(result.loudness?.integratedRMSDeltaDb == 0)
+        #expect(result.loudness?.integratedLUFSDelta == 0)
+        #expect(result.loudness?.truePeakDeltaDb == 0)
+        #expect(result.loudness?.measurement == "ebu_r128_k_weighted_gated_mono")
+        #expect(result.stereo?.actualChannelCount == 2)
+        #expect(result.stereo?.stereoWidth == 0.32)
+        #expect(result.stereo?.phaseCorrelation == 0.72)
+        #expect(result.cueCandidates.count == 2)
+        #expect(result.mixReadiness?.forbiddenWarningsPresent == [])
+    }
+
+    @Test func editableGroundTruthLabelsOverrideStaleFixtureExpectedValues() {
+        let analysis = Self.analysis(
+            trackId: "editable-labels",
+            bpm: 124,
+            bars: [0, 8, 16, 24],
+            phrases: [0, 64],
+            firstDownbeat: 0,
+            outro: 96,
+            ready: true
+        ).resultAnalysis
+        let fixture = AnalysisBenchmarkFixture(
+            id: "editable-labels",
+            title: "Editable labels",
+            kind: .snapshot,
+            tags: ["labels"],
+            expectedGrade: .pass,
+            expected: AnalysisBenchmarkExpectation(bpm: 130, firstDownbeatSec: 12),
+            groundTruthLabels: AnalysisBenchmarkGroundTruthLabels(
+                schemaVersion: 1,
+                reviewedBy: "user",
+                reviewedAt: "2026-07-02T00:00:00.000Z",
+                expected: AnalysisBenchmarkExpectation(
+                    bpm: 124,
+                    firstDownbeatSec: 0,
+                    loudness: AnalysisBenchmarkLoudnessExpectation(
+                        integratedLUFS: -9.8,
+                        truePeakDb: -0.55,
+                        minConfidence: 0.7
+                    )
+                )
+            ),
+            analysis: AnalysisBenchmarkTrackAnalysisSnapshot.from(analysis),
+            thresholds: nil
+        )
+
+        let result = AnalysisBenchmarkEvaluator.evaluateFixture(fixture).result
+
+        #expect(result.grade == .pass)
+        #expect(result.bpmError == 0)
+        #expect(result.firstDownbeat?.distanceSec == 0)
+        #expect(result.loudness?.integratedLUFSDelta == 0)
+    }
+
     private static func expectation() -> AnalysisBenchmarkExpectation {
         AnalysisBenchmarkExpectation(
             bpm: 124,
@@ -118,15 +231,40 @@ struct AnalysisBenchmarkTests {
             spectralBands: [SpectralBandPoint(timeSec: 0, low: 0.5, mid: 0.4, high: 0.3)],
             transientMarkers: [TransientMarker(index: 0, timeSec: firstDownbeat, strength: 0.8)],
             cueCandidates: [
-                CueCandidate(id: "first", type: .firstDownbeat, startSec: firstDownbeat, endSec: firstDownbeat + 4, confidence: 0.8, label: "First"),
-                outro.map { CueCandidate(id: "outro", type: .outro, startSec: $0, endSec: $0 + 8, confidence: 0.8, label: "Outro") }
+                CueCandidate(id: "first", type: .firstDownbeat, startSec: firstDownbeat, endSec: firstDownbeat + 4, confidence: 0.8, label: "First", origin: .derived),
+                outro.map { CueCandidate(id: "outro", type: .outro, startSec: $0, endSec: $0 + 8, confidence: 0.8, label: "Outro", origin: .derived) }
             ].compactMap { $0 },
+            musicalKey: MusicalKeyEstimate(tonic: "C", mode: .minor, confidence: 0.45, chromaEnergy: 128),
+            loudness: LoudnessAnalysis(
+                integratedRMSDb: -10.2,
+                integratedLUFS: -9.8,
+                peakDb: -0.7,
+                truePeakDb: -0.55,
+                headroomDb: 0.7,
+                crestFactorDb: 9.5,
+                dynamicRangeDb: 12.8,
+                loudnessRangeLU: 4.1,
+                measurement: "ebu_r128_k_weighted_gated_mono",
+                confidence: 0.82
+            ),
+            stereo: StereoAnalysis(
+                channelCount: 2,
+                leftPeakDb: -0.7,
+                rightPeakDb: -1.1,
+                leftRMSDb: -10.1,
+                rightRMSDb: -10.6,
+                stereoWidth: 0.32,
+                phaseCorrelation: 0.72,
+                midSideBalance: 2.15,
+                confidence: 0.86
+            ),
             analysisConfidence: ready ? 0.8 : 0.3,
             analysisQuality: AnalysisQuality(
                 waveformDetail: ready ? 0.8 : 0,
                 spectralBands: 0.8,
                 transientMarkers: ready ? 0.8 : 0.2,
-                beatGrid: ready ? 0.8 : 0.2
+                beatGrid: ready ? 0.8 : 0.2,
+                harmonicKey: ready ? 0.45 : 0.2
             ),
             analysisWarnings: ready ? [] : [.bpmLowConfidence]
         )
@@ -163,6 +301,9 @@ private extension AnalysisBenchmarkTrackAnalysisSnapshot {
             spectralBands: analysis.spectralBands,
             transientMarkers: analysis.transientMarkers,
             cueCandidates: analysis.cueCandidates,
+            musicalKey: analysis.musicalKey,
+            loudness: analysis.loudness,
+            stereo: analysis.stereo,
             analysisConfidence: analysis.analysisConfidence,
             analysisQuality: analysis.analysisQuality,
             analysisWarnings: analysis.analysisWarnings

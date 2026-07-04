@@ -33,7 +33,7 @@ struct ModelParityTests {
     @Test func trackAnalysisDecodesCurrentSchemaVersion() throws {
         let json = """
         {
-          "schemaVersion": 5,
+          "schemaVersion": 7,
           "trackId": "track-1",
           "generatedAt": "2026-05-25T00:00:00.000Z",
           "source": "derived",
@@ -58,7 +58,8 @@ struct ModelParityTests {
               "startSec": 0,
               "endSec": 8,
               "confidence": 0.88,
-              "label": "First downbeat"
+              "label": "First downbeat",
+              "origin": "derived"
             }
           ],
           "analysisConfidence": 0.86,
@@ -66,7 +67,17 @@ struct ModelParityTests {
             "waveformDetail": 0.9,
             "spectralBands": 0.82,
             "transientMarkers": 0.7,
-            "beatGrid": 0.84
+            "beatGrid": 0.84,
+            "harmonicKey": 0.64
+          },
+          "musicalKey": { "tonic": "C#", "mode": "minor", "confidence": 0.64, "chromaEnergy": 32.5 },
+          "loudness": {
+            "integratedRMSDb": -16.2,
+            "peakDb": -0.8,
+            "headroomDb": 0.8,
+            "crestFactorDb": 15.4,
+            "dynamicRangeDb": 8.2,
+            "confidence": 0.76
           },
           "analysisWarnings": ["beat_grid_estimated"]
         }
@@ -80,6 +91,26 @@ struct ModelParityTests {
         #expect(analysis.cueCandidates.first?.type == .firstDownbeat)
         #expect(analysis.analysisWarnings == [.beatGridEstimated])
         #expect(analysis.analysisQuality.spectralBands == 0.82)
+        #expect(analysis.analysisQuality.harmonicKey == 0.64)
+        #expect(analysis.musicalKey?.tonic == "C#")
+        #expect(analysis.loudness?.headroomDb == 0.8)
+    }
+
+    @Test func cueCandidateWithoutOriginDecodesAsHeuristicPlaceholder() throws {
+        let json = """
+        {
+          "id": "legacy-outro",
+          "type": "outro",
+          "startSec": 84,
+          "endSec": 96,
+          "confidence": 0.7,
+          "label": "Legacy outro"
+        }
+        """
+
+        let cue = try decoder.decode(CueCandidate.self, from: Data(json.utf8))
+
+        #expect(cue.origin == .heuristicPlaceholder)
     }
 
     @Test func plannerResponseRoundTripsCurrentMixPlanShape() throws {

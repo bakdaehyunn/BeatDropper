@@ -18,10 +18,15 @@ describe('evaluate-analysis-benchmarks script', () => {
     expect(result.stdout).toContain('grade fail');
     expect(result.stdout).toContain('## Fixture Kinds');
     expect(result.stdout).toContain('synthetic: FAIL');
+    expect(result.stdout).toContain('snapshot: PASS');
     expect(result.stdout).toContain('## clean-124-phrase');
+    expect(result.stdout).toContain('## schema-v7-calibration-pass');
     expect(result.stdout).toContain('## shifted-downbeat-warn');
     expect(result.stdout).toContain('## weak-ambiguous-fail');
     expect(result.stdout).toContain('Kind: synthetic');
+    expect(result.stdout).toContain('Key:');
+    expect(result.stdout).toContain('Loudness:');
+    expect(result.stdout).toContain('Stereo:');
     expect(result.stdout).toContain('BPM error:');
     expect(result.stdout).toContain('Bar grid: checked');
   });

@@ -111,7 +111,8 @@ export class TrackAnalysisService {
           startSec: 0,
           endSec: Math.min(durationSec ?? 0, 8),
           confidence: 0.4,
-          label: 'Intro'
+          label: 'Intro',
+          origin: 'heuristic_placeholder'
         },
         ...(outroCueSec !== null && durationSec !== null
           ? [
@@ -121,7 +122,8 @@ export class TrackAnalysisService {
                 startSec: outroCueSec,
                 endSec: durationSec,
                 confidence: 0.42,
-                label: 'Outro mix-out'
+                label: 'Outro mix-out',
+                origin: 'heuristic_placeholder' as const
               }
             ]
           : [])
@@ -130,12 +132,17 @@ export class TrackAnalysisService {
         waveformDetail: 0,
         spectralBands: 0,
         transientMarkers: 0,
-        beatGrid: metadataBpm !== null ? 0.55 : 0
+        beatGrid: metadataBpm !== null ? 0.55 : 0,
+        harmonicKey: 0
       },
+      musicalKey: null,
+      loudness: null,
       analysisWarnings: [
         ...(metadataBpm === null ? ['bpm_unavailable' as const] : []),
         ...(metadataBpm !== null ? ['beat_grid_estimated' as const] : []),
-        ...(durationSec !== null && durationSec < 30 ? ['short_track' as const] : [])
+        ...(durationSec !== null && durationSec < 30 ? ['short_track' as const] : []),
+        'key_unavailable' as const,
+        'loudness_low_confidence' as const
       ]
     });
 

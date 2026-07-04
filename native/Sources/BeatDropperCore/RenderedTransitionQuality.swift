@@ -16,6 +16,8 @@ public enum RenderedTransitionQualityIssueCode: String, Codable, Sendable {
     case clippingRisk = "clipping_risk"
     case peakJump = "peak_jump"
     case rmsJump = "rms_jump"
+    case loudnessDelta = "loudness_delta"
+    case headroomLow = "headroom_low"
     case spectralMaskingRisk = "spectral_masking_risk"
     case missingAnalysis = "missing_analysis"
 }
@@ -120,6 +122,8 @@ public enum RenderedTransitionQualityAnalyzer {
         let referenceRMS = max(0.000_001, max(pre.rms, post.rms))
         let peakJumpDb = max(0, db(peakMax) - db(referencePeak))
         let rmsJumpDb = max(0, db(rmsMax) - db(referenceRMS))
+        let loudnessDeltaDb = loudnessDelta(currentAnalysis: currentAnalysis, nextAnalysis: nextAnalysis)
+        let headroomMarginDb = headroomMargin(currentAnalysis: currentAnalysis, nextAnalysis: nextAnalysis)
         let ceilingDb = plan.mixControls?.clipProtection.ceilingDb ?? -1
         let ceilingLinear = gain(db: ceilingDb)
         let clips = peakMax >= 0.98 || peakMax > ceilingLinear
@@ -153,6 +157,20 @@ public enum RenderedTransitionQualityAnalyzer {
                 message: "Estimated RMS jump is \(formatDb(rmsJumpDb))."
             ))
         }
+        if loudnessDeltaDb >= 5 {
+            issues.append(RenderedTransitionQualityIssue(
+                code: .loudnessDelta,
+                severity: loudnessDeltaDb >= 8 ? .major : .warning,
+                message: "Estimated track loudness delta is \(formatDb(loudnessDeltaDb))."
+            ))
+        }
+        if headroomMarginDb > 0, headroomMarginDb < 1 {
+            issues.append(RenderedTransitionQualityIssue(
+                code: .headroomLow,
+                severity: .warning,
+                message: "Source headroom margin is \(formatDb(headroomMarginDb))."
+            ))
+        }
         if spectralMaskingRisk >= 0.68 {
             issues.append(RenderedTransitionQualityIssue(
                 code: .spectralMaskingRisk,
@@ -181,6 +199,18 @@ public enum RenderedTransitionQualityAnalyzer {
                 summary: "jump \(formatDb(rmsJumpDb))"
             ),
             RenderedTransitionQualityMetric(
+                name: "loudness_delta",
+                value: loudnessDeltaDb,
+                score: scoreUpperBound(value: loudnessDeltaDb, warning: 4, reject: 9),
+                summary: "delta \(formatDb(loudnessDeltaDb))"
+            ),
+            RenderedTransitionQualityMetric(
+                name: "headroom_margin",
+                value: headroomMarginDb,
+                score: scoreLowerBound(value: headroomMarginDb, warning: 1.5, reject: 0.2),
+                summary: "margin \(formatDb(headroomMarginDb))"
+            ),
+            RenderedTransitionQualityMetric(
                 name: "spectral_masking",
                 value: spectralMaskingRisk,
                 score: scoreUpperBound(value: spectralMaskingRisk, warning: 0.55, reject: 0.85),
@@ -204,7 +234,7 @@ public enum RenderedTransitionQualityAnalyzer {
             shouldApply: grade != .reject,
             issues: issues,
             metrics: metrics,
-            summary: "peak \(formatDb(db(peakMax))), peak jump \(formatDb(peakJumpDb)), RMS jump \(formatDb(rmsJumpDb)), masking \(formatPercent(spectralMaskingRisk))"
+            summary: "peak \(formatDb(db(peakMax))), peak jump \(formatDb(peakJumpDb)), RMS jump \(formatDb(rmsJumpDb)), loudness delta \(formatDb(loudnessDeltaDb)), masking \(formatPercent(spectralMaskingRisk))"
         )
     }
 
@@ -326,6 +356,40 @@ public enum RenderedTransitionQualityAnalyzer {
             return 0
         }
         return clamped(1 - (value - warning) / (reject - warning), min: 0, max: 1)
+    }
+
+    private static func scoreLowerBound(value: Double, warning: Double, reject: Double) -> Double {
+        if value >= warning {
+            return 1
+        }
+        guard warning > reject else {
+            return 0
+        }
+        return clamped((value - reject) / (warning - reject), min: 0, max: 1)
+    }
+
+    private static func loudnessDelta(currentAnalysis: TrackAnalysis?, nextAnalysis: TrackAnalysis?) -> Double {
+        guard
+            let current = currentAnalysis?.loudness,
+            let next = nextAnalysis?.loudness,
+            current.confidence >= 0.45,
+            next.confidence >= 0.45
+        else {
+            return 0
+        }
+        return abs(current.integratedRMSDb - next.integratedRMSDb)
+    }
+
+    private static func headroomMargin(currentAnalysis: TrackAnalysis?, nextAnalysis: TrackAnalysis?) -> Double {
+        guard
+            let current = currentAnalysis?.loudness,
+            let next = nextAnalysis?.loudness,
+            current.confidence >= 0.45,
+            next.confidence >= 0.45
+        else {
+            return 12
+        }
+        return min(current.headroomDb, next.headroomDb)
     }
 
     private static func gain(db: Double) -> Double {

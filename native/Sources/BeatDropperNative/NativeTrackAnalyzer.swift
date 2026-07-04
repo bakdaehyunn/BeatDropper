@@ -43,17 +43,24 @@ enum NativeTrackAnalyzer {
             throw NativeTrackAnalyzerError.unsupportedPCMFormat
         }
 
+        var channelSamples = Array(
+            repeating: Array(repeating: Float(0), count: frameLength),
+            count: channelCount
+        )
         var samples = Array(repeating: Float(0), count: frameLength)
         for frameIndex in 0..<frameLength {
             var sum: Float = 0
             for channelIndex in 0..<channelCount {
-                sum += channelData[channelIndex][frameIndex]
+                let sample = channelData[channelIndex][frameIndex]
+                channelSamples[channelIndex][frameIndex] = sample
+                sum += sample
             }
             samples[frameIndex] = sum / Float(channelCount)
         }
 
         return PCMAnalysisBuffer(
             samples: samples,
+            channelSamples: channelSamples,
             sampleRate: sampleRate,
             durationSec: Double(frameLength) / sampleRate
         )

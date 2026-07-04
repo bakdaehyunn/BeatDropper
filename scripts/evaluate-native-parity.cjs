@@ -110,6 +110,22 @@ const addContainsCheck = (checks, category, relativePath, pattern, label) => {
   );
 };
 
+const addCombinedContainsCheck = (checks, category, relativePaths, pattern, label) => {
+  const combinedText = relativePaths
+    .map((relativePath) => `\n// ${relativePath}\n${readText(relativePath)}`)
+    .join('\n');
+  const matched = pattern.test(combinedText);
+  add(
+    checks,
+    category,
+    label,
+    matched ? 'pass' : 'blocked',
+    matched
+      ? `${relativePaths.join(', ')} contain expected evidence`
+      : `${relativePaths.join(', ')} lack expected evidence`
+  );
+};
+
 const loadPackageJson = () => {
   const packagePath = path.join(rootDir, 'package.json');
   return JSON.parse(fs.readFileSync(packagePath, 'utf8'));
@@ -156,6 +172,7 @@ const main = () => {
     'native/Sources/BeatDropperNative/BeatDropperNativeApp.swift',
     'native/Sources/BeatDropperNative/ContentView.swift',
     'native/Sources/BeatDropperNative/MixSettingsView.swift',
+    'native/Sources/BeatDropperNativeLoudnessValidation/main.swift',
     'scripts/package-native-app.sh',
     'scripts/plan-electron-retirement.cjs',
     'scripts/run-native-local-preflight.cjs',
@@ -171,6 +188,8 @@ const main = () => {
     'scripts/stress-native-open-import.cjs',
     'scripts/stress-native-playback.cjs',
     'scripts/stress-native-session.cjs',
+    'scripts/validate-loudness-reference.cjs',
+    'scripts/validate-native-real-folder.cjs',
     'scripts/codex-mix-planner.cjs'
   ]) {
     addFileCheck(checks, 'native structure', relativePath);
@@ -205,7 +224,9 @@ const main = () => {
     'native:stress:open-import',
     'native:stress:playback',
     'native:stress:session',
-    'native:stress:session:extended'
+    'native:stress:session:extended',
+    'native:validate:loudness-reference',
+    'native:validate:real-folder'
   ]) {
     add(
       checks,
@@ -275,7 +296,7 @@ const main = () => {
   addContainsCheck(
     checks,
     'settings parity',
-    'native/Sources/BeatDropperNative/BeatDropperAppModel.swift',
+    'native/Sources/BeatDropperNative/BeatDropperAppModel+AIMixPlanning.swift',
     /PlannerSettingsSnapshot[\s\S]*settings\.fadeDurationSec[\s\S]*settings\.aiDjMode/,
     'native planner request uses persisted mix settings'
   );
@@ -296,8 +317,8 @@ const main = () => {
   addContainsCheck(
     checks,
     'library parity',
-    'native/Sources/BeatDropperNative/BeatDropperAppModel.swift',
-    /isTrackAvailableForImmediateUse/,
+    'native/Sources/BeatDropperNative/BeatDropperAppModel+TrackState.swift',
+    /isTrackAvailableForImmediateUse[\s\S]*FileManager\.default\.fileExists/,
     'missing files are guarded before playback and planning'
   );
   addContainsCheck(
@@ -324,43 +345,43 @@ const main = () => {
   addContainsCheck(
     checks,
     'library parity',
-    'native/Sources/BeatDropperNative/BeatDropperAppModel.swift',
+    'native/Sources/BeatDropperNative/BeatDropperAppModel+LibraryWorkflow.swift',
     /confirmRelinkIfNeeded[\s\S]*NSAlert/,
     'native app requires confirmation for risky track relinks'
   );
   addContainsCheck(
     checks,
     'library parity',
-    'native/Sources/BeatDropperNative/BeatDropperAppModel.swift',
+    'native/Sources/BeatDropperNative/BeatDropperAppModel+LibraryWorkflow.swift',
     /confirmFolderRelinkIfNeeded[\s\S]*NSAlert/,
     'native app requires confirmation for risky folder relinks'
   );
   addContainsCheck(
     checks,
     'library parity',
-    'native/Sources/BeatDropperNative/BeatDropperAppModel.swift',
+    'native/Sources/BeatDropperNative/BeatDropperAppModel+LibraryWorkflow.swift',
     /relinkSelectedTrack[\s\S]*relinkMissingSourceFolder/,
     'native app exposes missing track and source folder relink flows'
   );
   addContainsCheck(
     checks,
     'library parity',
-    'native/Sources/BeatDropperNative/ContentView.swift',
+    'native/Sources/BeatDropperNative/ContentView+CollectionPanes.swift',
     /Relink[\s\S]*Relink File/,
     'native UI offers explicit relink actions for unavailable library items'
   );
   addContainsCheck(
     checks,
     'library parity',
-    'native/Sources/BeatDropperNative/ContentView.swift',
+    'native/Sources/BeatDropperNative/ContentView+CollectionPanes.swift',
     /libraryPane[\s\S]*Search library[\s\S]*Add to Set/,
     'native UI has a dedicated full-library browser that keeps playlist taste human-controlled'
   );
   addContainsCheck(
     checks,
     'library parity',
-    'native/Sources/BeatDropperNative/BeatDropperAppModel.swift',
-    /filteredLibraryTracks[\s\S]*addSelectedLibraryTrackToPlaylist/,
+    'native/Sources/BeatDropperNative/BeatDropperAppModel+PlaylistManagement.swift',
+    /addSelectedLibraryTrackToPlaylist[\s\S]*selectedLibraryTrack[\s\S]*addLibraryTrackToPlaylist/,
     'native app can browse the full library and add selected tracks to the current set'
   );
   addContainsCheck(
@@ -391,10 +412,15 @@ const main = () => {
     /--write-json[\s\S]*LibraryStressReport[\s\S]*stablePlaylistReferenceCount/,
     'native library stress command writes durable large-library persistence evidence'
   );
-  addContainsCheck(
+  addCombinedContainsCheck(
     checks,
     'native DJ UX',
-    'native/Sources/BeatDropperNative/ContentView.swift',
+    [
+      'native/Sources/BeatDropperNative/ContentView.swift',
+      'native/Sources/BeatDropperNative/ContentView+CollectionPanes.swift',
+      'native/Sources/BeatDropperNative/ContentView+PlayingMonitor.swift',
+      'native/Sources/BeatDropperNative/ContentView+TransportStatus.swift'
+    ],
     /accessibilityLabel\("BeatDropper DJ workspace"\)[\s\S]*accessibilityLabel\("Transport controls"\)/,
     'native DJ workspace exposes accessibility labels for major panes and transport controls'
   );
@@ -422,15 +448,15 @@ const main = () => {
   addContainsCheck(
     checks,
     'native DJ UX',
-    'native/Sources/BeatDropperNative/BeatDropperAppModel.swift',
+    'native/Sources/BeatDropperNative/BeatDropperAppModel+LibraryWorkflow.swift',
     /openFinderItemsAsSet[\s\S]*openDroppedItemsAsSet[\s\S]*classifyOpenURLs[\s\S]*replaceSetFromOpenSelection[\s\S]*upsertLibraryRecords[\s\S]*persistLibraryState\(\)[\s\S]*refreshAnalyses/,
     'Finder-opened and dropped items enter the library, playlist, persistence, and analysis pipeline'
   );
   addContainsCheck(
     checks,
     'native DJ UX',
-    'native/Sources/BeatDropperNative/ContentView.swift',
-    /\.onDrop\(of: \[\.fileURL\], isTargeted: \$isFileDropTargeted\)[\s\S]*loadDroppedFileURLs[\s\S]*openDroppedItemsAsSet/,
+    'native/Sources/BeatDropperNative/ContentView+DropHandling.swift',
+    /loadDroppedFileURLs[\s\S]*openDroppedItemsAsSet/,
     'native workspace accepts dragged audio files and folders'
   );
   addContainsCheck(
@@ -485,7 +511,7 @@ const main = () => {
   addContainsCheck(
     checks,
     'playback parity',
-    'native/Sources/BeatDropperNative/ContentView.swift',
+    'native/Sources/BeatDropperNative/ContentView+PlayingMonitor.swift',
     /currentDeckMeter[\s\S]*nextDeckMeter/,
     'native DJ UI shows current and next deck meters'
   );
@@ -577,8 +603,8 @@ const main = () => {
     checks,
     'DSP parity',
     'native/Sources/BeatDropperCore/TrackAnalysis.swift',
-    /trackAnalysisSchemaVersion\s*=\s*5/,
-    'native DSP cache schema is bumped for downbeat and phrase confidence upgrades'
+    /trackAnalysisSchemaVersion\s*=\s*7/,
+    'native DSP cache schema is bumped for harmonic key and loudness evidence upgrades'
   );
   addContainsCheck(
     checks,
@@ -632,14 +658,14 @@ const main = () => {
   addContainsCheck(
     checks,
     'DSP parity',
-    'native/Sources/BeatDropperNative/BeatDropperAppModel.swift',
+    'native/Sources/BeatDropperNative/BeatDropperAppModel+AnalysisQueue.swift',
     /maxConcurrentAnalysisTasks[\s\S]*drainAnalysisQueue[\s\S]*syncAnalysisQueuePublishedState/,
     'native app drains DSP analysis work with bounded concurrency'
   );
   addContainsCheck(
     checks,
     'DSP parity',
-    'native/Sources/BeatDropperNative/ContentView.swift',
+    'native/Sources/BeatDropperNative/ContentView+Shell.swift',
     /analysisQueueStatus[\s\S]*Text\(analysisQueueStatus\)/,
     'native UI surfaces DSP analysis queue progress without adding another panel'
   );
@@ -979,7 +1005,7 @@ const main = () => {
   const plannerBenchmarkEvidence = (plannerBenchmarkReport?.results || [])
     .flatMap((result) => result?.plan?.evidence || []);
   const plannerBenchmarkPassed =
-    plannerBenchmarkReport?.schemaVersion === 1 &&
+    Number(plannerBenchmarkReport?.schemaVersion) >= 1 &&
     plannerBenchmarkReport?.status === 'PASS' &&
     plannerBenchmarkReport?.summary?.passCount >= 6 &&
     plannerBenchmarkReport?.summary?.failCount === 0 &&

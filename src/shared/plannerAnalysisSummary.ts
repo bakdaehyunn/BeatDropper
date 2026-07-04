@@ -2,6 +2,7 @@ import {
   AnalysisQuality,
   AnalysisWarning,
   CueCandidate,
+  CueCandidateOrigin,
   CueCandidateType,
   TrackAnalysis,
   TrackAnalysisSource,
@@ -16,6 +17,7 @@ export interface PlannerCueSummary {
   startSec: number;
   confidence: number;
   label: string;
+  origin: CueCandidateOrigin;
 }
 
 export interface PlannerEnergyTrendSummary {
@@ -42,6 +44,22 @@ export interface PlannerPhraseSummary {
   barCount: number;
   phraseCount: number;
   strongestBoundaries: PlannerPhraseBoundarySummary[];
+}
+
+export interface PlannerHarmonicSummary {
+  key: string | null;
+  mode: 'major' | 'minor' | null;
+  confidence: number;
+  evidence: 'strong' | 'partial' | 'fallback';
+}
+
+export interface PlannerLoudnessSummary {
+  integratedRMSDb: number | null;
+  peakDb: number | null;
+  headroomDb: number | null;
+  dynamicRangeDb: number | null;
+  confidence: number;
+  evidence: 'strong' | 'partial' | 'fallback';
 }
 
 export type PlannerMixWindowKind =
@@ -93,6 +111,8 @@ export interface PlannerAnalysisTrackSummary {
   beatStability: PlannerBeatStabilitySummary;
   transients: PlannerTransientSummary;
   phrases: PlannerPhraseSummary;
+  harmonic: PlannerHarmonicSummary;
+  loudness: PlannerLoudnessSummary;
   mixWindows: PlannerMixWindowGroupSummary;
 }
 
@@ -147,13 +167,54 @@ const buildEnergyTrend = (energyProfile: number[]): PlannerEnergyTrendSummary =>
   };
 };
 
+const buildHarmonicSummary = (analysis: TrackAnalysis): PlannerHarmonicSummary => {
+  const key = analysis.musicalKey ?? null;
+  if (!key) {
+    return { key: null, mode: null, confidence: 0, evidence: 'fallback' };
+  }
+  const confidence = round(clamp(key.confidence, 0, 1));
+  return {
+    key: key.tonic,
+    mode: key.mode,
+    confidence,
+    evidence: confidence >= 0.62 ? 'strong' : confidence >= 0.35 ? 'partial' : 'fallback'
+  };
+};
+
+const buildLoudnessSummary = (analysis: TrackAnalysis): PlannerLoudnessSummary => {
+  const loudness = analysis.loudness ?? null;
+  if (!loudness) {
+    return {
+      integratedRMSDb: null,
+      peakDb: null,
+      headroomDb: null,
+      dynamicRangeDb: null,
+      confidence: 0,
+      evidence: 'fallback'
+    };
+  }
+  const confidence = round(clamp(loudness.confidence, 0, 1));
+  return {
+    integratedRMSDb: round(loudness.integratedRMSDb, 2),
+    peakDb: round(loudness.peakDb, 2),
+    headroomDb: round(loudness.headroomDb, 2),
+    dynamicRangeDb: round(loudness.dynamicRangeDb, 2),
+    confidence,
+    evidence: confidence >= 0.68 ? 'strong' : confidence >= 0.45 ? 'partial' : 'fallback'
+  };
+};
+
 const pickBestCue = (
   analysis: TrackAnalysis,
   types: CueCandidateType[]
 ): PlannerCueSummary | null => {
   const cue = analysis.cueCandidates
     .filter((candidate) => types.includes(candidate.type))
-    .sort((left, right) => right.confidence - left.confidence)[0];
+    .sort((left, right) => {
+      const originRank = (cue: CueCandidate): number =>
+        cue.origin === 'heuristic_placeholder' ? 1 : 0;
+      return originRank(left) - originRank(right) || right.confidence - left.confidence;
+    })[0];
   if (cue) {
     return cueToSummary(cue);
   }
@@ -163,7 +224,8 @@ const pickBestCue = (
       type: 'intro',
       startSec: round(analysis.introCueSec, 2),
       confidence: 0.42,
-      label: 'Intro'
+      label: 'Intro',
+      origin: 'heuristic_placeholder'
     };
   }
 
@@ -172,7 +234,8 @@ const pickBestCue = (
       type: 'outro',
       startSec: round(analysis.outroCueSec, 2),
       confidence: 0.42,
-      label: 'Outro mix-out'
+      label: 'Outro mix-out',
+      origin: 'heuristic_placeholder'
     };
   }
 
@@ -183,7 +246,8 @@ const cueToSummary = (cue: CueCandidate): PlannerCueSummary => ({
   type: cue.type,
   startSec: round(cue.startSec, 2),
   confidence: round(clamp(cue.confidence, 0, 1)),
-  label: cue.label
+  label: cue.label,
+  origin: cue.origin
 });
 
 const sourceRank = (source: PlannerMixWindowSummary['source']): number => {
@@ -423,7 +487,8 @@ export const buildPlannerAnalysisTrackSummary = (
       waveformDetail: round(clamp(analysis.analysisQuality.waveformDetail, 0, 1)),
       spectralBands: round(clamp(analysis.analysisQuality.spectralBands, 0, 1)),
       transientMarkers: round(clamp(analysis.analysisQuality.transientMarkers, 0, 1)),
-      beatGrid: round(clamp(analysis.analysisQuality.beatGrid, 0, 1))
+      beatGrid: round(clamp(analysis.analysisQuality.beatGrid, 0, 1)),
+      harmonicKey: round(clamp(analysis.analysisQuality.harmonicKey ?? 0, 0, 1))
     },
     analysisWarnings: analysis.analysisWarnings,
     cues: {
@@ -443,6 +508,8 @@ export const buildPlannerAnalysisTrackSummary = (
       phraseCount: analysis.phraseMarkers.length,
       strongestBoundaries
     },
+    harmonic: buildHarmonicSummary(analysis),
+    loudness: buildLoudnessSummary(analysis),
     mixWindows: buildMixWindows(analysis, durationSec)
   };
 };

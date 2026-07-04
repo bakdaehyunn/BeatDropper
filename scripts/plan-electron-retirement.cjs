@@ -47,7 +47,9 @@ const nativePathsToKeep = [
   'scripts/codex-mix-planner.cjs',
   'scripts/check-electron-retirement-readiness.cjs',
   'scripts/check-native-accessibility.cjs',
+  'scripts/check-native-macos-shell.cjs',
   'scripts/check-native-release-readiness.cjs',
+  'scripts/create-analysis-benchmark-fixture.cjs',
   'scripts/evaluate-native-analysis-benchmarks.cjs',
   'scripts/evaluate-native-parity.cjs',
   'scripts/evaluate-native-planner-benchmarks.cjs',
@@ -62,17 +64,22 @@ const nativePathsToKeep = [
   'scripts/stress-native-open-import.cjs',
   'scripts/stress-native-playback.cjs',
   'scripts/stress-native-session.cjs',
+  'scripts/validate-loudness-reference.cjs',
+  'scripts/validate-native-real-folder.cjs',
   'scripts/verify-native-release.cjs',
   'scripts/write-native-release-manifest.cjs',
+  'native/Sources/BeatDropperNativeLoudnessValidation',
   'tests/fixtures'
 ];
 
 const nativeScriptNamesToKeep = [
   'native:accessibility:check',
   'native:benchmark:analysis',
+  'native:benchmark:analysis:create',
   'native:benchmark:analysis:gate',
   'native:benchmark:planner',
   'native:build',
+  'native:macos-shell:check',
   'native:package',
   'native:parity',
   'native:parity:report',
@@ -96,6 +103,8 @@ const nativeScriptNamesToKeep = [
   'native:stress:playback',
   'native:stress:session',
   'native:stress:session:extended',
+  'native:validate:loudness-reference',
+  'native:validate:real-folder',
   'native:test'
 ];
 

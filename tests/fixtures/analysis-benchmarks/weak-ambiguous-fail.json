@@ -14,7 +14,7 @@
     "outroCueSec": 96,
     "barGridSec": [0, 7.742, 15.484, 23.226, 30.968, 38.71, 46.452, 54.194],
     "phraseBoundarySec": [0, 61.936],
-    "plannerReady": true
+    "plannerReady": false
   },
   "analysis": {
     "trackId": "weak-ambiguous-fail",
@@ -38,8 +38,8 @@
     "spectralBands": [{ "timeSec": 3.4, "low": 0.3, "mid": 0.3, "high": 0.3 }],
     "transientMarkers": [{ "index": 0, "timeSec": 3.4, "strength": 0.32 }],
     "cueCandidates": [
-      { "id": "first-downbeat", "type": "first_downbeat", "startSec": 3.4, "endSec": 7.4, "confidence": 0.35, "label": "First downbeat" },
-      { "id": "outro", "type": "outro", "startSec": 83, "endSec": 112, "confidence": 0.38, "label": "Outro mix-out" }
+      { "id": "first-downbeat", "type": "first_downbeat", "startSec": 3.4, "endSec": 7.4, "confidence": 0.35, "label": "First downbeat", "origin": "heuristic_placeholder" },
+      { "id": "outro", "type": "outro", "startSec": 83, "endSec": 112, "confidence": 0.38, "label": "Outro mix-out", "origin": "heuristic_placeholder" }
     ],
     "analysisConfidence": 0.42,
     "analysisQuality": {
