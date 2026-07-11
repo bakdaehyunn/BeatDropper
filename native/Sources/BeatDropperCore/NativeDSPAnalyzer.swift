@@ -38,11 +38,7 @@ public struct NativeDSPAnalyzer: Sendable {
             sampleRate: buffer.sampleRate,
             durationSec: durationSec
         )
-        let loudness = buildLoudnessAnalysis(
-            samples: buffer.samples,
-            sampleRate: buffer.sampleRate,
-            durationSec: durationSec
-        )
+        let loudness = buildLoudnessAnalysis(buffer: buffer, durationSec: durationSec)
         let stereo = buildStereoAnalysis(buffer: buffer)
         let onsetEnvelope = buildOnsetEnvelope(
             waveformDetail: waveformDetail,
@@ -431,12 +427,16 @@ public struct NativeDSPAnalyzer: Sendable {
         )
     }
 
-    private func buildLoudnessAnalysis(samples: [Float], sampleRate: Double, durationSec: Double) -> LoudnessAnalysis? {
-        guard !samples.isEmpty, durationSec > 0 else {
+    private func buildLoudnessAnalysis(buffer: PCMAnalysisBuffer, durationSec: Double) -> LoudnessAnalysis? {
+        let channels = loudnessChannels(buffer: buffer)
+        let measurement = channels.count > 1
+            ? "ebu_r128_k_weighted_gated_multichannel"
+            : "ebu_r128_k_weighted_gated_mono"
+        guard !channels.isEmpty, durationSec > 0 else {
             return nil
         }
 
-        let stats = sampleStats(samples: samples, start: 0, end: samples.count)
+        let stats = multichannelStats(channels: channels)
         guard stats.peak > 0.000_01, stats.rms > 0.000_01 else {
             return LoudnessAnalysis(
                 integratedRMSDb: -60,
@@ -447,22 +447,22 @@ public struct NativeDSPAnalyzer: Sendable {
                 crestFactorDb: 0,
                 dynamicRangeDb: 0,
                 loudnessRangeLU: 0,
-                measurement: "ebu_r128_k_weighted_gated_mono",
+                measurement: measurement,
                 confidence: 0
             )
         }
 
         let frameCount = min(256, max(8, Int(durationSec * 2)))
-        let samplesPerFrame = max(1, samples.count / frameCount)
+        let samplesPerFrame = max(1, stats.frameCount / frameCount)
         var frameRMSDb: [Double] = []
         frameRMSDb.reserveCapacity(frameCount)
         for frameIndex in 0..<frameCount {
             let start = frameIndex * samplesPerFrame
-            let end = min(samples.count, start + samplesPerFrame)
+            let end = min(stats.frameCount, start + samplesPerFrame)
             guard start < end else {
                 continue
             }
-            let frameRMS = sampleStats(samples: samples, start: start, end: end).rms
+            let frameRMS = multichannelStats(channels: channels, start: start, end: end).rms
             if frameRMS > 0.000_01 {
                 frameRMSDb.append(db(frameRMS))
             }
@@ -470,14 +470,15 @@ public struct NativeDSPAnalyzer: Sendable {
 
         let integratedRMSDb = db(stats.rms)
         let peakDb = db(stats.peak)
-        let ebuR128 = measureEBUR128(samples: samples, sampleRate: sampleRate)
+        let ebuR128 = measureEBUR128(channels: channels, sampleRate: buffer.sampleRate)
         let truePeakDb = ebuR128.truePeakDb ?? peakDb
         let dynamicRangeDb = max(0, percentile(frameRMSDb, 0.95) - percentile(frameRMSDb, 0.10))
         let confidence = clamped(
             min(0.42, durationSec / 30) +
                 min(0.28, Double(frameRMSDb.count) / 180) +
                 min(0.24, stats.rms / 0.12) +
-                min(0.06, Double(ebuR128.gatedBlockCount) / 120),
+                min(0.04, Double(ebuR128.gatedBlockCount) / 120) +
+                (channels.count > 1 ? 0.02 : 0),
             min: 0,
             max: 0.96
         )
@@ -491,8 +492,51 @@ public struct NativeDSPAnalyzer: Sendable {
             crestFactorDb: rounded(max(0, peakDb - integratedRMSDb), digits: 2),
             dynamicRangeDb: rounded(dynamicRangeDb, digits: 2),
             loudnessRangeLU: ebuR128.loudnessRangeLU.map { rounded($0, digits: 2) },
-            measurement: "ebu_r128_k_weighted_gated_mono",
+            measurement: measurement,
             confidence: rounded(confidence)
+        )
+    }
+
+    private func loudnessChannels(buffer: PCMAnalysisBuffer) -> [[Float]] {
+        let channels = buffer.channelSamples.filter { !$0.isEmpty }
+        if channels.isEmpty {
+            return buffer.samples.isEmpty ? [] : [buffer.samples]
+        }
+        return channels
+    }
+
+    private func multichannelStats(channels: [[Float]]) -> (peak: Double, rms: Double, frameCount: Int) {
+        let frameCount = channels.map(\.count).min() ?? 0
+        return multichannelStats(channels: channels, start: 0, end: frameCount)
+    }
+
+    private func multichannelStats(
+        channels: [[Float]],
+        start: Int,
+        end: Int
+    ) -> (peak: Double, rms: Double, frameCount: Int) {
+        let frameCount = channels.map(\.count).min() ?? 0
+        let clampedStart = clampedInt(start, min: 0, max: frameCount)
+        let clampedEnd = clampedInt(end, min: clampedStart, max: frameCount)
+        guard !channels.isEmpty, clampedEnd > clampedStart else {
+            return (0, 0, frameCount)
+        }
+
+        var peak = 0.0
+        var sumSquares = 0.0
+        var count = 0
+        for channel in channels {
+            for index in clampedStart..<clampedEnd {
+                let value = Double(channel[index])
+                peak = max(peak, abs(value))
+                sumSquares += value * value
+                count += 1
+            }
+        }
+        return (
+            peak,
+            count > 0 ? sqrt(sumSquares / Double(count)) : 0,
+            frameCount
         )
     }
 
@@ -570,30 +614,33 @@ public struct NativeDSPAnalyzer: Sendable {
     }
 
     private func measureEBUR128(
-        samples: [Float],
+        channels: [[Float]],
         sampleRate: Double
     ) -> (integratedLUFS: Double?, loudnessRangeLU: Double?, truePeakDb: Double?, gatedBlockCount: Int) {
-        guard samples.count >= 2, sampleRate > 0 else {
+        let activeChannels = channels.filter { $0.count >= 2 }
+        let frameCount = activeChannels.map(\.count).min() ?? 0
+        guard !activeChannels.isEmpty, frameCount >= 2, sampleRate > 0 else {
             return (nil, nil, nil, 0)
         }
 
         let absoluteGateMeanSquare = pow(10, (-70 + 0.691) / 10)
         let blockSize = max(1, Int((0.400 * sampleRate).rounded()))
-        let blockMeanSquares = ebuR128BlockMeanSquares(
-            samples: samples,
+        let blockMeanSquares = ebuR128MultichannelBlockMeanSquares(
+            channels: activeChannels,
             sampleRate: sampleRate,
             blockSize: blockSize,
             hopSize: max(1, Int((0.100 * sampleRate).rounded()))
         )
-        guard samples.count >= blockSize else {
+        let truePeakDb = estimateTruePeakDb(channels: activeChannels)
+        guard frameCount >= blockSize else {
             let meanSquare = blockMeanSquares.first ?? 0
             let lufs = meanSquare > 0 ? -0.691 + 10 * log10(meanSquare) : -70
-            return (max(-70, lufs), 0, estimateTruePeakDb(samples: samples), meanSquare >= absoluteGateMeanSquare ? 1 : 0)
+            return (max(-70, lufs), 0, truePeakDb, meanSquare >= absoluteGateMeanSquare ? 1 : 0)
         }
 
         let absoluteGatedBlocks = blockMeanSquares.filter { $0 >= absoluteGateMeanSquare }
         guard !absoluteGatedBlocks.isEmpty else {
-            return (-70, 0, estimateTruePeakDb(samples: samples), 0)
+            return (-70, 0, truePeakDb, 0)
         }
 
         let absoluteGatedMean = absoluteGatedBlocks.reduce(0, +) / Double(absoluteGatedBlocks.count)
@@ -611,9 +658,47 @@ public struct NativeDSPAnalyzer: Sendable {
         return (
             max(-70, integratedLUFS),
             loudnessRange,
-            estimateTruePeakDb(samples: samples),
+            truePeakDb,
             finalBlocks.count
         )
+    }
+
+    private func ebuR128MultichannelBlockMeanSquares(
+        channels: [[Float]],
+        sampleRate: Double,
+        blockSize: Int,
+        hopSize: Int
+    ) -> [Double] {
+        let channelBlocks = channels.enumerated().map { index, samples in
+            (
+                weight: ebuR128ChannelWeight(channelIndex: index, channelCount: channels.count),
+                blocks: ebuR128BlockMeanSquares(
+                    samples: samples,
+                    sampleRate: sampleRate,
+                    blockSize: blockSize,
+                    hopSize: hopSize
+                )
+            )
+        }
+        let blockCount = channelBlocks.map { $0.blocks.count }.min() ?? 0
+        guard blockCount > 0 else {
+            return []
+        }
+        return (0..<blockCount).map { blockIndex in
+            channelBlocks.reduce(0.0) { sum, channel in
+                sum + channel.blocks[blockIndex] * channel.weight
+            }
+        }
+    }
+
+    private func ebuR128ChannelWeight(channelIndex: Int, channelCount: Int) -> Double {
+        if channelCount >= 6, channelIndex == 5 {
+            return 0
+        }
+        if channelCount >= 5, channelIndex == 3 || channelIndex == 4 {
+            return pow(10, 1.5 / 10)
+        }
+        return 1
     }
 
     private func ebuR128BlockMeanSquares(
@@ -678,24 +763,89 @@ public struct NativeDSPAnalyzer: Sendable {
         )
     }
 
-    private func estimateTruePeakDb(samples: [Float]) -> Double? {
+    private func estimateTruePeakDb(channels: [[Float]]) -> Double? {
+        let peaks = channels.compactMap { estimateOversampledTruePeak($0) }
+        guard let peak = peaks.max() else {
+            return nil
+        }
+        return db(peak)
+    }
+
+    private func estimateOversampledTruePeak(_ samples: [Float]) -> Double? {
         guard !samples.isEmpty else {
             return nil
         }
-        var peak = 0.0
-        for index in samples.indices {
-            peak = max(peak, abs(Double(samples[index])))
-            guard index > samples.startIndex else {
+        let samplePeak = samples.reduce(0.0) { max($0, abs(Double($1))) }
+        guard samplePeak > 0 else {
+            return 0
+        }
+
+        var peak = samplePeak
+        let threshold = samplePeak * 0.82
+        let candidateCount = samples.dropLast().reduce(0) { count, sample in
+            abs(Double(sample)) >= threshold ? count + 1 : count
+        }
+        let maxInterpolatedPairs = 500_000
+        let candidateStride = max(1, candidateCount / maxInterpolatedPairs)
+        var visitedCandidates = 0
+
+        for index in samples.indices.dropLast() {
+            guard abs(Double(samples[index])) >= threshold || abs(Double(samples[index + 1])) >= threshold else {
                 continue
             }
-            let previous = Double(samples[index - 1])
+            visitedCandidates += 1
+            guard visitedCandidates.isMultiple(of: candidateStride) else {
+                continue
+            }
+
+            let previous = index > samples.startIndex ? Double(samples[index - 1]) : Double(samples[index])
             let current = Double(samples[index])
-            for step in 1...3 {
-                let t = Double(step) / 4
-                peak = max(peak, abs(previous + (current - previous) * t))
+            let next = Double(samples[index + 1])
+            let following = index + 2 < samples.endIndex ? Double(samples[index + 2]) : next
+            for phase in 1..<4 {
+                let t = Double(phase) / 4
+                peak = max(peak, abs(cubicInterpolatedValue(
+                    previous: previous,
+                    current: current,
+                    next: next,
+                    following: following,
+                    t: t
+                )))
             }
         }
-        return db(peak)
+
+        if visitedCandidates == 0, samples.count >= 2 {
+            for index in stride(from: 0, to: samples.count - 1, by: max(1, samples.count / 256)) {
+                let previous = index > samples.startIndex ? Double(samples[index - 1]) : Double(samples[index])
+                let current = Double(samples[index])
+                let next = Double(samples[index + 1])
+                let following = index + 2 < samples.endIndex ? Double(samples[index + 2]) : next
+                for phase in 1..<4 {
+                    let t = Double(phase) / 4
+                    peak = max(peak, abs(cubicInterpolatedValue(
+                        previous: previous,
+                        current: current,
+                        next: next,
+                        following: following,
+                        t: t
+                    )))
+                }
+            }
+        }
+        return peak
+    }
+
+    private func cubicInterpolatedValue(
+        previous: Double,
+        current: Double,
+        next: Double,
+        following: Double,
+        t: Double
+    ) -> Double {
+        let a = -0.5 * previous + 1.5 * current - 1.5 * next + 0.5 * following
+        let b = previous - 2.5 * current + 2 * next - 0.5 * following
+        let c = -0.5 * previous + 0.5 * next
+        return ((a * t + b) * t + c) * t + current
     }
 
     private func applyBiquad(

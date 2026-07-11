@@ -8,8 +8,26 @@ const { spawnSync } = require('node:child_process');
 
 const rootDir = path.resolve(__dirname, '..');
 const supportedExtensions = new Set(['.mp3', '.wav']);
-const calibratedLufsTolerance = 3.9;
-const calibratedTruePeakTolerance = 2.6;
+const ignoredDiscoveryDirectories = new Set([
+  '.git',
+  'Library',
+  'node_modules',
+  'dist',
+  'dist-electron',
+  'DerivedData',
+  'build',
+  '.build',
+  'test-results'
+]);
+const discoveryDirectoryPriority = new Map([
+  ['Music', 0],
+  ['Downloads', 1],
+  ['Desktop', 2],
+  ['Documents', 3],
+  ['Movies', 4]
+]);
+const calibratedLufsTolerance = 0.2;
+const calibratedTruePeakTolerance = 1.8;
 
 const parseArgs = (argv) => {
   const options = {
@@ -135,13 +153,15 @@ const readDurationSec = (filePath) => {
   return Number.isFinite(durationSec) && durationSec >= 0 ? durationSec : null;
 };
 
-const collectSupportedFiles = (folderPath) => {
-  const files = [];
+const collectSelectedSupportedFiles = (folderPath, options) => {
+  const records = [];
   let directoryCount = 0;
+  let supportedFileCount = 0;
+  let scanTruncated = false;
   const stack = [folderPath];
 
   while (stack.length > 0) {
-    const current = stack.pop();
+    const current = stack.shift();
     let entries;
     try {
       entries = fs.readdirSync(current, { withFileTypes: true });
@@ -149,22 +169,40 @@ const collectSupportedFiles = (folderPath) => {
       continue;
     }
 
+    entries.sort((left, right) => {
+      const leftPriority = discoveryDirectoryPriority.get(left.name) ?? 100;
+      const rightPriority = discoveryDirectoryPriority.get(right.name) ?? 100;
+      return leftPriority === rightPriority
+        ? left.name.localeCompare(right.name)
+        : leftPriority - rightPriority;
+    });
     for (const entry of entries) {
       if (entry.name.startsWith('.')) {
         continue;
       }
       const childPath = path.join(current, entry.name);
       if (entry.isDirectory()) {
+        if (ignoredDiscoveryDirectories.has(entry.name)) {
+          continue;
+        }
         directoryCount += 1;
         stack.push(childPath);
       } else if (entry.isFile() && supportedExtensions.has(path.extname(entry.name).toLowerCase())) {
-        files.push(childPath);
+        supportedFileCount += 1;
+        const durationSec = options.minDurationSec > 0 ? readDurationSec(childPath) : null;
+        if (options.minDurationSec > 0 && (durationSec === null || durationSec < options.minDurationSec)) {
+          continue;
+        }
+        records.push({ filePath: childPath, durationSec });
+        if (options.maxFiles > 0 && records.length >= options.maxFiles) {
+          scanTruncated = true;
+          return { records, directoryCount, supportedFileCount, scanTruncated };
+        }
       }
     }
   }
 
-  files.sort();
-  return { files, directoryCount };
+  return { records, directoryCount, supportedFileCount, scanTruncated };
 };
 
 const summarizeDurations = (durations) => {
@@ -208,18 +246,8 @@ const stageCorpus = (records) => {
 };
 
 const prepareFolderCorpus = (folderPath, options) => {
-  const collected = collectSupportedFiles(folderPath);
-  const durationRecords = collected.files.map((filePath) => ({
-    filePath,
-    durationSec: options.minDurationSec > 0 ? readDurationSec(filePath) : null
-  }));
-  let selected = durationRecords;
-  if (options.minDurationSec > 0) {
-    selected = selected.filter((record) => record.durationSec !== null && record.durationSec >= options.minDurationSec);
-  }
-  if (options.maxFiles > 0) {
-    selected = selected.slice(0, options.maxFiles);
-  }
+  const collected = collectSelectedSupportedFiles(folderPath, options);
+  const selected = collected.records;
   const durations = selected
     .map((record) => record.durationSec)
     .filter((durationSec) => Number.isFinite(durationSec));
@@ -229,8 +257,9 @@ const prepareFolderCorpus = (folderPath, options) => {
     info: {
       pathHash: hashPath(folderPath),
       pathProvided: true,
-      supportedFileCount: collected.files.length,
+      supportedFileCount: collected.supportedFileCount,
       directoryCount: collected.directoryCount,
+      scanTruncated: collected.scanTruncated,
       selectedFileCount: selected.length,
       minDurationSec: options.minDurationSec,
       maxFiles: options.maxFiles,

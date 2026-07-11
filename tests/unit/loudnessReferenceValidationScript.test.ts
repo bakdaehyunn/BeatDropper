@@ -28,8 +28,8 @@ describe('validate-loudness-reference script', () => {
       reason: 'ffmpeg_not_found',
       requiredTool: 'ffmpeg with loudnorm filter',
       tolerances: {
-        integratedLUFS: 3.9,
-        truePeakDb: 2.6
+        integratedLUFS: 0.2,
+        truePeakDb: 1.8
       }
     });
     expect(JSON.stringify(report)).not.toContain(os.homedir());

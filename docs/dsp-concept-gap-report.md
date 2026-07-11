@@ -2,21 +2,22 @@
 
 Generated: 2026-07-03
 
-This slice improves DSP evidence by adding local LUFS/true-peak reference validation gates and stereo-aware channel metrics. It is not enough to call the analyzer best-in-class yet. The remaining gaps below are the next concepts needed for stronger DJ-app parity.
+This slice improves DSP evidence by adding local LUFS/true-peak reference validation gates, stereo-aware channel metrics, multichannel loudness measurement, and a bounded oversampled true-peak estimate. It is not enough to call the analyzer best-in-class yet. The remaining gaps below are the next concepts needed for stronger DJ-app parity.
 
 ## Priority 1: Loudness Reference Validation
 
-- Current state: BeatDropper computes integrated LUFS, true peak, headroom, crest factor, dynamic range, and loudness range from local PCM evidence.
-- Current reference pass: an anonymized 8-track local import comparison against `ffmpeg loudnorm` found LUFS delta p95 3.78 LU and true-peak delta p95 2.46 dBTP.
-- Calibrated gate: the local reference validator now uses 3.9 LUFS and 2.6 dBTP as p95-plus-margin acceptance tolerances for this slice.
-- Gap: these tolerances are intentionally broad because the current native analyzer uses a mono K-weighted estimate and a lightweight true-peak approximation, not full multichannel EBU R128 parity.
-- Next step: reduce the required tolerance by implementing full stereo/multichannel EBU R128 and oversampled true-peak measurement, then rerun the same anonymized corpus gate.
+- Current state: BeatDropper computes integrated LUFS, true peak, headroom, crest factor, dynamic range, and loudness range from local PCM channel evidence when preserved channel samples are available.
+- Previous reference pass: an anonymized 8-track local import comparison against `ffmpeg loudnorm` found LUFS delta p95 3.78 LU and true-peak delta p95 2.46 dBTP.
+- Current reference pass: after multichannel loudness summing and bounded 4x cubic true-peak interpolation, the same validation command compared 8/8 files with LUFS delta p95 0.07 LU and true-peak delta p95 1.57 dBTP.
+- Calibrated gate: the local reference validator now uses 0.2 LUFS and 1.8 dBTP as p95-plus-margin acceptance tolerances for this slice.
+- Gap: true peak is still a bounded cubic oversampling estimate, not a full standards-grade oversampling filter, and channel weighting still assumes a conventional layout when no explicit channel layout metadata is available.
+- Next step: replace the bounded true-peak estimate with a verified BS.1770-style oversampling filter, persist channel layout when available, then expand the anonymized corpus beyond 8 files.
 
 ## Priority 2: Stereo And Multichannel Accuracy
 
-- Current state: Analysis records channel count, per-channel peak/RMS, stereo width, phase correlation, and mid/side balance.
-- Gap: Most downstream timing, key, and loudness logic still works from the mono analysis stream. Stereo true-peak and loudness are not yet measured as full multichannel EBU R128.
-- Next step: Preserve multichannel buffers through loudness, true-peak oversampling, and spectral analysis paths, then compare mono downmix versus stereo evidence.
+- Current state: Analysis records channel count, per-channel peak/RMS, stereo width, phase correlation, and mid/side balance. Loudness and true peak now use preserved channel samples instead of relying only on the mono analysis stream.
+- Gap: Most downstream timing, key, and spectral logic still works from the mono analysis stream. Loudness channel weighting is layout-assumed rather than layout-metadata-driven.
+- Next step: Preserve channel layout metadata through import/analysis and compare mono downmix versus stereo evidence in benchmark fixtures.
 
 ## Priority 3: Key Detection
 

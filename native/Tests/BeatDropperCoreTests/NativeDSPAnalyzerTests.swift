@@ -81,6 +81,31 @@ struct NativeDSPAnalyzerTests {
         #expect(analysis.analysisWarnings.contains(.headroomLow))
     }
 
+    @Test func multichannelLoudnessUsesPreservedChannelsWhenDownmixCancels() throws {
+        let sampleRate = 44_100.0
+        let durationSec = 3.0
+        let left = sineWave(frequency: 440, durationSec: durationSec, sampleRate: sampleRate, amplitude: 0.72)
+        let right = left.map { -$0 }
+        let cancelledDownmix = zip(left, right).map { ($0 + $1) / 2 }
+        let analysis = NativeDSPAnalyzer().analyze(
+            track: Track(id: "phase-cancelled", title: "Phase Cancelled", durationSec: durationSec, format: .wav),
+            buffer: PCMAnalysisBuffer(
+                samples: cancelledDownmix,
+                channelSamples: [left, right],
+                sampleRate: sampleRate,
+                durationSec: durationSec
+            ),
+            generatedAt: "2026-05-25T00:00:00Z"
+        )
+        let loudness = try #require(analysis.loudness)
+
+        #expect(loudness.measurement == "ebu_r128_k_weighted_gated_multichannel")
+        #expect((loudness.integratedLUFS ?? -70) > -20)
+        #expect((loudness.truePeakDb ?? -60) > -4)
+        #expect(loudness.peakDb > -4)
+        #expect(loudness.confidence > 0.35)
+    }
+
     @Test func stereoAnalysisReportsChannelAndPhaseEvidence() throws {
         let sampleRate = 1_000.0
         let durationSec = 2.0
