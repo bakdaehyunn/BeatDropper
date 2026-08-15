@@ -53,7 +53,7 @@ BeatDropper is now a native macOS app backed by SwiftUI, AppKit, AVAudioEngine, 
 - MixPlan responses are validated before they can affect playback.
 - API keys are not stored by default. Codex uses its own official authentication flow.
 
-The Electron app remains in the repository as a reference path until notarized native release verification and the retirement checks pass.
+The production application is native-only. SwiftUI and AppKit own the interface, AVAudioEngine owns playback, and Swift core modules own persistence, analysis, and planning contracts.
 
 ## Run Locally
 
@@ -79,4 +79,4 @@ npm run native:benchmark:analysis
 npm run native:benchmark:planner
 ```
 
-Electron reference validation remains available during migration through the older `test`, `build`, and `test:e2e:*` scripts.
+`npm test` validates the remaining Node-based planner, benchmark, calibration, and security tooling.

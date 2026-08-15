@@ -51,20 +51,20 @@ public final class NativeSettingsStore: @unchecked Sendable {
         }
     }
 
-    public func loadMigratingElectronSettingsIfNeeded() throws -> PlayerSettings {
+    public func loadMigratingLegacyDesktopSettingsIfNeeded() throws -> PlayerSettings {
         if FileManager.default.fileExists(atPath: fileURL.path) ||
             FileManager.default.fileExists(atPath: backupFileURL.path) {
             return try load()
         }
 
-        let electronSettingsURL = fileURL
+        let legacySettingsURL = fileURL
             .deletingLastPathComponent()
             .appendingPathComponent("player-settings.json")
-        guard FileManager.default.fileExists(atPath: electronSettingsURL.path) else {
+        guard FileManager.default.fileExists(atPath: legacySettingsURL.path) else {
             return .defaults
         }
 
-        let settings = try Self.sanitize(data: Data(contentsOf: electronSettingsURL))
+        let settings = try Self.sanitize(data: Data(contentsOf: legacySettingsURL))
         try save(settings)
         return settings
     }

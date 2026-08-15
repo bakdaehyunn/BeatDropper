@@ -24,15 +24,15 @@ public struct NativeLibraryMigrationResult: Hashable, Sendable {
 }
 
 public enum NativeLibraryMigration {
-    public static func migrateElectronState(
+    public static func migrateLegacyDesktopState(
         musicLibraryFileURL: URL,
         userPlaylistFileURL: URL
     ) throws -> NativeLibraryMigrationResult {
-        let electronTracks = try loadElectronMusicLibrary(from: musicLibraryFileURL)
-        let trackRecords = electronTracks.valid.map(\.record)
+        let legacyTracks = try loadLegacyDesktopMusicLibrary(from: musicLibraryFileURL)
+        let trackRecords = legacyTracks.valid.map(\.record)
         let knownTrackIds = Set(trackRecords.map(\.id))
-        let sourceFolders = buildSourceFolders(from: electronTracks.valid)
-        let userPlaylists = try loadElectronUserPlaylists(
+        let sourceFolders = buildSourceFolders(from: legacyTracks.valid)
+        let userPlaylists = try loadLegacyDesktopUserPlaylists(
             from: userPlaylistFileURL,
             knownTrackIds: knownTrackIds
         )
@@ -50,18 +50,18 @@ public enum NativeLibraryMigration {
             state: state,
             importedTrackCount: trackRecords.count,
             importedPlaylistCount: userPlaylists.count,
-            skippedTrackCount: electronTracks.skippedCount
+            skippedTrackCount: legacyTracks.skippedCount
         )
     }
 
-    private static func loadElectronMusicLibrary(from fileURL: URL) throws -> ElectronTrackLoadResult {
+    private static func loadLegacyDesktopMusicLibrary(from fileURL: URL) throws -> LegacyDesktopTrackLoadResult {
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
-            return ElectronTrackLoadResult(valid: [], skippedCount: 0)
+            return LegacyDesktopTrackLoadResult(valid: [], skippedCount: 0)
         }
 
         let data = try Data(contentsOf: fileURL)
-        let file = try JSONDecoder().decode(ElectronMusicLibraryFile.self, from: data)
-        var valid: [MigratedElectronTrack] = []
+        let file = try JSONDecoder().decode(LegacyMusicLibraryFile.self, from: data)
+        var valid: [MigratedLegacyTrack] = []
         var skippedCount = 0
 
         for candidate in file.tracks ?? [] {
@@ -72,10 +72,10 @@ public enum NativeLibraryMigration {
             }
         }
 
-        return ElectronTrackLoadResult(valid: deduplicateTracks(valid), skippedCount: skippedCount)
+        return LegacyDesktopTrackLoadResult(valid: deduplicateTracks(valid), skippedCount: skippedCount)
     }
 
-    private static func loadElectronUserPlaylists(
+    private static func loadLegacyDesktopUserPlaylists(
         from fileURL: URL,
         knownTrackIds: Set<String>
     ) throws -> [UserPlaylist] {
@@ -84,7 +84,7 @@ public enum NativeLibraryMigration {
         }
 
         let data = try Data(contentsOf: fileURL)
-        let file = try JSONDecoder().decode(ElectronUserPlaylistFile.self, from: data)
+        let file = try JSONDecoder().decode(LegacyUserPlaylistFile.self, from: data)
         let playlists = (file.playlists ?? []).compactMap { candidate -> UserPlaylist? in
             guard let id = normalized(candidate.id),
                   let name = normalizedPlaylistName(candidate.name)
@@ -98,7 +98,7 @@ public enum NativeLibraryMigration {
                 return nil
             }
 
-            let createdAt = normalized(candidate.createdAt) ?? electronEpoch
+            let createdAt = normalized(candidate.createdAt) ?? legacyDesktopEpoch
             let updatedAt = normalized(candidate.updatedAt) ?? createdAt
             return UserPlaylist(
                 id: id,
@@ -113,9 +113,9 @@ public enum NativeLibraryMigration {
     }
 
     private static func buildSourceFolders(
-        from tracks: [MigratedElectronTrack]
+        from tracks: [MigratedLegacyTrack]
     ) -> [NativeLibrarySourceFolder] {
-        var grouped: [String: [MigratedElectronTrack]] = [:]
+        var grouped: [String: [MigratedLegacyTrack]] = [:]
         var orderedPaths: [String] = []
 
         for track in tracks {
@@ -130,7 +130,7 @@ public enum NativeLibraryMigration {
             guard let tracks = grouped[path], let first = tracks.first else {
                 return nil
             }
-            let addedAt = tracks.map(\.record.addedAt).min() ?? electronEpoch
+            let addedAt = tracks.map(\.record.addedAt).min() ?? legacyDesktopEpoch
             let updatedAt = tracks.map(\.record.updatedAt).max() ?? addedAt
             let missing = tracks.allSatisfy(\.record.missing)
             let missingAt = missing ? tracks.compactMap(\.record.missingAt).min() : nil
@@ -148,9 +148,9 @@ public enum NativeLibraryMigration {
     }
 
     private static func deduplicateTracks(
-        _ tracks: [MigratedElectronTrack]
-    ) -> [MigratedElectronTrack] {
-        var byId: [String: MigratedElectronTrack] = [:]
+        _ tracks: [MigratedLegacyTrack]
+    ) -> [MigratedLegacyTrack] {
+        var byId: [String: MigratedLegacyTrack] = [:]
         var orderedIds: [String] = []
 
         for track in tracks {
@@ -195,22 +195,22 @@ public enum NativeLibraryMigration {
     }
 }
 
-private struct ElectronTrackLoadResult {
-    var valid: [MigratedElectronTrack]
+private struct LegacyDesktopTrackLoadResult {
+    var valid: [MigratedLegacyTrack]
     var skippedCount: Int
 }
 
-private struct MigratedElectronTrack: Hashable {
+private struct MigratedLegacyTrack: Hashable {
     var record: NativeTrackRecord
     var sourcePath: String
     var sourceLabel: String
 }
 
-private struct ElectronMusicLibraryFile: Decodable {
-    var tracks: [ElectronStoredTrack]?
+private struct LegacyMusicLibraryFile: Decodable {
+    var tracks: [LegacyStoredTrack]?
 }
 
-private struct ElectronStoredTrack: Decodable {
+private struct LegacyStoredTrack: Decodable {
     var id: String?
     var title: String?
     var durationSec: Double?
@@ -224,7 +224,7 @@ private struct ElectronStoredTrack: Decodable {
     var missingAt: String?
     var filePath: String?
 
-    var migratedRecord: MigratedElectronTrack? {
+    var migratedRecord: MigratedLegacyTrack? {
         guard let id = normalized(id),
               let title = normalized(title),
               let durationSec,
@@ -236,7 +236,7 @@ private struct ElectronStoredTrack: Decodable {
             return nil
         }
 
-        let addedAt = normalized(addedAt) ?? electronEpoch
+        let addedAt = normalized(addedAt) ?? legacyDesktopEpoch
         let updatedAt = normalized(updatedAt) ?? addedAt
         let isMissing = missing ?? false
         let labelFallback = URL(fileURLWithPath: sourcePath).lastPathComponent
@@ -259,7 +259,7 @@ private struct ElectronStoredTrack: Decodable {
             updatedAt: updatedAt
         )
 
-        return MigratedElectronTrack(
+        return MigratedLegacyTrack(
             record: record,
             sourcePath: sourcePath,
             sourceLabel: sourceLabel
@@ -267,11 +267,11 @@ private struct ElectronStoredTrack: Decodable {
     }
 }
 
-private struct ElectronUserPlaylistFile: Decodable {
-    var playlists: [ElectronStoredUserPlaylist]?
+private struct LegacyUserPlaylistFile: Decodable {
+    var playlists: [LegacyStoredUserPlaylist]?
 }
 
-private struct ElectronStoredUserPlaylist: Decodable {
+private struct LegacyStoredUserPlaylist: Decodable {
     var id: String?
     var name: String?
     var trackIds: [String]?
@@ -279,7 +279,7 @@ private struct ElectronStoredUserPlaylist: Decodable {
     var updatedAt: String?
 }
 
-private let electronEpoch = "1970-01-01T00:00:00.000Z"
+private let legacyDesktopEpoch = "1970-01-01T00:00:00.000Z"
 
 private func normalized(_ value: String?) -> String? {
     let result = (value ?? "").trimmingCharacters(in: .whitespacesAndNewlines)

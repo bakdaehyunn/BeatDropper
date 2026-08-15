@@ -1,7 +1,7 @@
 # BeatDropper 프로젝트 파악 노트
 
 ## 한 줄 요약
-BeatDropper는 사용자가 직접 고른 로컬 음악 라이브러리와 세트를 중심으로, native macOS 앱에서 DSP 분석과 AI-assisted mix planning을 이용해 DJ 스타일 전환을 수행하는 데스크톱 앱이다. Electron 구현은 native parity와 notarized release가 증명될 때까지 남아 있는 reference path다.
+BeatDropper는 사용자가 직접 고른 로컬 음악 라이브러리와 세트를 중심으로, native macOS 앱에서 DSP 분석과 AI-assisted mix planning을 이용해 DJ 스타일 전환을 수행하는 데스크톱 앱이다. 제품 런타임은 Swift 기반 native macOS 앱 하나로 통합되어 있다.
 
 ## 아키텍처 개요
 
@@ -15,7 +15,7 @@ BeatDropper는 사용자가 직접 고른 로컬 음악 라이브러리와 세�
 ### 2) Native Core (`native/Sources/BeatDropperCore`)
 - Codable model contract shared with planner request/response JSON
 - Application Support persistence for library records, source folders, current set, saved taste playlists, player settings, and analysis cache
-- Electron library/settings migration when native state is missing
+- 이전 데스크톱 버전의 library/settings state를 native state가 없을 때 한 번만 가져오는 compatibility migration
 - Native DSP analyzer for waveform detail, energy, spectral bands, transient markers, BPM, beat/bar/phrase grids, cue candidates, and quality warnings
 - Bounded analysis queue and large-library stress coverage
 - Planner evidence builders: compact `analysisSummary`, `pairContext`, candidate ranking, deterministic native fallback planner
@@ -26,9 +26,10 @@ BeatDropper는 사용자가 직접 고른 로컬 음악 라이브러리와 세�
 - If Node/Codex/planner execution fails, native fallback plans are built from `pairContext` evidence so playback remains usable.
 - Release readiness now checks Node runtime, Codex CLI availability, source/toolchain provenance, clean release source state, bundled planner script syntax, bundled Node license/notice evidence, quarantine-simulated Gatekeeper evidence, and local fallback/stress evidence.
 
-### 4) Electron Reference Path
-- `src/main`, `src/preload`, `src/renderer`, `src/shared`, and Electron tests remain only as reference material during migration.
-- Electron source, scripts, dependencies, and docs are removed only after notarized native release verification, normal and quarantine-simulated Gatekeeper evidence, pre-retirement parity, and `native:retire:check` all pass.
+### 4) Native-only Runtime Boundary
+- 앱 런타임과 UI는 `native/` 아래 Swift targets가 소유한다.
+- Node scripts는 Codex planner bridge, benchmark, calibration, packaging, release verification 용도로만 사용한다.
+- 이전 데스크톱 state migration은 기존 사용자 데이터 호환을 위해 native core 안에 제한적으로 유지한다.
 
 ## UI/UX 모드 원칙
 
@@ -69,4 +70,4 @@ BeatDropper native UI는 같은 기능을 한 화면에 모두 노출하는 구�
 - Developer ID signing identity와 Apple notary credentials 준비
 - `npm run native:release`로 notarized ZIP/DMG 생성, strict release verification PASS, source-provenance-bound smoke evidence 확보
 - clean-machine Gatekeeper 검증
-- Electron retirement plan 실행 및 native-only package/docs 정리
+- native-only 프로그램 디자인 재설계와 실제 사용 세션 기반 UX 검증

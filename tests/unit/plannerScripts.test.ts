@@ -164,7 +164,7 @@ describe('planner scripts', () => {
     expect(prompt).toContain('Analysis hints:');
     expect(prompt).toContain('Treat source=tail_fallback candidates as safety fallbacks');
     expect(prompt).toContain('tempoSync.targetRate is a playback-rate ratio');
-    expect(prompt).toContain('mixControls is optional planning metadata');
+    expect(prompt).toContain('mixControls is executed deterministically by the native audio engine');
     expect(prompt).toContain('Do not request realtime AI control');
   });
 

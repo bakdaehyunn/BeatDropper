@@ -1,6 +1,6 @@
-# BeatDropper Native macOS Migration
+# BeatDropper Native macOS App
 
-BeatDropper is being converted from the Electron reference app into a native macOS desktop app. Electron remains the reference implementation until native parity is proven and the migration can be completed safely.
+BeatDropper is a native macOS desktop app built with SwiftUI, AppKit, AVAudioEngine, and a Swift core. The repository no longer contains a second desktop runtime.
 
 ## Current Native State
 
@@ -19,8 +19,8 @@ BeatDropper is being converted from the Electron reference app into a native mac
   - native macOS window, commands, and standard Settings scene
   - local file/folder import
   - Application Support persistence for library, source folders, playlists, saved sets, and analysis cache
-  - one-time migration from Electron `music-library.json` and `user-playlists.json` into native state when no native library exists
-  - native mix settings persistence with one-time migration from Electron `player-settings.json`
+  - one-time migration from legacy `music-library.json` and `user-playlists.json` into native state when no native library exists
+  - native mix settings persistence with one-time migration from legacy `player-settings.json`
   - source folder rescan with missing-folder/missing-track marking and fingerprint-based relinking
   - playlist rows, inspector, playback, and mix planning respect missing-file state
   - two-deck `AVAudioEngine` playback with equal-power crossfade
@@ -66,8 +66,6 @@ npm run native:release:setup:check
 npm run native:release:smoke
 npm run native:release:verify
 npm run native:release:verify:local
-npm run native:retire:check
-npm run native:retire:plan
 npm run native:run
 npm run native:smoke
 npm run native:smoke:dmg
@@ -198,7 +196,7 @@ Run the local release-candidate preflight before requesting a notarized release:
 npm run native:preflight:local
 ```
 
-This gate does not require Apple credentials. It runs whitespace checks, accessibility checks, Swift tests, analysis benchmark gate, planner benchmark, local ad-hoc packaging, local artifact verification, release smoke report generation, playback stress, normal and extended session stress, large-library stress, release-readiness checks, and pre-retirement parity. The preflight report is written to:
+This gate does not require Apple credentials. It runs whitespace checks, accessibility checks, Swift tests, analysis benchmark gate, planner benchmark, local ad-hoc packaging, local artifact verification, release smoke report generation, playback stress, normal and extended session stress, large-library stress, release-readiness checks, and native parity. The preflight report is written to:
 
 ```txt
 native/dist/local-preflight-report.json
@@ -238,7 +236,7 @@ The strict preflight uses a pre-release readiness gate, so it does not require a
 
 ## Parity Gate
 
-Run the native parity audit before any Electron retirement decision:
+Run the native parity audit before release:
 
 ```sh
 npm run native:parity:report
@@ -250,14 +248,7 @@ The strict gate exits non-zero while blockers remain:
 npm run native:parity
 ```
 
-The pre-retirement gate checks whether native is ready before deleting Electron references:
-
-```sh
-npm run native:parity -- --pre-retirement
-npm run native:retire:check
-```
-
-The gate checks native structure, core feature evidence, package artifacts, release manifest evidence, codesign verification, DMG verification, Developer ID/Gatekeeper status, and remaining release blockers. It is expected to stay blocked until Developer ID notarization, clean-machine Gatekeeper verification, and the final Electron retirement sequence are complete.
+The gate checks native structure, core feature evidence, package artifacts, release manifest evidence, codesign verification, DMG verification, Developer ID/Gatekeeper status, and remaining release blockers. It is expected to stay blocked until Developer ID notarization and clean-machine Gatekeeper verification are complete.
 
 `native:benchmark:analysis` runs the Swift benchmark evaluator against the curated analysis fixture expectations. The default fixture suite includes an intentionally failing weak-analysis case, so a non-zero exit can be expected when running the benchmark suite directly; use the printed PASS/WARN/FAIL distribution as the quality signal.
 
@@ -291,8 +282,7 @@ The gate checks native structure, core feature evidence, package artifacts, rele
 
 ## Migration Rules
 
-- Do not delete Electron until native playback, analysis, planner bridge, library workflows, and release packaging are verified against the reference app.
-- Do not remove Electron source/dependencies until `native:retire:check` can pass after a notarized native release.
+- Keep the application runtime native-only; Node remains a bounded planner/tooling dependency, not a UI runtime.
 - Keep playlist/library taste human-controlled.
 - Use AI only for transition technique: mix timing, fade shape, tempo sync, and energy strategy.
 - Preserve the current JSON contract while porting. Native Swift should decode existing planner and analysis fixtures.
@@ -326,8 +316,8 @@ Status: implemented foundation.
 - Imported tracks, user playlists, saved sets, and analysis cache persist in Application Support.
 - The native library store writes a backup copy of the last valid `native-library.json` and falls back to it if the primary file is corrupt, so human-curated saved sets are not silently lost on a bad state file.
 - Native player settings also keep a backup copy and recover fade, gain, and mix-mode preferences if the primary settings file is corrupt or missing.
-- First native launch can migrate existing Electron `music-library.json` and `user-playlists.json` files into `native-library.json` when native state does not exist yet.
-- First native launch can migrate existing Electron `player-settings.json` into `native-settings.json`; migrated fade duration, master gain, and AI mode are applied to native playback and planning.
+- First native launch can migrate legacy `music-library.json` and `user-playlists.json` files into `native-library.json` when native state does not exist yet.
+- First native launch can migrate legacy `player-settings.json` into `native-settings.json`; migrated fade duration, master gain, and AI mode are applied to native playback and planning.
 - File and folder import are native.
 - Imported source folders persist and can be rescanned.
 - Rescan keeps saved set taste references stable by relinking moved files through lightweight file fingerprints.
@@ -416,8 +406,6 @@ Status: implemented foundation.
 - `native:preflight:release` fails fast without Developer ID/notary readiness and authenticated notary credentials, then runs the local quality gate and records `native/dist/release-preflight-report.json`.
 - `native:release:setup` stores a validated Apple notary profile in the macOS keychain so release builds do not require raw Apple credentials each time.
 - `native:release` runs strict release preflight first, stores Apple notary submit/log evidence, then writes strict `native/dist/release-verification-report.json` with normal and quarantine-simulated Gatekeeper evidence plus app/DMG/install smoke evidence after packaging and notarization. The release ZIP is regenerated after app stapling so it contains the final stapled app bundle.
-- `native:retire:plan` writes `native/dist/electron-retirement-plan.json`, a dry-run list of Electron source paths, scripts, dependencies, generated artifacts, and docs to remove or review after notarized native parity is proven.
-- `native:retire:check` writes `native/dist/electron-retirement-readiness-report.json` with the final Electron footprint, strict release verification status, pre-retirement parity status, and remaining blockers before Electron source removal can be accepted.
 - Optional Developer ID notarization is supported through `NOTARIZE=1`.
 - Remaining production work: run actual notarization with project Apple credentials, staple the shipped artifacts, and complete Gatekeeper verification on a clean machine.
 
@@ -431,19 +419,3 @@ Xcode 26.5
 ```
 
 The default local app bundle is ad-hoc signed for development. Gatekeeper `spctl` rejection is expected until Developer ID signing and notarization are run with valid Apple credentials.
-
-## Electron Retirement Sequence
-
-Electron remains the reference implementation until these gates pass in order:
-
-1. `npm run native:release:check`
-2. `SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" NOTARY_KEYCHAIN_PROFILE="beatdropper-notary" npm run native:release`
-3. Confirm `native/dist/release-verification-report.json` is `PASS` and `native/dist/notary-logs/` contains zip/DMG submit and log JSON.
-4. Confirm `native/dist/release-smoke-report.json` is `PASS`.
-5. Gatekeeper assessment on the stapled app, ZIP-contained app, DMG, app copied out of the DMG, and quarantine-simulated copies of those distribution paths.
-6. `npm run native:parity -- --pre-retirement`
-7. `npm run native:retire:plan`
-8. Review `native/dist/electron-retirement-plan.json`.
-9. Remove Electron source, tests, dependencies, and package scripts in one audited change.
-10. `npm run native:retire:check`
-11. Confirm `native/dist/electron-retirement-readiness-report.json` is `PASS`.

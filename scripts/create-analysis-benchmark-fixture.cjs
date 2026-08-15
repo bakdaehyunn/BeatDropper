@@ -31,18 +31,30 @@ const printUsage = () => {
       '  --tags <a,b,c>               Comma-separated tags.',
       '  --notes <text>               Optional private notes.',
       '  --expected-grade <grade>     pass, warn, or fail. Default: pass.',
+      '  --real-audio                 Emit schema-v2 real-audio corpus metadata.',
+      '  --split <name>               calibration, validation, or regression.',
+      '  --asset-id <opaque-id>       Anonymized, non-reversible local asset id.',
+      '  --audio-rights <value>       private_user_owned or redistribution_cleared.',
+      '  --duration <seconds>         Source audio duration for corpus integrity.',
+      '  --sample-rate <hz>           Optional source sample rate.',
+      '  --channel-count <count>      Optional source channel count.',
+      '  --tempo-profile <value>      fixed, drifting, variable, or ambiguous.',
+      '  --genre-tags <a,b,c>         Optional coarse, non-identifying genre tags.',
+      '  --reviewed-by <id>           Pseudonymous reviewer id; omit for unreviewed bootstrap.',
       '  --labels-file <path>         Use an editable ground-truth labels JSON file as expected values.',
       '  --write-labels <path>        Write editable ground-truth labels JSON for review.',
       '',
       'Expected timing options:',
       '  --expected-bpm <number>',
       '  --first-downbeat <seconds>',
+      '  --downbeats <sec,sec,...>',
       '  --outro <seconds>',
       '  --bar-grid <sec,sec,...>',
       '  --phrase-boundaries <sec,sec,...>',
       '  --planner-ready <true|false>',
       '  --expected-lufs <number>',
       '  --expected-true-peak <number>',
+      '  --expected-key <tonic:mode>  Example: C#:minor.',
       '',
       'Safety:',
       '  --overwrite                  Replace an existing fixture file.',
@@ -100,6 +112,21 @@ const parseTags = (value) => {
     .filter(Boolean);
 };
 
+const parseChoice = (value, label, choices) => {
+  if (!choices.includes(value)) {
+    throw new Error(`${label} must be one of: ${choices.join(', ')}.`);
+  }
+  return value;
+};
+
+const parseExpectedKey = (value) => {
+  const [tonic, mode] = String(value).split(':');
+  if (!tonic || (mode !== 'major' && mode !== 'minor')) {
+    throw new Error('--expected-key must use tonic:major or tonic:minor.');
+  }
+  return { tonic, mode };
+};
+
 const parseArgs = (argv) => {
   const options = {
     listCache: false,
@@ -147,6 +174,34 @@ const parseArgs = (argv) => {
       options.notes = next();
     } else if (arg === '--expected-grade') {
       options.expectedGrade = parseGrade(next());
+    } else if (arg === '--real-audio') {
+      options.realAudio = true;
+    } else if (arg === '--split') {
+      options.split = parseChoice(next(), '--split', ['calibration', 'validation', 'regression']);
+    } else if (arg === '--asset-id') {
+      options.assetId = next();
+    } else if (arg === '--audio-rights') {
+      options.audioRights = parseChoice(next(), '--audio-rights', [
+        'private_user_owned',
+        'redistribution_cleared'
+      ]);
+    } else if (arg === '--duration') {
+      options.audioDurationSec = parseNumber(next(), '--duration');
+    } else if (arg === '--sample-rate') {
+      options.sampleRate = parseNumber(next(), '--sample-rate');
+    } else if (arg === '--channel-count') {
+      options.channelCount = parseNumber(next(), '--channel-count');
+    } else if (arg === '--tempo-profile') {
+      options.tempoProfile = parseChoice(next(), '--tempo-profile', [
+        'fixed',
+        'drifting',
+        'variable',
+        'ambiguous'
+      ]);
+    } else if (arg === '--genre-tags') {
+      options.genreTags = parseTags(next());
+    } else if (arg === '--reviewed-by') {
+      options.reviewedBy = next();
     } else if (arg === '--labels-file') {
       options.labelsFile = path.resolve(process.cwd(), next());
     } else if (arg === '--write-labels') {
@@ -155,6 +210,8 @@ const parseArgs = (argv) => {
       options.expectedBpm = parseNumber(next(), '--expected-bpm');
     } else if (arg === '--first-downbeat') {
       options.firstDownbeatSec = parseNumber(next(), '--first-downbeat');
+    } else if (arg === '--downbeats') {
+      options.downbeatSec = parseNumberList(next(), '--downbeats');
     } else if (arg === '--outro') {
       options.outroCueSec = parseNumber(next(), '--outro');
     } else if (arg === '--bar-grid') {
@@ -167,6 +224,8 @@ const parseArgs = (argv) => {
       options.expectedLUFS = parseNumber(next(), '--expected-lufs');
     } else if (arg === '--expected-true-peak') {
       options.expectedTruePeakDb = parseNumber(next(), '--expected-true-peak');
+    } else if (arg === '--expected-key') {
+      options.expectedKey = parseExpectedKey(next());
     } else if (arg === '--overwrite') {
       options.overwrite = true;
     } else {
@@ -176,6 +235,24 @@ const parseArgs = (argv) => {
 
   if (options.trackId && options.analysisFile) {
     throw new Error('Use either --track-id or --analysis-file, not both.');
+  }
+  if (options.realAudio) {
+    for (const [label, value] of [
+      ['--split', options.split],
+      ['--asset-id', options.assetId],
+      ['--audio-rights', options.audioRights],
+      ['--duration', options.audioDurationSec]
+    ]) {
+      if (value === undefined) {
+        throw new Error(`${label} is required with --real-audio.`);
+      }
+    }
+    if (options.audioDurationSec <= 0) {
+      throw new Error('--duration must be greater than zero.');
+    }
+    if (options.channelCount !== undefined && (!Number.isInteger(options.channelCount) || options.channelCount <= 0)) {
+      throw new Error('--channel-count must be a positive integer.');
+    }
   }
 
   return options;
@@ -326,6 +403,24 @@ const bootstrapPhraseBoundaries = (analysis) => {
     .map(rounded);
 };
 
+const bootstrapDownbeats = (analysis) => finiteArray(analysis.downbeatsSec)
+  .slice(0, 32)
+  .map(rounded);
+
+const bootstrapCueCandidates = (analysis) => {
+  if (!Array.isArray(analysis.cueCandidates)) {
+    return [];
+  }
+  return analysis.cueCandidates
+    .filter((cue) => cue && typeof cue.type === 'string' && isFiniteNumber(cue.startSec))
+    .slice(0, 8)
+    .map((cue) => ({
+      type: cue.type,
+      startSec: rounded(cue.startSec),
+      ...(typeof cue.origin === 'string' ? { origin: cue.origin } : {})
+    }));
+};
+
 const compactAnalysis = (analysis) => {
   return {
     ...analysis,
@@ -348,9 +443,17 @@ const loadGroundTruthLabels = (filePath) => {
   };
 };
 
+const loadReferenceTools = (filePath) => {
+  if (!filePath) return [];
+  const labels = readJsonFile(filePath);
+  return Array.isArray(labels.referenceTools)
+    ? labels.referenceTools.filter((tool) => tool && typeof tool.name === 'string' && tool.name.trim())
+    : [];
+};
+
 const buildGroundTruthLabels = (expected, options) => ({
-  schemaVersion: 1,
-  reviewedBy: options.reviewedBy ?? 'user',
+  schemaVersion: options.realAudio ? 2 : 1,
+  reviewedBy: options.reviewedBy ?? (options.realAudio ? 'UNREVIEWED' : 'user'),
   reviewedAt: new Date().toISOString(),
   notes:
     options.notes ??
@@ -377,6 +480,10 @@ const buildFixture = (analysis, options) => {
   if (firstDownbeatSec !== null) {
     expected.firstDownbeatSec = rounded(firstDownbeatSec);
   }
+  const downbeatSec = options.downbeatSec ?? (options.realAudio ? bootstrapDownbeats(analysis) : []);
+  if (downbeatSec.length > 0) {
+    expected.downbeatSec = downbeatSec.map(rounded);
+  }
   if (outroCueSec !== null) {
     expected.outroCueSec = rounded(outroCueSec);
   }
@@ -389,6 +496,21 @@ const buildFixture = (analysis, options) => {
   const phraseBoundarySec = options.phraseBoundarySec ?? bootstrapPhraseBoundaries(analysis);
   if (phraseBoundarySec.length > 0) {
     expected.phraseBoundarySec = phraseBoundarySec.map(rounded);
+  }
+
+  const expectedKey = options.expectedKey ?? (options.realAudio &&
+    typeof analysis.musicalKey?.tonic === 'string' &&
+    (analysis.musicalKey?.mode === 'major' || analysis.musicalKey?.mode === 'minor')
+      ? { tonic: analysis.musicalKey.tonic, mode: analysis.musicalKey.mode }
+      : null
+  );
+  if (expectedKey) {
+    expected.musicalKey = expectedKey;
+  }
+
+  const cueCandidates = options.realAudio ? bootstrapCueCandidates(analysis) : [];
+  if (cueCandidates.length > 0) {
+    expected.cueCandidates = cueCandidates;
   }
 
   expected.plannerReady =
@@ -426,16 +548,33 @@ const buildFixture = (analysis, options) => {
   return {
     id,
     title: options.title ?? `Private snapshot: ${id}`,
-    kind: 'snapshot',
+    kind: options.realAudio ? 'real_audio' : 'snapshot',
     tags: options.tags,
-    trackReference: {
-      source: 'private-library',
-      ...(options.artist ? { artist: options.artist } : {}),
-      ...(options.trackTitle ? { title: options.trackTitle } : {}),
-      notes:
-        options.notes ??
-        'Bootstrapped from analyzer output. Review expected timing values manually.'
-    },
+    ...(options.realAudio
+      ? {
+          corpus: {
+            schemaVersion: 2,
+            split: options.split,
+            anonymizedAssetId: options.assetId,
+            audioRights: options.audioRights,
+            audioDurationSec: rounded(options.audioDurationSec),
+            ...(options.sampleRate !== undefined ? { sampleRate: rounded(options.sampleRate) } : {}),
+            ...(options.channelCount !== undefined ? { channelCount: options.channelCount } : {}),
+            genreTags: options.genreTags ?? [],
+            tempoProfile: options.tempoProfile ?? 'fixed',
+            referenceTools: loadReferenceTools(options.labelsFile)
+          }
+        }
+      : {
+          trackReference: {
+            source: 'private-library',
+            ...(options.artist ? { artist: options.artist } : {}),
+            ...(options.trackTitle ? { title: options.trackTitle } : {}),
+            notes:
+              options.notes ??
+              'Bootstrapped from analyzer output. Review expected timing values manually.'
+          }
+        }),
     expectedGrade: options.expectedGrade,
     expected: authoritativeExpected,
     groundTruthLabels,
@@ -484,6 +623,9 @@ const main = () => {
       `Created ${filePath}`,
       ...(labelsPath ? [`Wrote editable labels ${labelsPath}`] : []),
       `Fixture id: ${fixture.id}`,
+      ...(fixture.kind === 'real_audio' && fixture.groundTruthLabels.reviewedBy === 'UNREVIEWED'
+        ? ['Real-audio fixture remains invalid until --reviewed-by and independently verified labels are supplied.']
+        : []),
       'Review groundTruthLabels.expected values manually before treating this as calibration truth.',
       `Run: npm run native:benchmark:analysis -- --no-default-fixtures --fixture-dir ${options.outDir}`
     ].join('\n') + '\n'

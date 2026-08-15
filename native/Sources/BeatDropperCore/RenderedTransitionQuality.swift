@@ -100,7 +100,7 @@ public enum RenderedTransitionQualityAnalyzer {
                 nextTrack: nextTrack,
                 currentAnalysis: currentAnalysis,
                 nextAnalysis: nextAnalysis,
-                mixControls: plan.mixControls
+                plan: plan
             )
         }
 
@@ -124,9 +124,12 @@ public enum RenderedTransitionQualityAnalyzer {
         let rmsJumpDb = max(0, db(rmsMax) - db(referenceRMS))
         let loudnessDeltaDb = loudnessDelta(currentAnalysis: currentAnalysis, nextAnalysis: nextAnalysis)
         let headroomMarginDb = headroomMargin(currentAnalysis: currentAnalysis, nextAnalysis: nextAnalysis)
-        let ceilingDb = plan.mixControls?.clipProtection.ceilingDb ?? -1
+        let masterDSP = PlaybackDSPResolver.masterSettings(plan: plan)
+        let ceilingDb = masterDSP.ceilingDb
         let ceilingLinear = gain(db: ceilingDb)
-        let clips = peakMax >= 0.98 || peakMax > ceilingLinear
+        let clips = masterDSP.softLimitEnabled
+            ? peakMax > ceilingLinear + 0.005
+            : peakMax >= 0.98
 
         var issues: [RenderedTransitionQualityIssue] = []
         if currentAnalysis == nil || nextAnalysis == nil {
@@ -246,15 +249,21 @@ public enum RenderedTransitionQualityAnalyzer {
         nextTrack: Track,
         currentAnalysis: TrackAnalysis?,
         nextAnalysis: TrackAnalysis?,
-        mixControls: MixControlPlan?
+        plan: MixPlan
     ) -> (peak: Double, rms: Double, spectralMaskingRisk: Double) {
         let gains = CrossfadeMath.equalPowerGains(progress: progress)
-        let outgoingGain = gains.outgoing * gain(db: mixControls?.gain.outgoingTrimDb ?? 0)
-        let incomingGain = gains.incoming * gain(db: mixControls?.gain.incomingTrimDb ?? 0)
+        let outgoingDSP = PlaybackDSPResolver.deckSettings(plan: plan, role: .outgoing, analysis: currentAnalysis)
+        let incomingDSP = PlaybackDSPResolver.deckSettings(plan: plan, role: .incoming, analysis: nextAnalysis)
+        let outgoingGain = gains.outgoing * gain(db: outgoingDSP.gainDb)
+        let incomingGain = gains.incoming * gain(db: incomingDSP.gainDb)
         let currentPoint = waveformPoint(at: currentTimeSec, track: currentTrack, analysis: currentAnalysis)
         let nextPoint = waveformPoint(at: nextTimeSec, track: nextTrack, analysis: nextAnalysis)
-        let peak = currentPoint.peak * outgoingGain + nextPoint.peak * incomingGain
+        let unprotectedPeak = currentPoint.peak * outgoingGain + nextPoint.peak * incomingGain
         let rms = sqrt(pow(currentPoint.rms * outgoingGain, 2) + pow(nextPoint.rms * incomingGain, 2))
+        let masterDSP = PlaybackDSPResolver.masterSettings(plan: plan)
+        let peak = masterDSP.softLimitEnabled
+            ? min(unprotectedPeak, PlaybackDSPResolver.linearGain(db: masterDSP.ceilingDb))
+            : unprotectedPeak
         let currentBand = spectralBand(at: currentTimeSec, track: currentTrack, analysis: currentAnalysis)
         let nextBand = spectralBand(at: nextTimeSec, track: nextTrack, analysis: nextAnalysis)
         let masking = spectralMaskingRisk(

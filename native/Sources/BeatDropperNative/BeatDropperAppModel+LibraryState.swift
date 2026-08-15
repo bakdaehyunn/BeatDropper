@@ -4,7 +4,7 @@ import Foundation
 extension BeatDropperAppModel {
     func restoreLibraryState() {
         do {
-            let state = try store.loadMigratingElectronStateIfNeeded()
+            let state = try store.loadMigratingLegacyDesktopStateIfNeeded()
             libraryRecords = state.trackRecords
             librarySourceFolders = state.sourceFolders
             userPlaylists = state.userPlaylists

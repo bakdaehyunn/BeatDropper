@@ -106,7 +106,7 @@ struct NativeSettingsStoreTests {
         #expect(loaded.aiDjMode == .adventurous)
     }
 
-    @Test func migratesElectronPlayerSettingsWhenNativeSettingsAreMissing() throws {
+    @Test func migratesLegacyDesktopPlayerSettingsWhenNativeSettingsAreMissing() throws {
         let folderURL = temporaryFolderURL()
         defer { try? FileManager.default.removeItem(at: folderURL) }
         try FileManager.default.createDirectory(at: folderURL, withIntermediateDirectories: true)
@@ -144,7 +144,7 @@ struct NativeSettingsStoreTests {
 
         let nativeURL = folderURL.appendingPathComponent("native-settings.json")
         let store = NativeSettingsStore(fileURL: nativeURL)
-        let settings = try store.loadMigratingElectronSettingsIfNeeded()
+        let settings = try store.loadMigratingLegacyDesktopSettingsIfNeeded()
 
         #expect(FileManager.default.fileExists(atPath: nativeURL.path))
         #expect(settings.fadeDurationSec == 12)

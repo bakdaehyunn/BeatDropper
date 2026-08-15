@@ -1,0 +1,78 @@
+{
+  "schemaVersion": 1,
+  "status": "approved",
+  "approvedBy": "user-goal-approval",
+  "approvedAt": "2026-08-15T00:00:00+09:00",
+  "minimumRealAudioFixtures": 60,
+  "minimumSplitCounts": {
+    "calibration": 30,
+    "validation": 20,
+    "regression": 10
+  },
+  "concepts": {
+    "bpm": {
+      "minimumLabeledCount": 50,
+      "minimumAccuracy": 0.9,
+      "maximumP95Error": 1,
+      "minimumCalibrationSamples": 40,
+      "maximumExpectedCalibrationError": 0.12,
+      "maximumBrierScore": 0.18
+    },
+    "beatgrid": {
+      "minimumLabeledCount": 40,
+      "minimumAccuracy": 0.85,
+      "maximumP95Error": 0.18,
+      "minimumCalibrationSamples": 30,
+      "maximumExpectedCalibrationError": 0.12,
+      "maximumBrierScore": 0.18
+    },
+    "downbeats": {
+      "minimumLabeledCount": 40,
+      "minimumAccuracy": 0.85,
+      "maximumP95Error": 0.15,
+      "minimumCalibrationSamples": 30,
+      "maximumExpectedCalibrationError": 0.12,
+      "maximumBrierScore": 0.18
+    },
+    "phrases": {
+      "minimumLabeledCount": 35,
+      "minimumAccuracy": 0.8,
+      "maximumP95Error": 2,
+      "minimumCalibrationSamples": 30,
+      "maximumExpectedCalibrationError": 0.15,
+      "maximumBrierScore": 0.2
+    },
+    "key": {
+      "minimumLabeledCount": 45,
+      "minimumAccuracy": 0.75,
+      "maximumP95Error": 1,
+      "minimumCalibrationSamples": 35,
+      "maximumExpectedCalibrationError": 0.12,
+      "maximumBrierScore": 0.18
+    },
+    "lufs": {
+      "minimumLabeledCount": 45,
+      "minimumAccuracy": 0.95,
+      "maximumP95Error": 0.2,
+      "minimumCalibrationSamples": 35,
+      "maximumExpectedCalibrationError": 0.1,
+      "maximumBrierScore": 0.15
+    },
+    "true_peak": {
+      "minimumLabeledCount": 45,
+      "minimumAccuracy": 0.9,
+      "maximumP95Error": 0.5,
+      "minimumCalibrationSamples": 35,
+      "maximumExpectedCalibrationError": 0.12,
+      "maximumBrierScore": 0.18
+    },
+    "cues": {
+      "minimumLabeledCount": 40,
+      "minimumAccuracy": 0.8,
+      "maximumP95Error": 1,
+      "minimumCalibrationSamples": 30,
+      "maximumExpectedCalibrationError": 0.15,
+      "maximumBrierScore": 0.2
+    }
+  }
+}

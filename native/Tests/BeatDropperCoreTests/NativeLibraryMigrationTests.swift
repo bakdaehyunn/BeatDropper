@@ -3,7 +3,7 @@ import Foundation
 import Testing
 
 struct NativeLibraryMigrationTests {
-    @Test func migratesElectronLibraryAndSavedPlaylists() throws {
+    @Test func migratesLegacyDesktopLibraryAndSavedPlaylists() throws {
         let folderURL = temporaryFolderURL()
         defer { try? FileManager.default.removeItem(at: folderURL) }
         try FileManager.default.createDirectory(at: folderURL, withIntermediateDirectories: true)
@@ -78,7 +78,7 @@ struct NativeLibraryMigrationTests {
             """.utf8
         ).write(to: playlistsURL)
 
-        let migration = try NativeLibraryMigration.migrateElectronState(
+        let migration = try NativeLibraryMigration.migrateLegacyDesktopState(
             musicLibraryFileURL: musicLibraryURL,
             userPlaylistFileURL: playlistsURL
         )
@@ -97,7 +97,7 @@ struct NativeLibraryMigrationTests {
         #expect(migration.state.currentPlaylistTrackIds == ["track-2", "track-1"])
     }
 
-    @Test func storeAutoMigratesElectronStateWhenNativeStateIsMissing() throws {
+    @Test func storeAutoMigratesLegacyDesktopStateWhenNativeStateIsMissing() throws {
         let folderURL = temporaryFolderURL()
         defer { try? FileManager.default.removeItem(at: folderURL) }
         try FileManager.default.createDirectory(at: folderURL, withIntermediateDirectories: true)
@@ -143,7 +143,7 @@ struct NativeLibraryMigrationTests {
 
         let nativeURL = folderURL.appendingPathComponent("native-library.json")
         let store = NativeLibraryStore(fileURL: nativeURL)
-        let loaded = try store.loadMigratingElectronStateIfNeeded()
+        let loaded = try store.loadMigratingLegacyDesktopStateIfNeeded()
 
         #expect(FileManager.default.fileExists(atPath: nativeURL.path))
         #expect(loaded.trackRecords.map(\.id) == ["track-1"])

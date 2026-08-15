@@ -249,14 +249,14 @@ public final class NativeLibraryStore: @unchecked Sendable {
         }
     }
 
-    public func loadMigratingElectronStateIfNeeded() throws -> NativeLibraryState {
+    public func loadMigratingLegacyDesktopStateIfNeeded() throws -> NativeLibraryState {
         if FileManager.default.fileExists(atPath: fileURL.path) ||
             FileManager.default.fileExists(atPath: backupFileURL.path) {
             return try load()
         }
 
         let folderURL = fileURL.deletingLastPathComponent()
-        let migration = try NativeLibraryMigration.migrateElectronState(
+        let migration = try NativeLibraryMigration.migrateLegacyDesktopState(
             musicLibraryFileURL: folderURL.appendingPathComponent("music-library.json"),
             userPlaylistFileURL: folderURL.appendingPathComponent("user-playlists.json")
         )

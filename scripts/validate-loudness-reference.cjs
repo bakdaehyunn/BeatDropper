@@ -13,7 +13,6 @@ const ignoredDiscoveryDirectories = new Set([
   'Library',
   'node_modules',
   'dist',
-  'dist-electron',
   'DerivedData',
   'build',
   '.build',

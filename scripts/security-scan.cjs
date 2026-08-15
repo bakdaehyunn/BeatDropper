@@ -10,7 +10,6 @@ const ignoredPrefixes = [
   '.git/',
   'node_modules/',
   'dist/',
-  'dist-electron/',
   'playwright-report/',
   'test-results/'
 ];

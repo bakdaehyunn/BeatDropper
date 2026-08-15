@@ -1,4 +1,5 @@
 import AVFoundation
+import AudioToolbox
 import BeatDropperCore
 import Foundation
 
@@ -35,6 +36,15 @@ final class NativeAudioEngine: ObservableObject {
     private let deckBMeterTapBridge = AudioMeterTapBridge(target: AudioMeterTarget.deckB)
     private let deckA = Deck(slot: .a)
     private let deckB = Deck(slot: .b)
+    private let masterDSPMixer = AVAudioMixerNode()
+    private let masterOutputMixer = AVAudioMixerNode()
+    private let peakLimiter = AVAudioUnitEffect(audioComponentDescription: AudioComponentDescription(
+        componentType: kAudioUnitType_Effect,
+        componentSubType: kAudioUnitSubType_PeakLimiter,
+        componentManufacturer: kAudioUnitManufacturer_Apple,
+        componentFlags: 0,
+        componentFlagsMask: 0
+    ))
     private var activeSlot: DeckSlot = .a
     private var fadeTimer: Timer?
     private var fadeStartedAt: Date?
@@ -46,14 +56,22 @@ final class NativeAudioEngine: ObservableObject {
     private var positionTimer: Timer?
     private var outputMeterObserver: NSObjectProtocol?
     private var engineConfigurationObserver: NSObjectProtocol?
+    private var masterDSPSettings = PlaybackMasterDSPSettings.neutral
 
     init() {
-        engine.attach(deckA.node)
-        engine.attach(deckB.node)
-        engine.connect(deckA.node, to: engine.mainMixerNode, format: nil)
-        engine.connect(deckB.node, to: engine.mainMixerNode, format: nil)
-        deckA.node.volume = 1
-        deckB.node.volume = 0
+        attach(deck: deckA)
+        attach(deck: deckB)
+        engine.attach(masterDSPMixer)
+        engine.attach(masterOutputMixer)
+        engine.attach(peakLimiter)
+        engine.connect(deckA.mixer, to: masterDSPMixer, format: nil)
+        engine.connect(deckB.mixer, to: masterDSPMixer, format: nil)
+        engine.connect(masterDSPMixer, to: peakLimiter, format: nil)
+        engine.connect(peakLimiter, to: masterOutputMixer, format: nil)
+        engine.connect(masterOutputMixer, to: engine.mainMixerNode, format: nil)
+        deckA.mixer.outputVolume = 1
+        deckB.mixer.outputVolume = 0
+        configureMasterDSP(.neutral)
         observeOutputMeter()
         installAudioMeterTaps()
         observeEngineConfigurationChanges()
@@ -108,7 +126,7 @@ final class NativeAudioEngine: ObservableObject {
         try startEngineIfNeeded()
         scheduleIfNeeded(activeDeck)
         activeDeck.node.play()
-        activeDeck.node.volume = 1
+        activeDeck.mixer.outputVolume = 1
 
         state = .playing
         startPositionTimer()
@@ -143,6 +161,9 @@ final class NativeAudioEngine: ObservableObject {
         track: Track,
         durationSec: TimeInterval,
         startOffsetSec: TimeInterval = 0,
+        plan: MixPlan? = nil,
+        currentAnalysis: TrackAnalysis? = nil,
+        nextAnalysis: TrackAnalysis? = nil,
         completion: @escaping () -> Void = {}
     ) throws {
         guard currentTrack?.id != track.id else {
@@ -159,6 +180,20 @@ final class NativeAudioEngine: ObservableObject {
         cancelFadeKeepingCurrentDeck()
         let targetDeck = inactiveDeck
         try prepare(deck: targetDeck, url: url, track: track, volume: 0, startOffsetSec: startOffsetSec)
+        activeDeck.targetDSPSettings = PlaybackDSPResolver.deckSettings(
+            plan: plan,
+            role: .outgoing,
+            analysis: currentAnalysis
+        )
+        targetDeck.targetDSPSettings = PlaybackDSPResolver.deckSettings(
+            plan: plan,
+            role: .incoming,
+            analysis: nextAnalysis
+        )
+        activeDeck.transitionStartDSPSettings = activeDeck.appliedDSPSettings
+        targetDeck.transitionStartDSPSettings = targetDeck.targetDSPSettings
+        configure(deck: targetDeck, settings: targetDeck.targetDSPSettings, filterProgress: 0, immediate: true)
+        configureMasterDSP(PlaybackDSPResolver.masterSettings(plan: plan))
         try startEngineIfNeeded()
         scheduleIfNeeded(activeDeck)
         scheduleIfNeeded(targetDeck)
@@ -207,8 +242,11 @@ final class NativeAudioEngine: ObservableObject {
         pausedCrossfadeProgress = nil
         deckA.stopAndClearSchedule()
         deckB.stopAndClearSchedule()
-        activeDeck.node.volume = 1
-        inactiveDeck.node.volume = 0
+        activeDeck.mixer.outputVolume = 1
+        inactiveDeck.mixer.outputVolume = 0
+        activeDeck.resetDSP()
+        inactiveDeck.resetDSP()
+        configureMasterDSP(.neutral)
         queuedTrack = nil
         crossfadeProgress = 0
         elapsedSec = 0
@@ -252,7 +290,7 @@ final class NativeAudioEngine: ObservableObject {
         let safeStartOffset = PlaybackPositionMath.clampedElapsed(startOffsetSec, durationSec: track.durationSec)
         deck.startFrame = frameOffset(for: deck.file, startOffsetSec: safeStartOffset)
         deck.lastKnownPositionSec = safeStartOffset
-        deck.node.volume = volume
+        deck.mixer.outputVolume = volume
     }
 
     private func startEngineIfNeeded() throws {
@@ -304,7 +342,8 @@ final class NativeAudioEngine: ObservableObject {
             fadeDurationSec: fadeDurationSec,
             fadeTargetSlot: fadeTargetSlot,
             stateBeforePause: stateBeforePause,
-            pausedCrossfadeProgress: pausedCrossfadeProgress
+            pausedCrossfadeProgress: pausedCrossfadeProgress,
+            masterDSPSettings: masterDSPSettings
         )
 
         fadeTimer?.invalidate()
@@ -340,7 +379,17 @@ final class NativeAudioEngine: ObservableObject {
             volume: snapshot.active.volume,
             startOffsetSec: snapshot.active.positionSec
         )
+        activeDeck.appliedDSPSettings = snapshot.active.appliedDSPSettings
+        activeDeck.targetDSPSettings = snapshot.active.targetDSPSettings
+        activeDeck.transitionStartDSPSettings = snapshot.active.transitionStartDSPSettings
+        configure(
+            deck: activeDeck,
+            settings: snapshot.active.appliedDSPSettings,
+            filterProgress: snapshot.crossfadeProgress,
+            immediate: true
+        )
         currentTrack = activeTrack
+        configureMasterDSP(snapshot.masterDSPSettings)
 
         let shouldRestoreCrossfadeDeck = snapshot.state == .crossfading ||
             snapshot.stateBeforePause == .crossfading ||
@@ -356,6 +405,16 @@ final class NativeAudioEngine: ObservableObject {
                 volume: snapshot.inactive.volume,
                 startOffsetSec: snapshot.inactive.positionSec
             )
+            let restoredTargetDeck = deck(for: targetSlot)
+            restoredTargetDeck.appliedDSPSettings = snapshot.inactive.appliedDSPSettings
+            restoredTargetDeck.targetDSPSettings = snapshot.inactive.targetDSPSettings
+            restoredTargetDeck.transitionStartDSPSettings = snapshot.inactive.transitionStartDSPSettings
+            configure(
+                deck: restoredTargetDeck,
+                settings: snapshot.inactive.appliedDSPSettings,
+                filterProgress: snapshot.crossfadeProgress,
+                immediate: true
+            )
             queuedTrack = targetTrack
             fadeTargetSlot = targetSlot
             fadeDurationSec = max(0.1, snapshot.fadeDurationSec)
@@ -365,7 +424,7 @@ final class NativeAudioEngine: ObservableObject {
         } else {
             inactiveDeck.stopAndClearSchedule()
             inactiveDeck.clearFile()
-            inactiveDeck.node.volume = 0
+            inactiveDeck.mixer.outputVolume = 0
             queuedTrack = nil
             fadeTargetSlot = nil
             crossfadeProgress = 0
@@ -460,8 +519,10 @@ final class NativeAudioEngine: ObservableObject {
     private func applyCrossfadeGains(progress: Double) {
         let safeProgress = CrossfadeMath.clampedProgress(progress)
         let gains = CrossfadeMath.equalPowerGains(progress: safeProgress)
-        activeDeck.node.volume = Float(gains.outgoing)
-        inactiveDeck.node.volume = Float(gains.incoming)
+        configure(deck: activeDeck, settings: activeDeck.targetDSPSettings, filterProgress: safeProgress, immediate: false)
+        configure(deck: inactiveDeck, settings: inactiveDeck.targetDSPSettings, filterProgress: safeProgress, immediate: false)
+        activeDeck.mixer.outputVolume = Float(gains.outgoing)
+        inactiveDeck.mixer.outputVolume = Float(gains.incoming)
         crossfadeProgress = safeProgress
     }
 
@@ -477,8 +538,9 @@ final class NativeAudioEngine: ObservableObject {
         let newDeck = deck(for: fadeTargetSlot)
         oldDeck.stopAndClearSchedule()
         oldDeck.clearFile()
-        oldDeck.node.volume = 0
-        newDeck.node.volume = 1
+        oldDeck.mixer.outputVolume = 0
+        newDeck.mixer.outputVolume = 1
+        oldDeck.resetDSP()
 
         activeSlot = fadeTargetSlot
         currentTrack = newDeck.track
@@ -505,10 +567,12 @@ final class NativeAudioEngine: ObservableObject {
         fadeTargetSlot = nil
         queuedTrack = nil
         crossfadeProgress = 0
-        activeDeck.node.volume = 1
+        activeDeck.mixer.outputVolume = 1
         inactiveDeck.stopAndClearSchedule()
         inactiveDeck.clearFile()
-        inactiveDeck.node.volume = 0
+        inactiveDeck.mixer.outputVolume = 0
+        inactiveDeck.resetDSP()
+        configureMasterDSP(.neutral)
         state = .playing
         silenceMeter(for: activeSlot.other)
         publishPosition()
@@ -549,13 +613,13 @@ final class NativeAudioEngine: ObservableObject {
     }
 
     private func installAudioMeterTaps() {
-        deckA.node.installTap(
+        deckA.mixer.installTap(
             onBus: 0,
             bufferSize: 2_048,
             format: nil,
             block: deckAMeterTapBridge.makeTap()
         )
-        deckB.node.installTap(
+        deckB.mixer.installTap(
             onBus: 0,
             bufferSize: 2_048,
             format: nil,
@@ -600,6 +664,61 @@ final class NativeAudioEngine: ObservableObject {
         case .b:
             deckBMeter = .silence
         }
+    }
+
+    private func attach(deck: Deck) {
+        engine.attach(deck.node)
+        engine.attach(deck.timePitch)
+        engine.attach(deck.eq)
+        engine.attach(deck.mixer)
+        engine.connect(deck.node, to: deck.timePitch, format: nil)
+        engine.connect(deck.timePitch, to: deck.eq, format: nil)
+        engine.connect(deck.eq, to: deck.mixer, format: nil)
+    }
+
+    private func configure(
+        deck: Deck,
+        settings target: PlaybackDeckDSPSettings,
+        filterProgress: Double,
+        immediate: Bool
+    ) {
+        let rampProgress = min(1, CrossfadeMath.clampedProgress(filterProgress) / 0.15)
+        let applied = immediate
+            ? target
+            : deck.transitionStartDSPSettings.interpolated(toward: target, progress: rampProgress)
+        deck.eq.globalGain = Float(applied.gainDb)
+        deck.lowBand.gain = Float(applied.lowEQDb)
+        deck.midBand.gain = Float(applied.midEQDb)
+        deck.highBand.gain = Float(applied.highEQDb)
+        deck.timePitch.rate = Float(applied.playbackRate)
+        deck.timePitch.pitch = 0
+        deck.timePitch.overlap = 8
+
+        if let frequency = target.filterFrequency(at: filterProgress) {
+            deck.filterBand.bypass = false
+            deck.filterBand.filterType = target.filterMode == .highPass ? .highPass : .lowPass
+            deck.filterBand.frequency = Float(frequency)
+        } else {
+            deck.filterBand.bypass = true
+        }
+        deck.appliedDSPSettings = applied
+    }
+
+    private func configureMasterDSP(_ settings: PlaybackMasterDSPSettings) {
+        masterDSPSettings = settings
+        peakLimiter.auAudioUnit.shouldBypassEffect = !settings.softLimitEnabled
+        masterOutputMixer.outputVolume = settings.softLimitEnabled
+            ? Float(PlaybackDSPResolver.linearGain(db: settings.ceilingDb))
+            : 1
+        let preGain = settings.softLimitEnabled ? Float(-settings.ceilingDb) : 0
+        AudioUnitSetParameter(
+            peakLimiter.audioUnit,
+            kLimiterParam_PreGain,
+            kAudioUnitScope_Global,
+            0,
+            preGain,
+            0
+        )
     }
 
     private nonisolated static func outputMeter(for buffer: AVAudioPCMBuffer) -> AudioLevelMeter {
@@ -658,6 +777,7 @@ private struct PlaybackRecoverySnapshot {
     var fadeTargetSlot: DeckSlot?
     var stateBeforePause: NativeAudioEngine.PlaybackState
     var pausedCrossfadeProgress: Double?
+    var masterDSPSettings: PlaybackMasterDSPSettings
 }
 
 private struct DeckRecoverySnapshot {
@@ -665,12 +785,18 @@ private struct DeckRecoverySnapshot {
     var track: Track?
     var positionSec: TimeInterval
     var volume: Float
+    var appliedDSPSettings: PlaybackDeckDSPSettings
+    var targetDSPSettings: PlaybackDeckDSPSettings
+    var transitionStartDSPSettings: PlaybackDeckDSPSettings
 
     init(deck: Deck) {
         self.url = deck.url
         self.track = deck.track
         self.positionSec = deck.positionSec()
-        self.volume = deck.node.volume
+        self.volume = deck.mixer.outputVolume
+        self.appliedDSPSettings = deck.appliedDSPSettings
+        self.targetDSPSettings = deck.targetDSPSettings
+        self.transitionStartDSPSettings = deck.transitionStartDSPSettings
     }
 }
 
@@ -691,15 +817,42 @@ private enum DeckSlot {
 private final class Deck {
     let slot: DeckSlot
     let node = AVAudioPlayerNode()
+    let timePitch = AVAudioUnitTimePitch()
+    let eq = AVAudioUnitEQ(numberOfBands: 4)
+    let mixer = AVAudioMixerNode()
     var file: AVAudioFile?
     var url: URL?
     var track: Track?
     var startFrame: AVAudioFramePosition = 0
     var lastKnownPositionSec: Double = 0
     var scheduled = false
+    var appliedDSPSettings = PlaybackDeckDSPSettings.neutral
+    var targetDSPSettings = PlaybackDeckDSPSettings.neutral
+    var transitionStartDSPSettings = PlaybackDeckDSPSettings.neutral
+
+    var lowBand: AVAudioUnitEQFilterParameters { eq.bands[0] }
+    var midBand: AVAudioUnitEQFilterParameters { eq.bands[1] }
+    var highBand: AVAudioUnitEQFilterParameters { eq.bands[2] }
+    var filterBand: AVAudioUnitEQFilterParameters { eq.bands[3] }
 
     init(slot: DeckSlot) {
         self.slot = slot
+        lowBand.filterType = .lowShelf
+        lowBand.frequency = 200
+        lowBand.bandwidth = 1
+        lowBand.gain = 0
+        lowBand.bypass = false
+        midBand.filterType = .parametric
+        midBand.frequency = 1_000
+        midBand.bandwidth = 1
+        midBand.gain = 0
+        midBand.bypass = false
+        highBand.filterType = .highShelf
+        highBand.frequency = 6_000
+        highBand.bandwidth = 1
+        highBand.gain = 0
+        highBand.bypass = false
+        filterBand.bypass = true
     }
 
     func stopAndClearSchedule() {
@@ -713,6 +866,19 @@ private final class Deck {
         track = nil
         startFrame = 0
         lastKnownPositionSec = 0
+    }
+
+    func resetDSP() {
+        appliedDSPSettings = .neutral
+        targetDSPSettings = .neutral
+        transitionStartDSPSettings = .neutral
+        eq.globalGain = 0
+        lowBand.gain = 0
+        midBand.gain = 0
+        highBand.gain = 0
+        filterBand.bypass = true
+        timePitch.rate = 1
+        timePitch.pitch = 0
     }
 
     func positionSec() -> Double {

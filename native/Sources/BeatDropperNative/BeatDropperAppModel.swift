@@ -424,7 +424,10 @@ final class BeatDropperAppModel: ObservableObject {
             url: target.url,
             track: target.track,
             durationSec: duration,
-            startOffsetSec: startOffset
+            startOffsetSec: startOffset,
+            plan: plan,
+            currentAnalysis: trackAnalysesById[current.id],
+            nextAnalysis: trackAnalysesById[target.id]
         ) { [weak self] in
             self?.notice = "Playing \(target.track.title)"
         }
@@ -435,7 +438,7 @@ final class BeatDropperAppModel: ObservableObject {
 
     private func restoreSettings() {
         do {
-            settings = try settingsStore.loadMigratingElectronSettingsIfNeeded()
+            settings = try settingsStore.loadMigratingLegacyDesktopSettingsIfNeeded()
             audioEngine.setMasterGain(settings.masterGain)
         } catch {
             settings = .defaults

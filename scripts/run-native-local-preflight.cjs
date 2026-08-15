@@ -88,7 +88,7 @@ const allowedReleaseReadinessBlockers = new Set([
   'Current app signature authority'
 ]);
 
-const allowedPreRetirementParityBlockers = new Set([
+const allowedNativeParityBlockers = new Set([
   'Developer ID signing',
   'Gatekeeper assessment',
   'Strict release verification report'
@@ -263,7 +263,6 @@ const main = () => {
   }
   const parityArgs = [
     'scripts/evaluate-native-parity.cjs',
-    '--pre-retirement',
     '--report-only'
   ];
   if (options.skipExtendedStress) {
@@ -271,8 +270,8 @@ const main = () => {
   }
   steps.push(
     makeOutcome(
-      run('native pre-retirement parity', 'node', parityArgs),
-      { allowBlockedNames: allowedPreRetirementParityBlockers }
+      run('native parity', 'node', parityArgs),
+      { allowBlockedNames: allowedNativeParityBlockers }
     )
   );
 

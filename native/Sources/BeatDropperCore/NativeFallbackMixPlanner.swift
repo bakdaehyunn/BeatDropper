@@ -282,8 +282,8 @@ public enum NativeFallbackMixPlanner {
             loudness: .conservativeDefaults,
             clipProtection: .conservativeDefaults,
             qualityNotes: [
-                "local fallback mix controls are planning metadata only",
-                "native audio engine execution remains unchanged"
+                "local fallback mix controls use conservative native DSP execution",
+                "monitor-only clip protection preserves the default playback ceiling"
             ]
         )
     }

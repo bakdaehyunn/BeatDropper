@@ -209,7 +209,7 @@ public struct MixControlPlan: Codable, Hashable, Sendable {
         filter: .conservativeDefaults,
         loudness: .conservativeDefaults,
         clipProtection: .conservativeDefaults,
-        qualityNotes: ["planning metadata only; DSP execution is not implemented in this slice"]
+        qualityNotes: ["conservative runtime DSP defaults"]
     )
 
     public init(

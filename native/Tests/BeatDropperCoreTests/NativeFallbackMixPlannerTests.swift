@@ -30,7 +30,7 @@ struct NativeFallbackMixPlannerTests {
         #expect(plan.evidence.contains { $0.contains("planner_timeout") })
         #expect(plan.confidence >= 0.38)
         #expect(plan.mixControls?.clipProtection.mode == .monitorOnly)
-        #expect(plan.mixControls?.qualityNotes.contains { $0.contains("planning metadata") } == true)
+        #expect(plan.mixControls?.qualityNotes.contains { $0.contains("native DSP execution") } == true)
     }
 
     @Test func usesTailFallbackWhenAnalysisIsMissing() throws {

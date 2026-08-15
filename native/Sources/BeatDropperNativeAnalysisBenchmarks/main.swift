@@ -7,6 +7,8 @@ struct BenchmarkOptions {
     var fixtureDirs: [URL] = []
     var allowExpectedGrades = false
     var jsonReportURL: URL?
+    var corpusGateURL: URL?
+    var enforceApprovedCorpusGate = false
 }
 
 struct BenchmarkGateReport: Encodable {
@@ -17,6 +19,8 @@ struct BenchmarkGateReport: Encodable {
     var fixtureDirCount: Int
     var suite: AnalysisBenchmarkSuiteResult
     var gradeMismatches: [BenchmarkGradeMismatch]
+    var corpus: AnalysisBenchmarkCorpusReport
+    var corpusGate: AnalysisBenchmarkCorpusGateResult?
 }
 
 struct BenchmarkGradeMismatch: Encodable {
@@ -36,6 +40,14 @@ enum BenchmarkCLI {
         fixtureDirs.append(contentsOf: options.fixtureDirs)
         let fixtures = try loadFixtures(fixtureDirs: fixtureDirs)
         let suite = AnalysisBenchmarkEvaluator.evaluateSuite(fixtures)
+        let corpus = AnalysisBenchmarkCorpusEvaluator.evaluate(fixtures)
+        let gateConfiguration = try options.corpusGateURL.map(loadCorpusGate)
+        let corpusGate = gateConfiguration.map {
+            AnalysisBenchmarkCorpusGateEvaluator.evaluate(report: corpus, configuration: $0)
+        }
+        if options.enforceApprovedCorpusGate, gateConfiguration?.status != .approved {
+            throw BenchmarkError.message("--enforce-approved-corpus-gate requires a gate configuration with status=approved.")
+        }
         let gradeMismatches = evaluateGradeMismatches(
             suite: suite,
             allowExpectedGrades: options.allowExpectedGrades
@@ -44,7 +56,9 @@ enum BenchmarkCLI {
             suite: suite,
             fixtureDirCount: fixtureDirs.count,
             allowExpectedGrades: options.allowExpectedGrades,
-            gradeMismatches: gradeMismatches
+            gradeMismatches: gradeMismatches,
+            corpus: corpus,
+            corpusGate: corpusGate
         )
         if let jsonReportURL = options.jsonReportURL {
             try writeJSONReport(
@@ -52,10 +66,15 @@ enum BenchmarkCLI {
                 fixtureDirCount: fixtureDirs.count,
                 allowExpectedGrades: options.allowExpectedGrades,
                 gradeMismatches: gradeMismatches,
+                corpus: corpus,
+                corpusGate: corpusGate,
                 reportURL: jsonReportURL
             )
         }
         if !gradeMismatches.isEmpty {
+            exit(1)
+        }
+        if options.enforceApprovedCorpusGate, corpusGate?.meetsThresholds != true {
             exit(1)
         }
     }
@@ -73,6 +92,17 @@ enum BenchmarkCLI {
                 options.includeDefaultFixtures = false
             case "--allow-expected-grades":
                 options.allowExpectedGrades = true
+            case "--enforce-approved-corpus-gate":
+                options.enforceApprovedCorpusGate = true
+            case "--corpus-gate":
+                guard args.indices.contains(index + 1) else {
+                    throw BenchmarkError.message("--corpus-gate requires a path.")
+                }
+                options.corpusGateURL = URL(
+                    fileURLWithPath: args[index + 1],
+                    relativeTo: URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+                ).standardizedFileURL
+                index += 1
             case "--write-json":
                 guard args.indices.contains(index + 1) else {
                     throw BenchmarkError.message("--write-json requires a path.")
@@ -110,6 +140,9 @@ enum BenchmarkCLI {
               --fixture-dir <path>       Add a benchmark fixture directory. May be repeated.
               --no-default-fixtures      Skip tests/fixtures/analysis-benchmarks.
               --allow-expected-grades    Exit non-zero only when actual fixture grades differ from expectedGrade.
+              --corpus-gate <path>       Evaluate a candidate or approved corpus gate configuration.
+              --enforce-approved-corpus-gate
+                                         Exit non-zero when an approved corpus gate is unmet.
               --write-json <path>        Write a machine-readable benchmark gate report.
               --help                    Show this message.
 
@@ -145,6 +178,13 @@ enum BenchmarkCLI {
         }
     }
 
+    private static func loadCorpusGate(_ url: URL) throws -> AnalysisBenchmarkCorpusGateConfiguration {
+        try JSONDecoder().decode(
+            AnalysisBenchmarkCorpusGateConfiguration.self,
+            from: Data(contentsOf: url)
+        )
+    }
+
     private static func collectFixtureFiles(fixtureDir: URL) throws -> [URL] {
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: fixtureDir.path, isDirectory: &isDirectory) else {
@@ -175,7 +215,9 @@ enum BenchmarkCLI {
         suite: AnalysisBenchmarkSuiteResult,
         fixtureDirCount: Int,
         allowExpectedGrades: Bool,
-        gradeMismatches: [BenchmarkGradeMismatch]
+        gradeMismatches: [BenchmarkGradeMismatch],
+        corpus: AnalysisBenchmarkCorpusReport,
+        corpusGate: AnalysisBenchmarkCorpusGateResult?
     ) {
         print("# Native Analysis Benchmarks")
         print("fixture dirs \(fixtureDirCount)")
@@ -187,6 +229,28 @@ enum BenchmarkCLI {
         print("fail \(suite.failed)")
         print("allow expected grades \(allowExpectedGrades)")
         print("grade mismatches \(gradeMismatches.count)")
+        print("")
+        print("## Real-Audio Corpus")
+        print("real fixtures \(corpus.realAudioFixtureCount)")
+        print("integrity issues \(corpus.integrityIssues.count)")
+        for split in AnalysisBenchmarkCorpusSplit.allCases {
+            print("split \(split.rawValue) \(corpus.splitCounts[split] ?? 0)")
+        }
+        for summary in corpus.conceptSummaries {
+            let calibration = summary.calibration.map { metric in
+                let ece = String(format: "%.3f", metric.expectedCalibrationError)
+                let brier = String(format: "%.3f", metric.brierScore)
+                return "calibration n=\(metric.sampleCount) ECE=\(ece) Brier=\(brier)"
+            } ?? "calibration --"
+            let accuracy = String(format: "%.3f", summary.accuracy)
+            print("\(summary.concept.rawValue): labels \(summary.labeledCount) accuracy \(accuracy) p50 \(formatMetric(summary.errorP50)) p95 \(formatMetric(summary.errorP95)) | \(calibration)")
+        }
+        if let corpusGate {
+            print("gate status \(corpusGate.status.rawValue) enforceable \(corpusGate.enforceable) meets thresholds \(corpusGate.meetsThresholds)")
+            for issue in corpusGate.issues {
+                print("- \(issue.code): \(issue.message)")
+            }
+        }
         print("")
 
         if !suite.byKind.isEmpty {
@@ -204,6 +268,9 @@ enum BenchmarkCLI {
             print("Kind: \(result.kind.rawValue)")
             print("BPM error: \(formatMetric(benchmark.bpmError))")
             print("First downbeat: \(formatDistanceMetric(benchmark.firstDownbeat))")
+            let downbeatAverage = formatMetric(benchmark.downbeats.averageDistanceSec, suffix: "s")
+            let downbeatMaximum = formatMetric(benchmark.downbeats.maxDistanceSec, suffix: "s")
+            print("Downbeats: checked \(benchmark.downbeats.checkedCount), avg distance \(downbeatAverage), max distance \(downbeatMaximum)")
             print("Outro cue: \(formatDistanceMetric(benchmark.outro))")
             print("Bar grid: checked \(benchmark.barGrid.checkedCount), avg drift \(formatMetric(benchmark.barGrid.averageDistanceSec, suffix: "s")), max drift \(formatMetric(benchmark.barGrid.maxDistanceSec, suffix: "s"))")
             print("Phrase: checked \(benchmark.phraseBoundaries.checkedCount), avg distance \(formatMetric(benchmark.phraseBoundaries.averageDistanceSec, suffix: "s")), max distance \(formatMetric(benchmark.phraseBoundaries.maxDistanceSec, suffix: "s"))")
@@ -256,6 +323,8 @@ enum BenchmarkCLI {
         fixtureDirCount: Int,
         allowExpectedGrades: Bool,
         gradeMismatches: [BenchmarkGradeMismatch],
+        corpus: AnalysisBenchmarkCorpusReport,
+        corpusGate: AnalysisBenchmarkCorpusGateResult?,
         reportURL: URL
     ) throws {
         let report = BenchmarkGateReport(
@@ -265,7 +334,9 @@ enum BenchmarkCLI {
             allowExpectedGrades: allowExpectedGrades,
             fixtureDirCount: fixtureDirCount,
             suite: suite,
-            gradeMismatches: gradeMismatches
+            gradeMismatches: gradeMismatches,
+            corpus: corpus,
+            corpusGate: corpusGate
         )
         try FileManager.default.createDirectory(
             at: reportURL.deletingLastPathComponent(),

@@ -31,6 +31,10 @@ let package = Package(
         .executable(
             name: "BeatDropperNativeLoudnessValidation",
             targets: ["BeatDropperNativeLoudnessValidation"]
+        ),
+        .executable(
+            name: "BeatDropperNativeAnalysisExtract",
+            targets: ["BeatDropperNativeAnalysisExtract"]
         )
     ],
     targets: [
@@ -43,6 +47,7 @@ let package = Package(
             linkerSettings: [
                 .linkedFramework("AppKit"),
                 .linkedFramework("AVFoundation"),
+                .linkedFramework("AudioToolbox"),
                 .linkedFramework("SwiftUI")
             ]
         ),
@@ -65,9 +70,20 @@ let package = Package(
                 .linkedFramework("AVFoundation")
             ]
         ),
+        .executableTarget(
+            name: "BeatDropperNativeAnalysisExtract",
+            dependencies: ["BeatDropperCore"],
+            linkerSettings: [
+                .linkedFramework("AVFoundation")
+            ]
+        ),
         .testTarget(
             name: "BeatDropperCoreTests",
-            dependencies: ["BeatDropperCore"]
+            dependencies: ["BeatDropperCore"],
+            linkerSettings: [
+                .linkedFramework("AVFoundation"),
+                .linkedFramework("AudioToolbox")
+            ]
         )
     ]
 )

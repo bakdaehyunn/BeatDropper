@@ -235,4 +235,69 @@ describe('create-analysis-benchmark-fixture script', () => {
     expect(fixture.groundTruthLabels.reviewedBy).toBe('calibration-reviewer');
     expect(fixture.groundTruthLabels.expected.loudness.integratedLUFS).toBe(-9.8);
   });
+
+  it('creates an anonymized schema-v2 real-audio corpus fixture', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'beatdropper-real-corpus-'));
+    const analysisPath = path.join(tempDir, 'analysis.json');
+    const outDir = path.join(tempDir, 'corpus');
+    fs.writeFileSync(
+      analysisPath,
+      JSON.stringify({
+        ...buildAnalysis(),
+        musicalKey: { tonic: 'C', mode: 'minor', confidence: 0.82, chromaEnergy: 10 },
+        loudness: {
+          integratedRMSDb: -12.5,
+          integratedLUFS: -12,
+          peakDb: -1.2,
+          truePeakDb: -1,
+          headroomDb: 1,
+          crestFactorDb: 8,
+          dynamicRangeDb: 6,
+          confidence: 0.9
+        }
+      }),
+      'utf8'
+    );
+
+    const result = spawnSync(
+      'node',
+      [
+        'scripts/create-analysis-benchmark-fixture.cjs',
+        '--analysis-file', analysisPath,
+        '--out-dir', outDir,
+        '--id', 'opaque-fixture',
+        '--real-audio',
+        '--split', 'calibration',
+        '--asset-id', 'asset-opaque-001',
+        '--audio-rights', 'private_user_owned',
+        '--duration', '120',
+        '--sample-rate', '48000',
+        '--channel-count', '2',
+        '--tempo-profile', 'fixed',
+        '--genre-tags', 'house,electronic',
+        '--reviewed-by', 'reviewer-01'
+      ],
+      { cwd: repoRoot, encoding: 'utf8' }
+    );
+    const fixture = JSON.parse(fs.readFileSync(path.join(outDir, 'opaque-fixture.json'), 'utf8'));
+
+    expect(result.status).toBe(0);
+    expect(fixture.kind).toBe('real_audio');
+    expect(fixture.trackReference).toBeUndefined();
+    expect(fixture.corpus).toMatchObject({
+      schemaVersion: 2,
+      split: 'calibration',
+      anonymizedAssetId: 'asset-opaque-001',
+      audioRights: 'private_user_owned',
+      audioDurationSec: 120,
+      sampleRate: 48000,
+      channelCount: 2,
+      tempoProfile: 'fixed'
+    });
+    expect(fixture.expected.downbeatSec).toHaveLength(5);
+    expect(fixture.expected.musicalKey).toEqual({ tonic: 'C', mode: 'minor' });
+    expect(fixture.expected.loudness).toMatchObject({ integratedLUFS: -12, truePeakDb: -1 });
+    expect(fixture.expected.cueCandidates).toHaveLength(2);
+    expect(fixture.groundTruthLabels.reviewedBy).toBe('reviewer-01');
+  });
 });

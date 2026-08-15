@@ -9,11 +9,13 @@ public enum AnalysisBenchmarkGrade: String, Codable, Sendable {
 public enum AnalysisBenchmarkFixtureKind: String, Codable, Sendable {
     case synthetic
     case snapshot
+    case realAudio = "real_audio"
 }
 
 public struct AnalysisBenchmarkExpectation: Codable, Hashable, Sendable {
     public var bpm: Double?
     public var firstDownbeatSec: Double?
+    public var downbeatSec: [Double]?
     public var outroCueSec: Double?
     public var barGridSec: [Double]?
     public var phraseBoundarySec: [Double]?
@@ -27,6 +29,7 @@ public struct AnalysisBenchmarkExpectation: Codable, Hashable, Sendable {
     public init(
         bpm: Double? = nil,
         firstDownbeatSec: Double? = nil,
+        downbeatSec: [Double]? = nil,
         outroCueSec: Double? = nil,
         barGridSec: [Double]? = nil,
         phraseBoundarySec: [Double]? = nil,
@@ -39,6 +42,7 @@ public struct AnalysisBenchmarkExpectation: Codable, Hashable, Sendable {
     ) {
         self.bpm = bpm
         self.firstDownbeatSec = firstDownbeatSec
+        self.downbeatSec = downbeatSec
         self.outroCueSec = outroCueSec
         self.barGridSec = barGridSec
         self.phraseBoundarySec = phraseBoundarySec
@@ -151,6 +155,10 @@ public struct AnalysisBenchmarkThresholds: Codable, Hashable, Sendable {
     public var bpmFailError: Double
     public var cueWarnDistanceSec: Double
     public var cueFailDistanceSec: Double
+    public var downbeatWarnAverageDistanceSec: Double
+    public var downbeatFailAverageDistanceSec: Double
+    public var downbeatWarnMaxDistanceSec: Double
+    public var downbeatFailMaxDistanceSec: Double
     public var barWarnAverageDriftSec: Double
     public var barFailAverageDriftSec: Double
     public var barWarnMaxDriftSec: Double
@@ -171,6 +179,10 @@ public struct AnalysisBenchmarkThresholds: Codable, Hashable, Sendable {
         bpmFailError: Double = 4,
         cueWarnDistanceSec: Double = 1,
         cueFailDistanceSec: Double = 4,
+        downbeatWarnAverageDistanceSec: Double = 0.08,
+        downbeatFailAverageDistanceSec: Double = 0.25,
+        downbeatWarnMaxDistanceSec: Double = 0.15,
+        downbeatFailMaxDistanceSec: Double = 0.5,
         barWarnAverageDriftSec: Double = 0.18,
         barFailAverageDriftSec: Double = 0.55,
         barWarnMaxDriftSec: Double = 0.45,
@@ -190,6 +202,10 @@ public struct AnalysisBenchmarkThresholds: Codable, Hashable, Sendable {
         self.bpmFailError = bpmFailError
         self.cueWarnDistanceSec = cueWarnDistanceSec
         self.cueFailDistanceSec = cueFailDistanceSec
+        self.downbeatWarnAverageDistanceSec = downbeatWarnAverageDistanceSec
+        self.downbeatFailAverageDistanceSec = downbeatFailAverageDistanceSec
+        self.downbeatWarnMaxDistanceSec = downbeatWarnMaxDistanceSec
+        self.downbeatFailMaxDistanceSec = downbeatFailMaxDistanceSec
         self.barWarnAverageDriftSec = barWarnAverageDriftSec
         self.barFailAverageDriftSec = barFailAverageDriftSec
         self.barWarnMaxDriftSec = barWarnMaxDriftSec
@@ -324,6 +340,7 @@ public struct AnalysisBenchmarkResult: Codable, Hashable, Sendable {
     public var issues: [AnalysisBenchmarkIssue]
     public var bpmError: Double?
     public var firstDownbeat: AnalysisBenchmarkDistanceMetric?
+    public var downbeats: AnalysisBenchmarkSeriesMetric
     public var outro: AnalysisBenchmarkDistanceMetric?
     public var barGrid: AnalysisBenchmarkSeriesMetric
     public var phraseBoundaries: AnalysisBenchmarkSeriesMetric
@@ -340,6 +357,7 @@ public struct AnalysisBenchmarkResult: Codable, Hashable, Sendable {
         issues: [AnalysisBenchmarkIssue],
         bpmError: Double?,
         firstDownbeat: AnalysisBenchmarkDistanceMetric?,
+        downbeats: AnalysisBenchmarkSeriesMetric = AnalysisBenchmarkSeriesMetric(checkedCount: 0, averageDistanceSec: nil, maxDistanceSec: nil),
         outro: AnalysisBenchmarkDistanceMetric?,
         barGrid: AnalysisBenchmarkSeriesMetric,
         phraseBoundaries: AnalysisBenchmarkSeriesMetric,
@@ -355,6 +373,7 @@ public struct AnalysisBenchmarkResult: Codable, Hashable, Sendable {
         self.issues = issues
         self.bpmError = bpmError
         self.firstDownbeat = firstDownbeat
+        self.downbeats = downbeats
         self.outro = outro
         self.barGrid = barGrid
         self.phraseBoundaries = phraseBoundaries
@@ -421,6 +440,7 @@ public struct AnalysisBenchmarkFixture: Decodable, Sendable {
     public var kind: AnalysisBenchmarkFixtureKind?
     public var tags: [String]?
     public var expectedGrade: AnalysisBenchmarkGrade?
+    public var corpus: AnalysisBenchmarkCorpusMetadata?
     public var expected: AnalysisBenchmarkExpectation
     public var groundTruthLabels: AnalysisBenchmarkGroundTruthLabels?
     public var analysis: AnalysisBenchmarkTrackAnalysisSnapshot
@@ -432,6 +452,7 @@ public struct AnalysisBenchmarkFixture: Decodable, Sendable {
         kind: AnalysisBenchmarkFixtureKind? = nil,
         tags: [String]? = nil,
         expectedGrade: AnalysisBenchmarkGrade? = nil,
+        corpus: AnalysisBenchmarkCorpusMetadata? = nil,
         expected: AnalysisBenchmarkExpectation,
         groundTruthLabels: AnalysisBenchmarkGroundTruthLabels? = nil,
         analysis: AnalysisBenchmarkTrackAnalysisSnapshot,
@@ -442,6 +463,7 @@ public struct AnalysisBenchmarkFixture: Decodable, Sendable {
         self.kind = kind
         self.tags = tags
         self.expectedGrade = expectedGrade
+        self.corpus = corpus
         self.expected = expected
         self.groundTruthLabels = groundTruthLabels
         self.analysis = analysis
@@ -581,7 +603,7 @@ public enum AnalysisBenchmarkEvaluator {
         let warned = results.filter { $0.result.grade == .warn }.count
         let failed = results.filter { $0.result.grade == .fail }.count
         let score = rounded(average(results.map(\.result.score)) ?? 0)
-        let summaries = [AnalysisBenchmarkFixtureKind.synthetic, .snapshot].compactMap { kind in
+        let summaries = [AnalysisBenchmarkFixtureKind.synthetic, .snapshot, .realAudio].compactMap { kind in
             summarize(kind: kind, results: results)
         }
         return AnalysisBenchmarkSuiteResult(
@@ -630,6 +652,31 @@ public enum AnalysisBenchmarkEvaluator {
                 failDistanceSec: thresholds.cueFailDistanceSec,
                 issues: &issues
             )
+        }
+
+        let expectedDownbeats = expected.downbeatSec?.filter(\.isFinite) ?? []
+        let downbeats = evaluateSeriesDistances(
+            actualValues: analysis.downbeatsSec,
+            expectedValues: expectedDownbeats
+        )
+        if !expectedDownbeats.isEmpty && analysis.downbeatsSec.isEmpty {
+            issues.append(AnalysisBenchmarkIssue(code: "downbeats_missing", grade: .fail, message: "Downbeat grid is missing."))
+        } else if let averageDistance = downbeats.averageDistanceSec,
+                  averageDistance > thresholds.downbeatFailAverageDistanceSec ||
+                    (downbeats.maxDistanceSec ?? 0) > thresholds.downbeatFailMaxDistanceSec {
+            issues.append(AnalysisBenchmarkIssue(
+                code: "downbeat_grid_distance_high",
+                grade: .fail,
+                message: "Downbeat distance avg \(format(averageDistance))s, max \(format(downbeats.maxDistanceSec ?? 0))s."
+            ))
+        } else if let averageDistance = downbeats.averageDistanceSec,
+                  averageDistance > thresholds.downbeatWarnAverageDistanceSec ||
+                    (downbeats.maxDistanceSec ?? 0) > thresholds.downbeatWarnMaxDistanceSec {
+            issues.append(AnalysisBenchmarkIssue(
+                code: "downbeat_grid_distance_high",
+                grade: .warn,
+                message: "Downbeat distance avg \(format(averageDistance))s, max \(format(downbeats.maxDistanceSec ?? 0))s."
+            ))
         }
 
         let outro = expected.outroCueSec.map { expectedSec in
@@ -727,6 +774,11 @@ public enum AnalysisBenchmarkEvaluator {
         let scoreParts = [
             bpmError.map { scoreDistance($0, warn: thresholds.bpmWarnError, fail: thresholds.bpmFailError) },
             firstDownbeat.map { scoreDistance($0.distanceSec, warn: thresholds.cueWarnDistanceSec, fail: thresholds.cueFailDistanceSec) },
+            expectedDownbeats.isEmpty ? nil : scoreDistance(
+                downbeats.averageDistanceSec,
+                warn: thresholds.downbeatWarnAverageDistanceSec,
+                fail: thresholds.downbeatFailAverageDistanceSec
+            ),
             outro.map { scoreDistance($0.distanceSec, warn: thresholds.cueWarnDistanceSec, fail: thresholds.cueFailDistanceSec) },
             expectedBars.isEmpty ? nil : scoreDistance(
                 barGrid.averageDistanceSec,
@@ -754,6 +806,7 @@ public enum AnalysisBenchmarkEvaluator {
             issues: issues,
             bpmError: bpmError,
             firstDownbeat: firstDownbeat,
+            downbeats: downbeats,
             outro: outro,
             barGrid: barGrid,
             phraseBoundaries: phraseBoundaries,

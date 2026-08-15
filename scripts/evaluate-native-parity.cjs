@@ -13,7 +13,6 @@ const statusRank = {
 
 const parseArgs = (argv) => {
   const options = {
-    preRetirement: false,
     reportOnly: false,
     allowMissingExtendedStress: false
   };
@@ -25,7 +24,6 @@ const parseArgs = (argv) => {
           'Usage: node scripts/evaluate-native-parity.cjs [options]',
           '',
           'Options:',
-          '  --pre-retirement                 Check native parity without requiring Electron to already be retired.',
           '  --report-only                    Print the parity report but exit 0 even when blockers remain.',
           '  --allow-missing-extended-stress  Allow quick local preflight runs to skip the extended session stress report.',
           '  --help                           Show this message.',
@@ -36,10 +34,6 @@ const parseArgs = (argv) => {
     }
     if (arg === '--report-only') {
       options.reportOnly = true;
-      continue;
-    }
-    if (arg === '--pre-retirement') {
-      options.preRetirement = true;
       continue;
     }
     if (arg === '--allow-missing-extended-stress') {
@@ -174,7 +168,6 @@ const main = () => {
     'native/Sources/BeatDropperNative/MixSettingsView.swift',
     'native/Sources/BeatDropperNativeLoudnessValidation/main.swift',
     'scripts/package-native-app.sh',
-    'scripts/plan-electron-retirement.cjs',
     'scripts/run-native-local-preflight.cjs',
     'scripts/setup-native-release-profile.cjs',
     'scripts/smoke-native-dmg.cjs',
@@ -216,8 +209,6 @@ const main = () => {
     'native:release:smoke',
     'native:release:verify',
     'native:release:verify:local',
-    'native:retire:check',
-    'native:retire:plan',
     'native:smoke',
     'native:smoke:dmg',
     'native:stress:library',
@@ -248,15 +239,15 @@ const main = () => {
     checks,
     'library parity',
     'native/Sources/BeatDropperCore/NativeLibraryMigration.swift',
-    /migrateElectronState[\s\S]*ElectronMusicLibraryFile[\s\S]*ElectronUserPlaylistFile/,
-    'native can migrate Electron library and saved playlist files'
+    /migrateLegacyDesktopState[\s\S]*LegacyMusicLibraryFile[\s\S]*LegacyUserPlaylistFile/,
+    'native can migrate legacy desktop library and saved playlist files'
   );
   addContainsCheck(
     checks,
     'library parity',
     'native/Sources/BeatDropperCore/NativeLibraryStore.swift',
-    /loadMigratingElectronStateIfNeeded/,
-    'native store auto-migrates Electron state when native state is missing'
+    /loadMigratingLegacyDesktopStateIfNeeded/,
+    'native store auto-migrates legacy desktop state when native state is missing'
   );
   addContainsCheck(
     checks,
@@ -290,8 +281,8 @@ const main = () => {
     checks,
     'settings parity',
     'native/Sources/BeatDropperCore/NativeSettingsStore.swift',
-    /loadMigratingElectronSettingsIfNeeded[\s\S]*player-settings\.json/,
-    'native can migrate Electron player settings'
+    /loadMigratingLegacyDesktopSettingsIfNeeded[\s\S]*player-settings\.json/,
+    'native can migrate legacy desktop player settings'
   );
   addContainsCheck(
     checks,
@@ -828,20 +819,6 @@ const main = () => {
     'scripts/run-native-local-preflight.cjs',
     /strictRelease[\s\S]*release-preflight-report\.json[\s\S]*strict native release readiness/,
     'strict native release preflight requires signing readiness before notarization'
-  );
-  addContainsCheck(
-    checks,
-    'packaging parity',
-    'scripts/plan-electron-retirement.cjs',
-    /electronSourcePaths[\s\S]*dependenciesToRemove[\s\S]*native:retire:check/,
-    'Electron retirement has a dry-run removal plan before deletion'
-  );
-  addContainsCheck(
-    checks,
-    'packaging parity',
-    'scripts/check-electron-retirement-readiness.cjs',
-    /(?=[\s\S]*electron-retirement-readiness-report\.json)(?=[\s\S]*Strict release verification report)(?=[\s\S]*Info\.plist package version)(?=[\s\S]*installed Info\.plist package version)(?=[\s\S]*writeFileSync)/,
-    'Electron retirement readiness writes durable evidence and requires strict release version metadata evidence'
   );
   addContainsCheck(
     checks,
@@ -1495,16 +1472,7 @@ const main = () => {
     exists('scripts/smoke-native-app.cjs') &&
       /BEATDROPPER_NATIVE_SMOKE_READY/.test(readText('native/Sources/BeatDropperNative/BeatDropperNativeApp.swift'))
       ? 'packaged native app smoke launch evidence is available'
-      : 'native app still needs repeatable UI or documented real-session parity evidence before Electron retirement'
-  );
-  add(
-    checks,
-    'release blockers',
-    'Electron retirement',
-    options.preRetirement ? 'pass' : 'blocked',
-    options.preRetirement
-      ? 'pre-retirement mode: Electron may remain while native parity is being proven'
-      : 'Electron remains the reference app until all release blockers pass'
+      : 'native app still needs repeatable UI or documented real-session release evidence'
   );
 
   const grouped = new Map();
