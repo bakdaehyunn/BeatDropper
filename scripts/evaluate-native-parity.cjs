@@ -157,6 +157,7 @@ const main = () => {
     'native/Sources/BeatDropperCore/NativeDSPAnalyzer.swift',
     'native/Sources/BeatDropperCore/NativeAnalysisQueue.swift',
     'native/Sources/BeatDropperCore/NativePlannerBenchmark.swift',
+    'native/Sources/BeatDropperCore/BeatAlignedTransitionPolicy.swift',
     'native/Sources/BeatDropperCore/PlannerContract.swift',
     'native/Sources/BeatDropperCore/PlannerEvidence.swift',
     'native/Sources/BeatDropperCore/PlannerProcessOutput.swift',
@@ -412,7 +413,7 @@ const main = () => {
       'native/Sources/BeatDropperNative/ContentView+PlayingMonitor.swift',
       'native/Sources/BeatDropperNative/ContentView+TransportStatus.swift'
     ],
-    /accessibilityLabel\("BeatDropper DJ workspace"\)[\s\S]*accessibilityLabel\("Transport controls"\)/,
+    /accessibilityLabel\("BeatDropper DJ workspace"\)[\s\S]*accessibilityLabel\("Persistent playback transport"\)/,
     'native DJ workspace exposes accessibility labels for major panes and transport controls'
   );
   addContainsCheck(
@@ -666,6 +667,31 @@ const main = () => {
     'native/Sources/BeatDropperCore/PlannerContract.swift',
     /analysisSummary[\s\S]*pairContext/,
     'native planner request carries summary evidence'
+  );
+  addContainsCheck(
+    checks,
+    'planner parity',
+    'native/Sources/BeatDropperCore/BeatAlignedTransitionPolicy.swift',
+    /durationSec\(barCount:[\s\S]*case \.hardCut:[\s\S]*return \[1\][\s\S]*case \.energySwap:[\s\S]*return \[4, 1\][\s\S]*case \.smoothBlend:[\s\S]*\[16, 8, 4, 1\][\s\S]*secondsFallback/,
+    'native transition policy defines 0-1, 4, 8, optional 16-bar timing and a confidence-gated seconds fallback'
+  );
+  addCombinedContainsCheck(
+    checks,
+    'planner parity',
+    [
+      'native/Sources/BeatDropperCore/NativeFallbackMixPlanner.swift',
+      'native/Sources/BeatDropperNative/NativeMixPlanner.swift',
+      'native/Sources/BeatDropperNative/BeatDropperAppModel.swift'
+    ],
+    /BeatAlignedTransitionPolicy\.apply[\s\S]*BeatAlignedTransitionPolicy\.apply[\s\S]*intent: \.manualNext/,
+    'AI, native fallback, and manual Next share the beat-aligned transition policy'
+  );
+  addContainsCheck(
+    checks,
+    'planner parity',
+    'native/Tests/BeatDropperCoreTests/BeatAlignedTransitionPolicyTests.swift',
+    /fourEightAndSixteenBarDurationMath[\s\S]*smoothBlendUsesEightAlignedBarsAndSynchronizesTempo[\s\S]*extremeTempoDifferenceDowngradesToOneBarHardCut[\s\S]*lowGridConfidenceUsesConfiguredSecondsFallbackOnly[\s\S]*manualNextStartsOnFirstAvailableBar/,
+    'beat-aware transition policy has focused duration, tempo, phrase, fallback, and manual coverage'
   );
   addContainsCheck(
     checks,

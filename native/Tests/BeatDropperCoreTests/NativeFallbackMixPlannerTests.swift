@@ -23,7 +23,9 @@ struct NativeFallbackMixPlannerTests {
 
         #expect(plan.transitionEndSec > plan.transitionStartSec)
         #expect(plan.transitionStartSec >= 80)
-        #expect(plan.transitionEndSec - plan.transitionStartSec <= 8)
+        #expect(plan.transitionBarCount == 8)
+        #expect(plan.transitionTimingSource == .beatGrid)
+        #expect(abs((plan.transitionEndSec - plan.transitionStartSec) - (8 * 4 * 60 / 124.0)) < 0.05)
         #expect(plan.nextTrackStartOffsetSec >= 0)
         #expect(plan.candidateId == request.pairContext?.recommendedCandidateId)
         #expect(plan.evidence.contains("local fallback"))

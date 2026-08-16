@@ -6,7 +6,7 @@ extension ContentView {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Playlist")
+                    Text(model.workspaceMode == .playing ? "Set Flow" : "Set Builder")
                         .font(.title3.weight(.semibold))
                         .lineLimit(1)
                         .fixedSize(horizontal: false, vertical: true)
@@ -20,6 +20,9 @@ extension ContentView {
 
             if model.workspaceMode == .creative {
                 savedSetsManagementBar
+                creativeEnergyFlow
+            } else {
+                playingSetFlowSummary
             }
 
             if !model.playlist.isEmpty {
@@ -106,6 +109,13 @@ extension ContentView {
                 }
                 .width(52)
 
+                TableColumn("State") { imported in
+                    Text(setFlowState(for: imported))
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(setFlowStateColor(for: imported))
+                }
+                .width(70)
+
                 TableColumn("Length") { imported in
                     Text(formatDuration(imported.track.durationSec))
                         .monospacedDigit()
@@ -113,6 +123,139 @@ extension ContentView {
                 .width(64)
             }
             .accessibilityLabel("Current playlist")
+        }
+    }
+
+    var playingSetFlowSummary: some View {
+        HStack(spacing: 8) {
+            setFlowSummaryMetric(
+                "Current",
+                model.currentDeckDisplayTrack?.title ?? "Not loaded",
+                systemImage: "play.circle.fill"
+            )
+            setFlowSummaryMetric(
+                "Next",
+                model.nextDeckDisplayTrack?.title ?? "Not queued",
+                systemImage: "forward.end.circle"
+            )
+            setFlowSummaryMetric(
+                "Remaining",
+                "\(remainingSetFlowTrackCount) tracks",
+                systemImage: "list.number"
+            )
+        }
+        .accessibilityLabel("Compact set flow queue summary")
+    }
+
+    var creativeEnergyFlow: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack {
+                Label("Energy Flow", systemImage: "chart.xyaxis.line")
+                    .font(.caption.weight(.semibold))
+                Spacer()
+                Text(model.playlist.isEmpty ? "Add tracks to shape the set" : "Analysis profile by set order")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+
+            if model.playlist.isEmpty {
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(Color(nsColor: .separatorColor).opacity(0.18))
+                    .frame(height: 32)
+            } else {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(alignment: .bottom, spacing: 5) {
+                        ForEach(Array(model.playlist.enumerated()), id: \.element.id) { index, imported in
+                            let energy = setEnergyLevel(for: imported)
+                            Button {
+                                model.selectedTrackID = imported.id
+                            } label: {
+                                VStack(spacing: 3) {
+                                    Capsule()
+                                        .fill(model.selectedTrackID == imported.id ? Color.accentColor : Color.accentColor.opacity(0.42))
+                                        .frame(width: 18, height: 8 + (energy * 24))
+                                    Text("\(index + 1)")
+                                        .font(.system(size: 8, weight: .semibold, design: .monospaced))
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            .buttonStyle(.plain)
+                            .help("Select \(imported.track.title)")
+                            .accessibilityLabel("Track \(index + 1), \(imported.track.title), energy \(Int((energy * 100).rounded())) percent")
+                        }
+                    }
+                    .frame(minHeight: 44, alignment: .bottom)
+                }
+            }
+        }
+        .padding(9)
+        .background(.background.opacity(0.38), in: RoundedRectangle(cornerRadius: 7))
+        .overlay(
+            RoundedRectangle(cornerRadius: 7)
+                .stroke(.separator.opacity(0.24), lineWidth: 1)
+        )
+        .accessibilityLabel("Set energy flow")
+    }
+
+    func setEnergyLevel(for imported: ImportedTrack) -> Double {
+        guard let profile = model.trackAnalysesById[imported.id]?.energyProfile,
+              !profile.isEmpty else {
+            return 0.2
+        }
+        return min(1, max(0, profile.reduce(0, +) / Double(profile.count)))
+    }
+
+    func setFlowSummaryMetric(_ label: String, _ value: String, systemImage: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: systemImage)
+                .foregroundStyle(Color.accentColor)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(label.uppercased())
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Text(value)
+                    .font(.caption.weight(.medium))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(8)
+        .background(.background.opacity(0.38), in: RoundedRectangle(cornerRadius: 7))
+        .accessibilityElement(children: .combine)
+    }
+
+    var remainingSetFlowTrackCount: Int {
+        guard let currentID = model.audioEngine.currentTrack?.id,
+              let index = model.playlist.firstIndex(where: { $0.track.id == currentID }) else {
+            return model.playlist.count
+        }
+        return max(0, model.playlist.count - index - 1)
+    }
+
+    func setFlowState(for imported: ImportedTrack) -> String {
+        if !model.isTrackAvailable(imported) {
+            return "Missing"
+        }
+        if model.audioEngine.currentTrack?.id == imported.track.id {
+            return "Current"
+        }
+        if model.audioEngine.queuedTrack?.id == imported.track.id || model.nextDeckDisplayTrack?.id == imported.track.id {
+            return "Next"
+        }
+        if model.analyzingTrackIds.contains(imported.id) {
+            return "Analyzing"
+        }
+        return model.trackAnalysesById[imported.id] == nil ? "Pending" : "Ready"
+    }
+
+    func setFlowStateColor(for imported: ImportedTrack) -> Color {
+        switch setFlowState(for: imported) {
+        case "Missing": return .red
+        case "Current": return .orange
+        case "Next": return .cyan
+        case "Analyzing": return .accentColor
+        default: return .secondary
         }
     }
 

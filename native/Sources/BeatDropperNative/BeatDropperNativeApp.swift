@@ -319,8 +319,15 @@ final class BeatDropperApplicationDelegate: NSObject, NSApplicationDelegate {
 
         Task { @MainActor in
             do {
-                try await runPlaybackStress()
-                let message = "BEATDROPPER_NATIVE_PLAYBACK_STRESS_READY state=\(Self.model?.audioEngine.state.rawValue ?? "unknown")\n"
+                let result = try await runPlaybackStress()
+                let message = [
+                    "BEATDROPPER_NATIVE_PLAYBACK_STRESS_READY",
+                    "state=\(Self.model?.audioEngine.state.rawValue ?? "unknown")",
+                    "transitions=\(result.transitionsCompleted)",
+                    "incomingPlayhead=\(result.incomingPlayheadAdvanced ? "true" : "false")",
+                    "pauseResume=\(result.crossfadePauseResumePassed ? "true" : "false")",
+                    "recovery=\(result.deviceRecoveryPassed ? "true" : "false")"
+                ].joined(separator: " ") + "\n"
                 FileHandle.standardOutput.write(Data(message.utf8))
                 NSApp.terminate(nil)
             } catch {
@@ -588,8 +595,25 @@ final class BeatDropperApplicationDelegate: NSObject, NSApplicationDelegate {
                 url: next.url,
                 track: next.track,
                 durationSec: stressDuration,
-                startOffsetSec: plan.nextTrackStartOffsetSec
+                startOffsetSec: plan.nextTrackStartOffsetSec,
+                plan: plan,
+                currentAnalysis: model.trackAnalysesById[current.id],
+                nextAnalysis: model.trackAnalysesById[next.id]
             )
+            try await waitUntil(
+                timeoutSec: 1.5,
+                intervalMilliseconds: 25,
+                failure: {
+                    NativeSessionStressError.crossfadeDidNotComplete(
+                        playbackStressSnapshot(model.audioEngine, expectedTrackId: next.id)
+                    )
+                }
+            ) {
+                model.audioEngine.state == .crossfading &&
+                    model.audioEngine.queuedTrack?.id == next.id &&
+                    model.audioEngine.nextDeckElapsedSec > plan.nextTrackStartOffsetSec &&
+                    model.audioEngine.activeTransitionPlan?.transitionTimingSource == plan.transitionTimingSource
+            }
             try await waitUntil(
                 timeoutSec: max(2.5, stressDuration + 2),
                 failure: {
@@ -821,7 +845,7 @@ final class BeatDropperApplicationDelegate: NSObject, NSApplicationDelegate {
         return plan
     }
 
-    private func runPlaybackStress() async throws {
+    private func runPlaybackStress() async throws -> PlaybackStressResult {
         guard let model = Self.model else {
             throw PlaybackStressError.modelMissing
         }
@@ -831,6 +855,7 @@ final class BeatDropperApplicationDelegate: NSObject, NSApplicationDelegate {
             try? FileManager.default.removeItem(at: fixture.folderURL)
         }
 
+        playbackStressCheckpoint("fixture-ready")
         try model.audioEngine.play(url: fixture.firstURL, track: fixture.firstTrack)
         try await waitUntil(
             timeoutSec: 4,
@@ -844,13 +869,70 @@ final class BeatDropperApplicationDelegate: NSObject, NSApplicationDelegate {
                 model.audioEngine.currentTrack?.id == fixture.firstTrack.id &&
                 model.audioEngine.elapsedSec > 0
         }
+        playbackStressCheckpoint("primary-playing")
 
+        let firstPlan = playbackStressPlan(durationSec: 1.2, barCount: 4)
         try model.audioEngine.crossfadeTo(
             url: fixture.secondURL,
             track: fixture.secondTrack,
-            durationSec: 0.35,
-            startOffsetSec: 0.05
+            durationSec: 1.2,
+            startOffsetSec: 0.05,
+            plan: firstPlan
         )
+        try await waitUntil(
+            timeoutSec: 1,
+            intervalMilliseconds: 25,
+            failure: {
+                PlaybackStressError.crossfadeDidNotComplete(
+                    playbackStressSnapshot(model.audioEngine, expectedTrackId: fixture.secondTrack.id)
+                )
+            }
+        ) {
+                model.audioEngine.state == .crossfading &&
+                model.audioEngine.queuedTrack?.id == fixture.secondTrack.id &&
+                model.audioEngine.nextDeckElapsedSec > 0.12 &&
+                model.audioEngine.activeTransitionPlan?.transitionBarCount == 4
+        }
+        playbackStressCheckpoint("incoming-moving")
+
+        let pausedIncomingPosition = model.audioEngine.nextDeckElapsedSec
+        let pausedProgress = model.audioEngine.crossfadeProgress
+        model.audioEngine.pause()
+        guard model.audioEngine.state == .paused,
+              model.audioEngine.activeTransitionPlan?.transitionTimingSource == .beatGrid
+        else {
+            throw PlaybackStressError.pauseFailed
+        }
+        try await sleep(milliseconds: 120)
+        guard abs(model.audioEngine.nextDeckElapsedSec - pausedIncomingPosition) < 0.05 else {
+            throw PlaybackStressError.pauseFailed
+        }
+        try model.audioEngine.resume()
+        try await waitUntil(
+            timeoutSec: 1,
+            intervalMilliseconds: 25,
+            failure: { PlaybackStressError.resumeFailed(playbackStressSnapshot(model.audioEngine)) }
+        ) {
+            model.audioEngine.state == .crossfading &&
+                model.audioEngine.crossfadeProgress > pausedProgress &&
+                model.audioEngine.nextDeckElapsedSec > pausedIncomingPosition
+        }
+        playbackStressCheckpoint("crossfade-resumed")
+
+        model.audioEngine.simulateConfigurationChangeRecoveryForAutomation()
+        try await waitUntil(
+            timeoutSec: 2,
+            intervalMilliseconds: 25,
+            failure: { PlaybackStressError.recoveryFailed(playbackStressSnapshot(model.audioEngine)) }
+        ) {
+            model.audioEngine.recoveryNotice != nil &&
+                (model.audioEngine.state == .crossfading || model.audioEngine.state == .playing)
+        }
+        if model.audioEngine.state == .crossfading,
+           model.audioEngine.activeTransitionPlan?.transitionBarCount != 4 {
+            throw PlaybackStressError.recoveryFailed(playbackStressSnapshot(model.audioEngine))
+        }
+        playbackStressCheckpoint("device-recovered")
         try await waitUntil(
             timeoutSec: 3,
             failure: {
@@ -862,26 +944,77 @@ final class BeatDropperApplicationDelegate: NSObject, NSApplicationDelegate {
             model.audioEngine.state == .playing &&
                 model.audioEngine.currentTrack?.id == fixture.secondTrack.id
         }
+        playbackStressCheckpoint("first-transition-complete")
 
-        model.audioEngine.pause()
-        guard model.audioEngine.state == .paused else {
-            throw PlaybackStressError.pauseFailed
-        }
-
-        try await sleep(milliseconds: 120)
-        try model.audioEngine.resume()
+        let secondPlan = playbackStressPlan(durationSec: 0.45, barCount: 1)
+        try model.audioEngine.crossfadeTo(
+            url: fixture.firstURL,
+            track: fixture.firstTrack,
+            durationSec: 0.45,
+            startOffsetSec: 0.1,
+            plan: secondPlan
+        )
         try await waitUntil(
             timeoutSec: 3,
-            failure: { PlaybackStressError.resumeFailed(playbackStressSnapshot(model.audioEngine)) }
+            intervalMilliseconds: 25,
+            failure: { PlaybackStressError.crossfadeDidNotComplete(playbackStressSnapshot(model.audioEngine)) }
+        ) {
+            model.audioEngine.state == .crossfading &&
+                model.audioEngine.queuedTrack?.id == fixture.firstTrack.id &&
+                model.audioEngine.nextDeckElapsedSec > 0.1
+        }
+        playbackStressCheckpoint("second-incoming-moving")
+        try await waitUntil(
+            timeoutSec: 3,
+            failure: { PlaybackStressError.crossfadeDidNotComplete(playbackStressSnapshot(model.audioEngine)) }
         ) {
             model.audioEngine.state == .playing &&
-                model.audioEngine.elapsedSec > 0
+                model.audioEngine.currentTrack?.id == fixture.firstTrack.id
         }
+        playbackStressCheckpoint("second-transition-complete")
 
         model.audioEngine.stop()
-        guard model.audioEngine.state == .idle else {
+        guard model.audioEngine.state == .idle,
+              model.audioEngine.activeTransitionPlan == nil,
+              model.audioEngine.nextDeckElapsedSec == 0
+        else {
             throw PlaybackStressError.stopFailed
         }
+        return PlaybackStressResult(
+            transitionsCompleted: 2,
+            incomingPlayheadAdvanced: true,
+            crossfadePauseResumePassed: true,
+            deviceRecoveryPassed: true
+        )
+    }
+
+    private func playbackStressCheckpoint(_ checkpoint: String) {
+        FileHandle.standardOutput.write(Data("BEATDROPPER_NATIVE_PLAYBACK_STRESS_STEP \(checkpoint)\n".utf8))
+    }
+
+    private func playbackStressPlan(durationSec: Double, barCount: Int) -> MixPlan {
+        MixPlan(
+            transitionStartSec: 0,
+            transitionEndSec: durationSec,
+            nextTrackStartOffsetSec: 0.05,
+            style: barCount == 1 ? .hardCut : .energySwap,
+            confidence: 0.9,
+            reasoningSummary: "packaged playback transition stress",
+            tempoSync: MixTempoSyncPlan(enabled: barCount > 1, targetRate: barCount > 1 ? 120 / 124 : nil),
+            phraseAlignment: .aligned,
+            evidence: ["packaged playback stress"],
+            mixControls: MixControlPlan(
+                gain: MixGainPlan(outgoingTrimDb: -0.5, incomingTrimDb: -1),
+                eq: MixThreeBandEQPlan(outgoingLowDb: -2, incomingLowDb: 1),
+                filter: .conservativeDefaults,
+                loudness: .conservativeDefaults,
+                clipProtection: .conservativeDefaults,
+                qualityNotes: ["exercise transition DSP"]
+            ),
+            transitionBarCount: barCount,
+            transitionTimingSource: .beatGrid,
+            synchronizedBPM: 120
+        )
     }
 
     private func sleep(milliseconds: UInt64) async throws {
@@ -911,6 +1044,7 @@ final class BeatDropperApplicationDelegate: NSObject, NSApplicationDelegate {
             "expected=\(expectedTrackId ?? "--")",
             "queued=\(engine.queuedTrack?.id ?? "--")",
             "elapsed=\(String(format: "%.3f", engine.elapsedSec))",
+            "nextElapsed=\(String(format: "%.3f", engine.nextDeckElapsedSec))",
             "remaining=\(String(format: "%.3f", engine.remainingSec))",
             "crossfade=\(String(format: "%.3f", engine.crossfadeProgress))"
         ].joined(separator: "; ")
@@ -922,6 +1056,13 @@ private struct NativeOpenImportStressResult {
     var libraryRecordCount: Int
     var sourceFolderCount: Int
     var analyzedCount: Int
+}
+
+private struct PlaybackStressResult {
+    var transitionsCompleted: Int
+    var incomingPlayheadAdvanced: Bool
+    var crossfadePauseResumePassed: Bool
+    var deviceRecoveryPassed: Bool
 }
 
 private enum NativeOpenImportStressError: LocalizedError {
@@ -1223,6 +1364,7 @@ private enum PlaybackStressError: LocalizedError {
     case crossfadeDidNotComplete(String)
     case pauseFailed
     case resumeFailed(String)
+    case recoveryFailed(String)
     case stopFailed
 
     var errorDescription: String? {
@@ -1237,6 +1379,8 @@ private enum PlaybackStressError: LocalizedError {
             return "pause did not enter paused state"
         case .resumeFailed(let detail):
             return "resume did not return to playing state: \(detail)"
+        case .recoveryFailed(let detail):
+            return "audio-device recovery did not preserve the transition: \(detail)"
         case .stopFailed:
             return "stop did not return to idle state"
         }
@@ -1257,15 +1401,15 @@ private struct PlaybackStressFixture {
 
         let firstURL = folderURL.appendingPathComponent("stress-a.wav")
         let secondURL = folderURL.appendingPathComponent("stress-b.wav")
-        try writeSineWave(url: firstURL, frequency: 220, durationSec: 1.6)
-        try writeSineWave(url: secondURL, frequency: 330, durationSec: 1.6)
+        try writeSineWave(url: firstURL, frequency: 220, durationSec: 4)
+        try writeSineWave(url: secondURL, frequency: 330, durationSec: 4)
 
         return PlaybackStressFixture(
             folderURL: folderURL,
             firstURL: firstURL,
             secondURL: secondURL,
-            firstTrack: Track(id: "native-stress-a", title: "Native Stress A", durationSec: 1.6, format: .wav, bpm: 120),
-            secondTrack: Track(id: "native-stress-b", title: "Native Stress B", durationSec: 1.6, format: .wav, bpm: 124)
+            firstTrack: Track(id: "native-stress-a", title: "Native Stress A", durationSec: 4, format: .wav, bpm: 120),
+            secondTrack: Track(id: "native-stress-b", title: "Native Stress B", durationSec: 4, format: .wav, bpm: 124)
         )
     }
 

@@ -3,131 +3,143 @@ import SwiftUI
 
 extension ContentView {
     var playbackControlBar: some View {
-        HStack(spacing: 12) {
-            Label("Transport", systemImage: "playpause")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-            HStack(spacing: 10) {
-                if model.workspaceMode == .playing, !model.playlist.isEmpty {
-                    Toggle(
-                        isOn: Binding(
-                            get: { model.isAIMixEnabled },
-                            set: { model.setAIMixEnabled($0) }
-                        )
-                    ) {
-                        Text("AI Mix")
-                    }
-                    .toggleStyle(AIMixSwitchToggleStyle())
-                    .fixedSize(horizontal: true, vertical: false)
-                    .disabled(!model.isAIMixEnabled && !model.canEnableAIMix)
-                    .help(model.isAIMixEnabled ? "Turn off AI mix automation" : "Analyze this playlist and keep AI mix planning active")
-                    .accessibilityLabel(model.isAIMixEnabled ? "Turn off AI mix" : "Turn on AI mix")
-                }
-
-                centeredIconButton(
-                    systemImage: "backward.end",
-                    help: "Crossfade to previous track",
-                    accessibilityLabel: "Crossfade to previous track"
-                ) {
-                    model.playPreviousTrack()
-                }
-                .disabled(!model.hasPreviousTrack)
-
-                centeredIconButton(
-                    systemImage: model.isPlaybackActive ? "pause.fill" : "play.fill",
-                    help: model.isPlaybackActive ? "Pause playback" : "Start playback",
-                    accessibilityLabel: model.isPlaybackActive ? "Pause playback" : "Start playback"
-                ) {
-                    model.playPause()
-                }
-                .keyboardShortcut(.space, modifiers: [])
-                .disabled(!model.canUseTransportPlayPause)
-
-                centeredIconButton(
-                    systemImage: "forward.end",
-                    help: "Crossfade to next track",
-                    accessibilityLabel: "Crossfade to next track"
-                ) {
-                    model.playNextTrack()
-                }
-                .disabled(!model.hasNextTrack)
-            }
-            .frame(width: model.workspaceMode == .playing && !model.playlist.isEmpty ? 286 : 142, alignment: .center)
-
-            transportPositionText
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .monospacedDigit()
-                .lineLimit(1)
-                .frame(maxWidth: .infinity, alignment: .trailing)
+        ViewThatFits(in: .horizontal) {
+            persistentTransportWideLayout
+            persistentTransportCompactLayout
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
-        .frame(height: 44)
-        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(.separator.opacity(0.24), lineWidth: 1)
-        )
-        .accessibilityLabel("Transport controls")
+        .padding(.horizontal, 14)
+        .padding(.vertical, 9)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .accessibilityLabel("Persistent playback transport")
+    }
+
+    var persistentTransportWideLayout: some View {
+        HStack(spacing: 16) {
+            transportNowPlayingSummary
+                .frame(minWidth: 170, idealWidth: 220, maxWidth: 260, alignment: .leading)
+            transportProgress
+                .frame(minWidth: 180, maxWidth: .infinity)
+            transportButtons
+                .fixedSize()
+            aiMixTransportToggle
+                .fixedSize()
+            outputLevelMeter("MASTER", model.audioEngine.outputMeter)
+                .frame(width: 132)
+        }
+    }
+
+    var persistentTransportCompactLayout: some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 12) {
+                transportNowPlayingSummary
+                Spacer(minLength: 8)
+                aiMixTransportToggle
+                outputLevelMeter("MASTER", model.audioEngine.outputMeter)
+                    .frame(width: 112)
+            }
+            HStack(spacing: 14) {
+                transportProgress
+                transportButtons
+                    .fixedSize()
+            }
+        }
+    }
+
+    var transportNowPlayingSummary: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(model.audioEngine.currentTrack?.title ?? model.selectedTrack?.track.title ?? "No track loaded")
+                .font(.callout.weight(.semibold))
+                .lineLimit(1)
+                .truncationMode(.tail)
+            Text("\(model.audioEngine.state.rawValue) · \(transportDetail)")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Current track")
+    }
+
+    var transportProgress: some View {
+        let durationSec = max(0, model.audioEngine.currentTrack?.durationSec ?? 0)
+        let elapsedSec = min(durationSec, max(0, model.audioEngine.elapsedSec))
+
+        return VStack(spacing: 3) {
+            ProgressView(value: durationSec > 0 ? elapsedSec / durationSec : 0)
+                .progressViewStyle(.linear)
+                .tint(.accentColor)
+            HStack {
+                Text(formatDuration(elapsedSec))
+                Spacer()
+                Text(durationSec > 0 ? formatDuration(durationSec) : "--:--")
+            }
+            .font(.caption2.monospacedDigit())
+            .foregroundStyle(.secondary)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Playback progress")
+        .accessibilityValue(durationSec > 0 ? "\(formatDuration(elapsedSec)) of \(formatDuration(durationSec))" : "No track loaded")
+    }
+
+    var transportButtons: some View {
+        HStack(spacing: 8) {
+            centeredIconButton(
+                systemImage: "backward.end",
+                help: "Crossfade to previous track",
+                accessibilityLabel: "Crossfade to previous track"
+            ) {
+                model.playPreviousTrack()
+            }
+            .disabled(!model.hasPreviousTrack)
+
+            transportPlayPauseButton
+
+            centeredIconButton(
+                systemImage: "forward.end",
+                help: "Crossfade to next track",
+                accessibilityLabel: "Crossfade to next track"
+            ) {
+                model.playNextTrack()
+            }
+            .disabled(!model.hasNextTrack)
+        }
     }
 
     @ViewBuilder
-    var transportPositionText: some View {
-        if model.audioEngine.currentTrack != nil {
-            Text(formatDuration(model.audioEngine.elapsedSec))
-        } else if let countdown = model.scheduledMixCountdownSec {
-            Text("Mix in \(formatDuration(countdown))")
+    var transportPlayPauseButton: some View {
+        if model.workspaceMode == .playing {
+            transportPlayPauseButtonBase
+                .keyboardShortcut(.space, modifiers: [])
         } else {
-            Text("")
+            transportPlayPauseButtonBase
         }
     }
 
-    var statusBar: some View {
-        HStack(spacing: 16) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(model.audioEngine.state.rawValue)
-                    .font(.headline)
-                Text(transportDetail)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-
-            outputLevelMeter("MASTER", model.audioEngine.outputMeter)
-                .frame(width: 150)
-
-            Spacer()
+    var transportPlayPauseButtonBase: some View {
+        centeredIconButton(
+            systemImage: model.isPlaybackActive ? "pause.fill" : "play.fill",
+            help: model.isPlaybackActive ? "Pause playback" : "Start playback",
+            accessibilityLabel: model.isPlaybackActive ? "Pause playback" : "Start playback"
+        ) {
+            model.playPause()
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(.separator.opacity(0.24), lineWidth: 1)
-        )
-        .accessibilityLabel("Playback status")
+        .disabled(!model.canUseTransportPlayPause)
     }
 
-    var shouldShowStatusBar: Bool {
-        shouldShowMixMonitor ||
-            model.audioEngine.isPlaybackActive ||
-            model.audioEngine.state == .paused
-    }
-
-    var shouldShowMixMonitor: Bool {
-        model.workspaceMode == .playing && hasPlayableSurface
-    }
-
-    var hasPlayableSurface: Bool {
-        !model.playlist.isEmpty ||
-            model.currentMixPlan != nil ||
-            model.isPlanningMix ||
-            model.audioEngine.currentTrack != nil ||
-            model.audioEngine.queuedTrack != nil ||
-            model.audioEngine.isPlaybackActive ||
-            model.audioEngine.state == .paused
+    var aiMixTransportToggle: some View {
+        Toggle(
+            isOn: Binding(
+                get: { model.isAIMixEnabled },
+                set: { model.setAIMixEnabled($0) }
+            )
+        ) {
+            Text("AI Mix")
+        }
+        .toggleStyle(AIMixSwitchToggleStyle())
+        .disabled(!model.isAIMixEnabled && !model.canEnableAIMix)
+        .help(model.isAIMixEnabled ? "Turn off AI mix automation" : "Analyze this playlist and keep AI mix planning active")
+        .accessibilityLabel(model.isAIMixEnabled ? "Turn off AI mix" : "Turn on AI mix")
     }
 
     var transportDetail: String {

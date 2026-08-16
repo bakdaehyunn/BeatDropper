@@ -4,7 +4,8 @@ public enum NativeFallbackMixPlanner {
     public static func buildPlan(
         request: PlannerRequest,
         validationContext: MixPlanValidationContext,
-        failureReason: String?
+        failureReason: String?,
+        intent: TransitionPlanningIntent = .scheduled
     ) -> MixPlan? {
         let candidates = request.pairContext?.candidates ?? []
         let selectedCandidate = selectCandidate(
@@ -18,16 +19,12 @@ public enum NativeFallbackMixPlanner {
             return buildEmergencyTailPlan(
                 request: request,
                 validationContext: validationContext,
-                failureReason: failureReason
+                failureReason: failureReason,
+                intent: intent
             )
         }
 
-        let maxFadeDurationSec = max(0.25, request.settings.fadeDurationSec)
-        let transitionDurationSec = preferredTransitionDuration(
-            candidate: selectedCandidate,
-            mode: request.settings.aiDjMode,
-            maxFadeDurationSec: maxFadeDurationSec
-        )
+        let transitionDurationSec = max(0.25, request.settings.fadeDurationSec)
         let transitionEndSec = futureMixOutTime(
             candidate: selectedCandidate,
             request: request,
@@ -57,7 +54,12 @@ public enum NativeFallbackMixPlanner {
             mixControls: fallbackMixControls(candidate: selectedCandidate)
         )
 
-        return MixPlanValidator.validateAndClamp(plan, context: validationContext).plan
+        return BeatAlignedTransitionPolicy.apply(
+            to: plan,
+            request: request,
+            validationContext: validationContext,
+            intent: intent
+        )
     }
 
     private static func selectCandidate(
@@ -132,28 +134,6 @@ public enum NativeFallbackMixPlanner {
         }
     }
 
-    private static func preferredTransitionDuration(
-        candidate: MixCandidate,
-        mode: AIDJMode,
-        maxFadeDurationSec: Double
-    ) -> Double {
-        switch candidate.style {
-        case .hardCut:
-            switch mode {
-            case .safe:
-                return min(maxFadeDurationSec, 3)
-            case .balanced:
-                return min(maxFadeDurationSec, 2)
-            case .adventurous:
-                return min(maxFadeDurationSec, 1.25)
-            }
-        case .energySwap:
-            return min(maxFadeDurationSec, max(2.5, maxFadeDurationSec * 0.65))
-        case .smoothBlend:
-            return maxFadeDurationSec
-        }
-    }
-
     private static func futureMixOutTime(
         candidate: MixCandidate,
         request: PlannerRequest,
@@ -173,7 +153,8 @@ public enum NativeFallbackMixPlanner {
     private static func buildEmergencyTailPlan(
         request: PlannerRequest,
         validationContext: MixPlanValidationContext,
-        failureReason: String?
+        failureReason: String?,
+        intent: TransitionPlanningIntent
     ) -> MixPlan? {
         let durationSec = max(0.25, min(request.settings.fadeDurationSec, 8))
         let currentDurationSec = max(0, request.currentTrack.durationSec)
@@ -202,7 +183,12 @@ public enum NativeFallbackMixPlanner {
             ].compactMap { $0 },
             mixControls: .conservativeDefaults
         )
-        return MixPlanValidator.validateAndClamp(plan, context: validationContext).plan
+        return BeatAlignedTransitionPolicy.apply(
+            to: plan,
+            request: request,
+            validationContext: validationContext,
+            intent: intent
+        )
     }
 
     private static func fallbackConfidence(for candidate: MixCandidate) -> Double {

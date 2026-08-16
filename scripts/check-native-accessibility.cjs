@@ -104,29 +104,21 @@ const sumMinWidths = (target) => {
   return matches.reduce((total, match) => total + Number(match[1]), 0);
 };
 
-const rootHasTwoAxisScrollFallback = () => (
-  /GeometryReader\s*\{ proxy in[\s\S]*ScrollView\(\[\.horizontal, \.vertical\], showsIndicators: true\)[\s\S]*width: max\(proxy\.size\.width, AppLayoutMetrics\.minimumContentWidth\)[\s\S]*height: max\(proxy\.size\.height, AppLayoutMetrics\.minimumContentHeight\)/.test(source)
+const rootUsesResponsiveWorkspaceScroll = () => (
+  /GeometryReader\s*\{ proxy in[\s\S]*appShell[\s\S]*width: proxy\.size\.width[\s\S]*height: proxy\.size\.height[\s\S]*(?:private )?var mainStage:[\s\S]*ScrollView\(\.vertical, showsIndicators: true\)[\s\S]*workspaceContent/.test(source)
 );
 
 const splitPaneMinWidthsFitWindow = () => {
-  const contentMinWidth = firstNumber(/minimumContentWidth: CGFloat = ([0-9]+)/);
-  if (!contentMinWidth) {
+  const windowMinWidth = firstNumber(/minimumWindowWidth: CGFloat = ([0-9]+)/);
+  if (!windowMinWidth) {
     return false;
   }
-
-  const playingWorkspace = sourceSection(
-    /(?:private )?var playingWorkspace:/,
-    /(?:private )?var creativeWorkspace:/
-  );
   const creativeWorkspace = sourceSection(
-    /(?:private )?var creativeWorkspace:/,
-    /(?:private )?var mixMonitor:/
+    /(?:private )?var creativeCollectionArea:/,
+    /(?:private )?var creativeTrackMonitor:/
   );
-
-  return (
-    sumMinWidths(playingWorkspace) <= contentMinWidth &&
-    sumMinWidths(creativeWorkspace) <= contentMinWidth
-  ) || rootHasTwoAxisScrollFallback();
+  const creativePaneWidth = sumMinWidths(creativeWorkspace);
+  return creativePaneWidth > 0 && creativePaneWidth + 36 <= windowMinWidth;
 };
 
 const checks = [
@@ -155,8 +147,8 @@ const checks = [
     pattern: /(?:private )?var playingMonitorMetaBar:[\s\S]*Text\(playingMixStatusText\)[\s\S]*(?:private )?var playingMixStatusText: String/
   },
   {
-    label: 'playing waveform rows are larger than summary cards',
-    pattern: /(?:private )?func deckWaveformRow[\s\S]*miniDeckMeter\(meter\)[\s\S]*\.frame\(height: 118\)/
+    label: 'playing waveform rows use compact stacked strips',
+    pattern: /(?:private )?func deckWaveformRow[\s\S]*miniDeckMeter\(meter\)[\s\S]*\.frame\(height: 58\)/
   },
   {
     label: 'playing waveform strip renders through Canvas',
@@ -173,6 +165,18 @@ const checks = [
   {
     label: 'playing waveform cursors include play out and in markers',
     pattern: /cueLabel: "OUT"[\s\S]*cueLabel: "IN"[\s\S]*label: "PLAY"/
+  },
+  {
+    label: 'next waveform binds to the live incoming deck position',
+    pattern: /title: "Next"[\s\S]*value: model\.audioEngine\.queuedTrack != nil[\s\S]*model\.audioEngine\.nextDeckElapsedSec[\s\S]*elapsedSec: model\.audioEngine\.queuedTrack != nil[\s\S]*model\.audioEngine\.nextDeckElapsedSec/
+  },
+  {
+    label: 'playing monitor retains the active audio-engine transition plan',
+    pattern: /var playingTransitionPlan: MixPlan\?[\s\S]*model\.audioEngine\.activeTransitionPlan \?\? model\.currentMixPlan/
+  },
+  {
+    label: 'transition evidence shows style bars duration timing source out and in',
+    pattern: /func transitionEvidenceText[\s\S]*plan\.style[\s\S]*plan\.transitionBarCount[\s\S]*plan\.transitionEndSec - plan\.transitionStartSec[\s\S]*plan\.transitionTimingSource[\s\S]*OUT[\s\S]*IN/
   },
   {
     label: 'current playlist table label',
@@ -201,6 +205,14 @@ const checks = [
   {
     label: 'creative preparation exposes BPM tap and hot cue actions',
     pattern: /TextField\("BPM"[\s\S]*setCreativeBPMOverride[\s\S]*Button\("Tap"[\s\S]*applyTappedBPMToCreativeTrack[\s\S]*Add Cue[\s\S]*addCreativeHotCue/
+  },
+  {
+    label: 'creative set builder exposes an accessible energy flow',
+    pattern: /(?:private )?var creativeEnergyFlow:[\s\S]*accessibilityLabel\("Set energy flow"\)/
+  },
+  {
+    label: 'AI mix switch respects reduced motion',
+    pattern: /accessibilityReduceMotion[\s\S]*if reduceMotion[\s\S]*configuration\.isOn\.toggle\(\)[\s\S]*withAnimation/
   },
   {
     label: 'search library label',
@@ -239,12 +251,12 @@ const checks = [
     pattern: /accessibilityLabel(?:\(|:) ?"Crossfade to next track"/
   },
   {
-    label: 'transport controls label',
-    pattern: /accessibilityLabel\("Transport controls"\)/
+    label: 'persistent transport label',
+    pattern: /accessibilityLabel\("Persistent playback transport"\)/
   },
   {
-    label: 'transport controls use a centered three-zone bar',
-    pattern: /(?:private )?var playbackControlBar:[\s\S]*HStack\(spacing: 12\)[\s\S]*frame\(maxWidth: \.infinity, alignment: \.leading\)[\s\S]*\.frame\(width: model\.workspaceMode == \.playing && !model\.playlist\.isEmpty \? 286 : 142, alignment: \.center\)[\s\S]*transportPositionText[\s\S]*frame\(maxWidth: \.infinity, alignment: \.trailing\)[\s\S]*\.frame\(height: 44\)/
+    label: 'transport adapts between wide and compact layouts',
+    pattern: /(?:private )?var playbackControlBar:[\s\S]*ViewThatFits\(in: \.horizontal\)[\s\S]*persistentTransportWideLayout[\s\S]*persistentTransportCompactLayout[\s\S]*(?:private )?var transportProgress:[\s\S]*accessibilityLabel\("Playback progress"\)/
   },
   {
     label: 'transport uses AI mix toggle instead of one-shot plan button',
@@ -255,20 +267,20 @@ const checks = [
     pattern: /accessibilityValue\(meter\.clipped \? "clipping" : "\\\(Int\(meter\.peakDb\.rounded\(\)\)\) decibels"\)/
   },
   {
-    label: 'live mix monitor is hidden until a playable surface exists',
-    pattern: /if shouldShowMixMonitor[\s\S]*mixMonitor[\s\S]*(?:private )?var shouldShowMixMonitor: Bool[\s\S]*model\.workspaceMode == \.playing && hasPlayableSurface/
+    label: 'playing monitor exposes the current decision next hierarchy',
+    pattern: /(?:private )?var playingTransitionDecisionRow:[\s\S]*label: "CURRENT DECK"[\s\S]*transitionDecisionCard[\s\S]*label: "NEXT DECK"[\s\S]*accessibilityLabel\("Current deck transition decision and next deck"\)/
   },
   {
-    label: 'transport controls sit under live monitor',
-    pattern: /(?:private )?var playingWorkspace:[\s\S]*playbackControlBar[\s\S]*playlistPane/
+    label: 'playing workspace keeps monitor over set flow',
+    pattern: /(?:private )?var playingWorkspace:[\s\S]*mixMonitor[\s\S]*playlistPane/
   },
   {
-    label: 'playing shell places controls between monitor and playlist',
-    pattern: /(?:private )?var mainStage:[\s\S]*mixMonitor[\s\S]*frame\(height: 360\)[\s\S]*workspaceContent[\s\S]*(?:private )?var playingWorkspace:[\s\S]*playbackControlBar[\s\S]*playlistPane/
+    label: 'shared shell anchors transport below both workspaces',
+    pattern: /(?:private )?var appShell:[\s\S]*mainStage[\s\S]*Divider\(\)[\s\S]*playbackControlBar[\s\S]*(?:private )?var mainStage:[\s\S]*workspaceContent/
   },
   {
-    label: 'root window uses two-axis scroll fallback when content is larger than the window',
-    test: rootHasTwoAxisScrollFallback
+    label: 'root anchors chrome while only the workspace scrolls',
+    test: rootUsesResponsiveWorkspaceScroll
   },
   {
     label: 'playing inspector uses a drawer overlay instead of relayouting workspace',

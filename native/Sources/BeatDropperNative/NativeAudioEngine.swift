@@ -24,6 +24,8 @@ final class NativeAudioEngine: ObservableObject {
     @Published private(set) var queuedTrack: Track?
     @Published private(set) var crossfadeProgress: Double = 0
     @Published private(set) var elapsedSec: Double = 0
+    @Published private(set) var nextDeckElapsedSec: Double = 0
+    @Published private(set) var activeTransitionPlan: MixPlan?
     @Published private(set) var remainingSec: Double = 0
     @Published private(set) var outputMeter: AudioLevelMeter = .silence
     @Published private(set) var deckAMeter: AudioLevelMeter = .silence
@@ -57,6 +59,8 @@ final class NativeAudioEngine: ObservableObject {
     private var outputMeterObserver: NSObjectProtocol?
     private var engineConfigurationObserver: NSObjectProtocol?
     private var masterDSPSettings = PlaybackMasterDSPSettings.neutral
+    private var isRecoveringConfiguration = false
+    private var suppressConfigurationRecoveryUntil = Date.distantPast
 
     init() {
         attach(deck: deckA)
@@ -205,6 +209,7 @@ final class NativeAudioEngine: ObservableObject {
 
         recoveryNotice = nil
         queuedTrack = track
+        activeTransitionPlan = plan
         fadeDurationSec = max(0.1, durationSec)
         fadeStartedAt = Date()
         fadeTargetSlot = targetDeck.slot
@@ -248,12 +253,18 @@ final class NativeAudioEngine: ObservableObject {
         inactiveDeck.resetDSP()
         configureMasterDSP(.neutral)
         queuedTrack = nil
+        activeTransitionPlan = nil
         crossfadeProgress = 0
         elapsedSec = 0
+        nextDeckElapsedSec = 0
         remainingSec = 0
         silenceMeters()
         recoveryNotice = nil
         state = .idle
+    }
+
+    func simulateConfigurationChangeRecoveryForAutomation() {
+        recoverAfterEngineConfigurationChange()
     }
 
     private var activeDeck: Deck {
@@ -329,9 +340,17 @@ final class NativeAudioEngine: ObservableObject {
     }
 
     private func recoverAfterEngineConfigurationChange() {
-        guard state != .idle else {
+        guard state != .idle,
+              !isRecoveringConfiguration,
+              Date() >= suppressConfigurationRecoveryUntil
+        else {
             return
         }
+        isRecoveringConfiguration = true
+        // Engine stop/reset/start emits follow-up configuration notifications on some devices.
+        // Suppress those self-generated notifications long enough for the restored graph to settle.
+        suppressConfigurationRecoveryUntil = Date().addingTimeInterval(5)
+        defer { isRecoveringConfiguration = false }
 
         let snapshot = PlaybackRecoverySnapshot(
             state: state,
@@ -545,6 +564,8 @@ final class NativeAudioEngine: ObservableObject {
         activeSlot = fadeTargetSlot
         currentTrack = newDeck.track
         queuedTrack = nil
+        activeTransitionPlan = nil
+        nextDeckElapsedSec = 0
         crossfadeProgress = 0
         state = .playing
         self.fadeTargetSlot = nil
@@ -566,6 +587,8 @@ final class NativeAudioEngine: ObservableObject {
         fadeCompletion = nil
         fadeTargetSlot = nil
         queuedTrack = nil
+        activeTransitionPlan = nil
+        nextDeckElapsedSec = 0
         crossfadeProgress = 0
         activeDeck.mixer.outputVolume = 1
         inactiveDeck.stopAndClearSchedule()
@@ -609,6 +632,18 @@ final class NativeAudioEngine: ObservableObject {
             )
         } else {
             remainingSec = 0
+        }
+
+        if let fadeTargetSlot, let queuedTrack {
+            let nextDeck = deck(for: fadeTargetSlot)
+            let nextPosition = PlaybackPositionMath.clampedElapsed(
+                nextDeck.positionSec(),
+                durationSec: queuedTrack.durationSec
+            )
+            nextDeck.lastKnownPositionSec = nextPosition
+            nextDeckElapsedSec = nextPosition
+        } else {
+            nextDeckElapsedSec = 0
         }
     }
 

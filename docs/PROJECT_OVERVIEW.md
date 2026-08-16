@@ -8,7 +8,7 @@ BeatDropper는 사용자가 직접 고른 로컬 음악 라이브러리와 세�
 ### 1) Native macOS App (`native/Sources/BeatDropperNative`)
 - SwiftUI/AppKit 기반 macOS window, command menu, Settings scene
 - Finder Open With, drag-and-drop, file/folder import
-- DJ workspace: current deck, next deck, AI mix point, playlist, library browser, optional inspector
+- DJ workspace: current deck → transition decision → next deck, compact set flow, preparation studio, library browser, optional evidence inspector, shared persistent transport
 - `NativeAudioEngine`: AVAudioEngine two-deck playback, per-deck meters, master gain, equal-power crossfade, device/configuration recovery
 - `BeatDropperAppModel`: playlist/library orchestration, analysis queue draining, planner request scheduling, missing-file/relink workflows
 
@@ -19,6 +19,7 @@ BeatDropper는 사용자가 직접 고른 로컬 음악 라이브러리와 세�
 - Native DSP analyzer for waveform detail, energy, spectral bands, transient markers, BPM, beat/bar/phrase grids, cue candidates, and quality warnings
 - Bounded analysis queue and large-library stress coverage
 - Planner evidence builders: compact `analysisSummary`, `pairContext`, candidate ranking, deterministic native fallback planner
+- `BeatAlignedTransitionPolicy`: one 4/4 timing policy shared by AI, fallback, and manual Next, including phrase snapping, synchronized tempo, extreme-BPM downgrade, and explicitly annotated seconds fallback
 
 ### 3) AI Mix Planner Bridge
 - Native app bundles `scripts/codex-mix-planner.cjs` inside app resources.
@@ -41,6 +42,7 @@ BeatDropper native UI는 같은 기능을 한 화면에 모두 노출하는 구�
   - current deck, next deck, transition/mix point, playback state, meters
   - 현재 세트의 playlist 순서와 최소한의 mix-ready 정보
   - AI mix timing 결과와 confidence 같은 즉시 판단 가능한 값
+  - 두 모드에서 위치가 바뀌지 않는 current track/progress/AI Mix/master transport
 - 메인 화면에서 피해야 하는 것:
   - raw DSP point counts, JSON/debug evidence, long reasoning text
   - saved-set 관리 form, library maintenance, relink/rescan bulk actions
@@ -59,6 +61,10 @@ BeatDropper native UI는 같은 기능을 한 화면에 모두 노출하는 구�
 
 이 원칙상 Playing Mode의 메인 화면은 performance surface이고, Creative Mode는 preparation surface다. 패널, sheet, inspector, settings는 Creative Mode와 세부 검증을 위한 공간으로 우선 배치한다.
 
+2026-08-16 native redesign은 이 원칙을 실제 화면 계층으로 반영했다. Playing은 전환 판단을 hero surface로 올리고 DSP 근거는 inspector에서 필요할 때만 연다. Creative는 waveform/cue/beat-grid 준비와 saved set/library/energy flow를 한 작업 흐름으로 묶는다. 공통 transport는 workspace 외부의 window 하단에 고정되고, 작은 창에서는 workspace만 세로 스크롤된다.
+
+The Playing transition card now keeps the audio engine's active plan visible throughout a crossfade and shows style, bar count, calculated duration, timing source, OUT/IN points, and both deck positions. A queued manual Next waits for the first compatible bar instead of starting an arbitrary fixed-second fade.
+
 ## 실행 및 검증 루틴
 1. `npm run native:build`
 2. `npm run native:test`
@@ -70,4 +76,4 @@ BeatDropper native UI는 같은 기능을 한 화면에 모두 노출하는 구�
 - Developer ID signing identity와 Apple notary credentials 준비
 - `npm run native:release`로 notarized ZIP/DMG 생성, strict release verification PASS, source-provenance-bound smoke evidence 확보
 - clean-machine Gatekeeper 검증
-- native-only 프로그램 디자인 재설계와 실제 사용 세션 기반 UX 검증
+- 실제 DJ 세션에서 transition decision 가독성, inspector 사용 빈도, energy-flow 효용을 관찰해 밀도와 기본값 조정

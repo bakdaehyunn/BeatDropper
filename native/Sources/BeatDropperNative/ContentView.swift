@@ -12,14 +12,12 @@ struct ContentView: View {
 
     var body: some View {
         GeometryReader { proxy in
-            ScrollView([.horizontal, .vertical], showsIndicators: true) {
-                appShell
-                    .frame(
-                        width: max(proxy.size.width, AppLayoutMetrics.minimumContentWidth),
-                        height: max(proxy.size.height, AppLayoutMetrics.minimumContentHeight),
-                        alignment: .top
-                    )
-            }
+            appShell
+                .frame(
+                    width: proxy.size.width,
+                    height: proxy.size.height,
+                    alignment: .top
+                )
         }
         .frame(
             minWidth: AppLayoutMetrics.minimumWindowWidth,

@@ -29,8 +29,13 @@ BeatDropper is a native macOS desktop app built with SwiftUI, AppKit, AVAudioEng
   - bounded native DSP analysis queue for larger folder imports
   - Codex planner bridge through the existing `codex-mix-planner.cjs` contract
   - deterministic local fallback mix plans from native `pairContext` evidence when the CLI planner fails
+  - shared beat/bar transition policy for AI, local fallback, and manual Next: 0–1-bar hard cut, 4-bar energy swap, 8-bar smooth blend, and optional high-confidence safe 16-bar blend
+  - phrase-compatible OUT/IN snapping, synchronized-BPM duration, extreme-tempo downgrade, and seconds fallback only when BPM/bar-grid evidence is unreliable
   - scheduled AI mix execution based on planner transition timing
-  - DJ-focused layout with current deck, AI mix, next deck, playlist, and optional inspector
+  - Playing workspace with current deck → transition decision → next deck hierarchy, stacked DSP waveforms, live positions for both decks, style/bar/duration/timing-source/OUT/IN evidence, compact set flow, and an on-demand evidence inspector
+  - Creative workspace with waveform/cue preparation, BPM-backed beat-grid correction, saved-set building, library search, and analysis-derived energy flow
+  - one persistent bottom transport shared by both workspaces, including current track, progress, previous/play/next, AI Mix state, and master output
+  - responsive toolbar/workspace layouts at the 760 × 520 minimum window size, with workspace-only scrolling so transport remains anchored
   - standard macOS Settings scene for fade duration, master gain, and AI mode
   - Finder Open With support for audio files and music folders
   - drag-and-drop import for audio files and music folders
@@ -262,7 +267,7 @@ The gate checks native structure, core feature evidence, package artifacts, rele
 
 `native:release:smoke` runs packaged app smoke, mounted DMG smoke, and installed-app smoke copied out of the DMG, then writes `native/dist/release-smoke-report.json`. The report records artifact checksums and the manifest source/toolchain provenance that must match `native/dist/release-manifest.json`, so stale smoke evidence cannot satisfy the release gates after a new package is built. Strict release verification separately records normal and quarantine-simulated Gatekeeper evidence for the packaged app, ZIP-contained app, DMG, and copied installed app. In the full release path this happens after notarization and strict release verification, so it covers the final distributable output rather than only the preflight package.
 
-`native:accessibility:check` verifies that the native SwiftUI workspace keeps accessibility labels on the main workspace, toolbar, live monitor, playlist, library browser, icon-only playlist controls, and transport controls. Passing evidence can be written with `--write-json native/dist/accessibility-check-report.json`.
+`native:accessibility:check` verifies the native SwiftUI workspace hierarchy, responsive shell, persistent transport, waveform evidence, playlist/library states, and labels for icon-only controls. Passing evidence can be written with `--write-json native/dist/accessibility-check-report.json`.
 
 `native:macos-shell:check` verifies the native app shell keeps macOS command menus, keyboard shortcuts, a standard Settings scene, Finder Open With support, drag-and-drop import support, and avoids putting the mix settings popover back into the main toolbar. Passing evidence can be written with `--write-json native/dist/macos-shell-check-report.json`.
 
@@ -274,11 +279,11 @@ The gate checks native structure, core feature evidence, package artifacts, rele
 
 `native:stress:open-import` launches the packaged app with isolated temporary native stores, simulates Finder-opened folder and loose-file inputs, waits for the bounded DSP analysis queue, and verifies the external import path preserves folder-backed library records. Passing evidence can be written with `--write-json native/dist/open-import-stress-report.json`.
 
-`native:stress:playback` launches the packaged app against synthetic WAV fixtures and verifies play, crossfade, pause, resume, and stop. Passing evidence can be written with `--write-json native/dist/playback-stress-report.json`. Run `npm run native:package` first.
+`native:stress:playback` launches the packaged app against synthetic WAV fixtures and verifies two DSP-backed crossfades, the live incoming-deck playhead, pause/resume during a transition, audio-device/configuration recovery, active-plan retention, and a clean stop. Passing evidence can be written with `--write-json native/dist/playback-stress-report.json`. Run `npm run native:package` first.
 
 `native:stress:session` launches the packaged app with isolated temporary native stores, imports a synthetic music folder, waits for the bounded DSP analysis queue, requests a planner-backed/fallback mix plan, plays, crossfades, and exits after returning an evidence marker. Playback and crossfade checks wait for observed native audio-engine state instead of relying on fixed sleeps, and failure output includes state, track id, elapsed time, remaining time, and crossfade progress. Passing evidence can be written with `--write-json native/dist/session-stress-report.json`. Run `npm run native:package` first.
 
-`native:stress:session:extended` uses the same packaged-app path with a longer synthetic set. It imports 12 tracks, verifies the bounded analysis queue, requests repeated planner/fallback transitions, and runs six crossfades in one app session. Passing evidence can be written with `--write-json native/dist/session-stress-extended-report.json`.
+`native:stress:session:extended` uses the same packaged-app path with a longer synthetic set. It imports 12 tracks, verifies the bounded analysis queue, requests repeated planner/fallback transitions, applies each plan and its DSP to the audio engine, verifies the incoming playhead during every handoff, and runs six crossfades in one app session. Passing evidence can be written with `--write-json native/dist/session-stress-extended-report.json`.
 
 ## Migration Rules
 

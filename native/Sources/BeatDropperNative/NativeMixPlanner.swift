@@ -30,12 +30,25 @@ struct NativeMixPlannerBridge: Sendable {
             }
 
             let validated = MixPlanValidator.validateAndClamp(mixPlan, context: validationContext)
-            guard let plan = validated.plan else {
+            guard let validatedPlan = validated.plan else {
                 return fallbackResult(
                     request: request,
                     validationContext: validationContext,
                     response: response,
                     reason: validated.reason ?? "mix_plan_invalid"
+                )
+            }
+
+            guard let plan = BeatAlignedTransitionPolicy.apply(
+                to: validatedPlan,
+                request: request,
+                validationContext: validationContext
+            ) else {
+                return fallbackResult(
+                    request: request,
+                    validationContext: validationContext,
+                    response: response,
+                    reason: "beat_aligned_policy_failed"
                 )
             }
 

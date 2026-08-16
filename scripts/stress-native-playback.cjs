@@ -7,7 +7,7 @@ const { spawnSync } = require('node:child_process');
 const rootDir = path.resolve(__dirname, '..');
 const appPath = path.join(rootDir, 'native', 'dist', 'BeatDropper.app');
 const executablePath = path.join(appPath, 'Contents', 'MacOS', 'BeatDropperNative');
-const playbackTimeoutMs = 15_000;
+const playbackTimeoutMs = 30_000;
 
 const parseArgs = (argv) => {
   const options = {
@@ -153,12 +153,17 @@ const main = (options) => {
     throw new Error(`native playback stress reported failure:\n${launched.output}`);
   }
 
-  const match = launched.output.match(/BEATDROPPER_NATIVE_PLAYBACK_STRESS_READY state=([^\s]+)/);
+  const match = launched.output.match(
+    /BEATDROPPER_NATIVE_PLAYBACK_STRESS_READY state=([^\s]+) transitions=(\d+) incomingPlayhead=(true|false) pauseResume=(true|false) recovery=(true|false)/
+  );
   if (!match) {
     throw new Error(`native app did not print playback stress marker. Output:\n${launched.output}`);
   }
   if (match[1] !== 'Idle') {
     throw new Error(`native playback stress finished in unexpected state ${match[1]}. Output:\n${launched.output}`);
+  }
+  if (Number(match[2]) < 2 || match[3] !== 'true' || match[4] !== 'true' || match[5] !== 'true') {
+    throw new Error(`native playback stress did not prove all transition invariants. Output:\n${launched.output}`);
   }
 
   writeJsonReport(options.writeJson, {
@@ -176,7 +181,11 @@ const main = (options) => {
       outputPreview: compactOutput(launched.output)
     },
     result: {
-      finalState: match[1]
+      finalState: match[1],
+      transitionsCompleted: Number(match[2]),
+      incomingPlayheadAdvanced: match[3] === 'true',
+      crossfadePauseResumePassed: match[4] === 'true',
+      deviceRecoveryPassed: match[5] === 'true'
     }
   });
 

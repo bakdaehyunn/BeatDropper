@@ -17,30 +17,19 @@ extension ContentView {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            Divider()
+            playbackControlBar
+                .fixedSize(horizontal: false, vertical: true)
+                .layoutPriority(5)
         }
-        .frame(
-            minWidth: AppLayoutMetrics.minimumContentWidth,
-            minHeight: AppLayoutMetrics.minimumContentHeight
-        )
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
     var mainStage: some View {
-        VStack(spacing: 12) {
-            if shouldShowMixMonitor {
-                mixMonitor
-                    .frame(height: 360)
-                    .clipped()
-                    .layoutPriority(3)
-            }
+        ScrollView(.vertical, showsIndicators: true) {
             workspaceContent
-                .frame(minHeight: 0, maxHeight: .infinity)
+                .frame(minHeight: 620, alignment: .top)
                 .layoutPriority(1)
-            if shouldShowStatusBar {
-                statusBar
-                    .fixedSize(horizontal: false, vertical: true)
-                    .layoutPriority(2)
-            }
         }
         .padding(10)
         .background(Color(nsColor: .windowBackgroundColor))
@@ -48,25 +37,19 @@ extension ContentView {
     }
 
     var toolbar: some View {
-        HStack(spacing: 10) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("BeatDropper")
-                    .font(.title2.weight(.semibold))
-                if let analysisQueueStatus = model.analysisQueueStatus {
-                    Text(analysisQueueStatus)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
+        ViewThatFits(in: .horizontal) {
+            toolbarWideLayout
+            toolbarCompactLayout
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .accessibilityLabel("Primary toolbar")
+    }
 
-            Picker("Mode", selection: $model.workspaceMode) {
-                ForEach(NativeWorkspaceMode.allCases) { mode in
-                    Text(mode.rawValue).tag(mode)
-                }
-            }
-            .pickerStyle(.segmented)
-            .frame(width: 190)
-            .accessibilityLabel("Workspace mode")
+    var toolbarWideLayout: some View {
+        HStack(spacing: 10) {
+            toolbarBrand
+            workspaceModePicker
 
             Spacer()
 
@@ -107,9 +90,70 @@ extension ContentView {
             }
 
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .accessibilityLabel("Primary toolbar")
+    }
+
+    var toolbarCompactLayout: some View {
+        HStack(spacing: 10) {
+            toolbarBrand
+            workspaceModePicker
+                .frame(width: 170)
+            Spacer(minLength: 4)
+            Menu("Actions", systemImage: "ellipsis.circle") {
+                Button("New Set", systemImage: "folder") {
+                    model.newSet()
+                }
+                .keyboardShortcut("o", modifiers: [.command])
+
+                if !model.playlist.isEmpty {
+                    Button("Add Tracks", systemImage: "plus.circle") {
+                        model.addTracks()
+                    }
+                    .keyboardShortcut("o", modifiers: [.command, .shift])
+                }
+
+                Button("Import Folder", systemImage: "folder.badge.plus") {
+                    model.importFolder()
+                }
+                .keyboardShortcut("i", modifiers: [.command, .shift])
+
+                Button("Show Library", systemImage: "rectangle.stack") {
+                    model.workspaceMode = .creative
+                    model.isLibraryBrowserVisible = true
+                }
+
+                if model.workspaceMode == .playing {
+                    Button(model.isInspectorVisible ? "Hide Inspector" : "Show Inspector", systemImage: "sidebar.right") {
+                        model.isInspectorVisible.toggle()
+                    }
+                    .keyboardShortcut("3", modifiers: [.command])
+                }
+            }
+            .help("Set, import, library, and inspector actions")
+        }
+    }
+
+    var toolbarBrand: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text("BeatDropper")
+                .font(.title2.weight(.semibold))
+            if let analysisQueueStatus = model.analysisQueueStatus {
+                Text(analysisQueueStatus)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+        }
+    }
+
+    var workspaceModePicker: some View {
+        Picker("Mode", selection: $model.workspaceMode) {
+            ForEach(NativeWorkspaceMode.allCases) { mode in
+                Text(mode.rawValue).tag(mode)
+            }
+        }
+        .pickerStyle(.segmented)
+        .frame(width: 190)
+        .accessibilityLabel("Workspace mode")
     }
 
     @ViewBuilder
@@ -123,8 +167,10 @@ extension ContentView {
 
     var playingWorkspace: some View {
         VStack(spacing: 12) {
-            playbackControlBar
-                .fixedSize(horizontal: false, vertical: true)
+            mixMonitor
+                .frame(height: 326)
+                .clipped()
+                .layoutPriority(3)
 
             playlistPane
                 .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity)

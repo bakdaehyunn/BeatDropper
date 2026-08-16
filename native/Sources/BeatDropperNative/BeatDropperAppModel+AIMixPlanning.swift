@@ -240,13 +240,16 @@ extension BeatDropperAppModel {
         do {
             isExecutingScheduledMix = true
             stopMixPlanScheduler()
+            let wasManualTransition = isManualTransitionScheduled
             try executeTransition(
                 from: current,
                 to: target,
                 plan: plan,
                 clearPlanAfterStart: true
             )
-            notice = "Executing scheduled AI mix"
+            notice = wasManualTransition
+                ? "Executing beat-aligned manual Next"
+                : "Executing scheduled AI mix"
             isExecutingScheduledMix = false
             requestAIMixPlanIfReady()
         } catch {
@@ -281,6 +284,7 @@ extension BeatDropperAppModel {
         currentMixPlanPair = nil
         currentMixPlanReview = nil
         scheduledMixCountdownSec = nil
+        isManualTransitionScheduled = false
         if !isPlanningMix {
             plannerStatus = isAIMixEnabled ? "AI mix active" : "No AI mix plan"
         }

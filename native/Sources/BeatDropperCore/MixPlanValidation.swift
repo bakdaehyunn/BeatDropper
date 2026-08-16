@@ -79,7 +79,10 @@ public enum MixPlanValidator {
                 phraseAlignment: candidate.phraseAlignment,
                 energyStrategy: candidate.energyStrategy,
                 evidence: Array(candidate.evidence.prefix(8)),
-                mixControls: clampedMixControls(candidate.mixControls)
+                mixControls: clampedMixControls(candidate.mixControls),
+                transitionBarCount: candidate.transitionBarCount.map { clampedInt($0, min: 0, max: 16) },
+                transitionTimingSource: candidate.transitionTimingSource,
+                synchronizedBPM: candidate.synchronizedBPM.map { clamped($0, min: 40, max: 240) }
             ),
             nil
         )
@@ -153,4 +156,8 @@ public enum MixPlanValidator {
 
 private func clamped(_ value: Double, min minValue: Double, max maxValue: Double) -> Double {
     Swift.min(maxValue, Swift.max(minValue, value.isFinite ? value : minValue))
+}
+
+private func clampedInt(_ value: Int, min minValue: Int, max maxValue: Int) -> Int {
+    Swift.min(maxValue, Swift.max(minValue, value))
 }

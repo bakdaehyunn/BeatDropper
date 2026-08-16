@@ -15,6 +15,8 @@ public struct NativePlannerBenchmarkExpectation: Sendable {
     public var expectTempoSync: Bool?
     public var expectedCandidateId: String?
     public var requiredEvidence: [String]
+    public var expectedBarCount: Int?
+    public var expectedTimingSource: TransitionTimingSource?
 
     public init(
         allowedStyles: [MixStyle],
@@ -24,7 +26,9 @@ public struct NativePlannerBenchmarkExpectation: Sendable {
         nextOffsetToleranceSec: Double = 0.75,
         expectTempoSync: Bool? = nil,
         expectedCandidateId: String? = nil,
-        requiredEvidence: [String] = []
+        requiredEvidence: [String] = [],
+        expectedBarCount: Int? = nil,
+        expectedTimingSource: TransitionTimingSource? = nil
     ) {
         self.allowedStyles = allowedStyles
         self.minConfidence = minConfidence
@@ -34,6 +38,8 @@ public struct NativePlannerBenchmarkExpectation: Sendable {
         self.expectTempoSync = expectTempoSync
         self.expectedCandidateId = expectedCandidateId
         self.requiredEvidence = requiredEvidence
+        self.expectedBarCount = expectedBarCount
+        self.expectedTimingSource = expectedTimingSource
     }
 }
 
@@ -215,6 +221,14 @@ public enum NativePlannerBenchmarkSuite {
         if let expectedCandidateId = expectation.expectedCandidateId,
            plan.candidateId != expectedCandidateId {
             failures.append("candidate \(plan.candidateId ?? "--") does not match expected \(expectedCandidateId)")
+        }
+        if let expectedBarCount = expectation.expectedBarCount,
+           plan.transitionBarCount != expectedBarCount {
+            failures.append("bar count \(plan.transitionBarCount.map(String.init) ?? "--") does not match expected \(expectedBarCount)")
+        }
+        if let expectedTimingSource = expectation.expectedTimingSource,
+           plan.transitionTimingSource != expectedTimingSource {
+            failures.append("timing source \(plan.transitionTimingSource?.rawValue ?? "--") does not match expected \(expectedTimingSource.rawValue)")
         }
         for requiredEvidence in expectation.requiredEvidence
             where !plan.evidence.contains(where: { $0.localizedCaseInsensitiveContains(requiredEvidence) }) {
@@ -562,8 +576,6 @@ public enum NativePlannerBenchmarkSuite {
             expectation: NativePlannerBenchmarkExpectation(
                 allowedStyles: [mode == .adventurous ? .energySwap : .smoothBlend],
                 minConfidence: 0.72,
-                maxTransitionEndSec: 188,
-                expectedNextOffsetSec: candidate.nextMixInSec,
                 expectTempoSync: true,
                 expectedCandidateId: candidate.id,
                 requiredEvidence: [
@@ -571,7 +583,9 @@ public enum NativePlannerBenchmarkSuite {
                     "evidence strong",
                     "phrase aligned",
                     "BPM delta"
-                ]
+                ],
+                expectedBarCount: mode == .adventurous ? 4 : 8,
+                expectedTimingSource: .beatGrid
             )
         )
     }
@@ -613,7 +627,6 @@ public enum NativePlannerBenchmarkSuite {
                 allowedStyles: [.hardCut],
                 minConfidence: 0.28,
                 maxTransitionEndSec: 198,
-                expectedNextOffsetSec: 0,
                 expectTempoSync: false,
                 expectedCandidateId: candidate.id,
                 requiredEvidence: [
@@ -621,7 +634,9 @@ public enum NativePlannerBenchmarkSuite {
                     "evidence fallback",
                     "phrase free",
                     "planner failure"
-                ]
+                ],
+                expectedBarCount: 1,
+                expectedTimingSource: .beatGrid
             )
         )
     }
@@ -662,8 +677,6 @@ public enum NativePlannerBenchmarkSuite {
             expectation: NativePlannerBenchmarkExpectation(
                 allowedStyles: [.smoothBlend, .energySwap],
                 minConfidence: 0.5,
-                maxTransitionEndSec: 216,
-                expectedNextOffsetSec: 0,
                 expectTempoSync: true,
                 expectedCandidateId: cueCandidate.id,
                 requiredEvidence: [
@@ -671,7 +684,9 @@ public enum NativePlannerBenchmarkSuite {
                     "evidence partial",
                     "phrase near",
                     "BPM delta"
-                ]
+                ],
+                expectedBarCount: 8,
+                expectedTimingSource: .beatGrid
             )
         )
     }
@@ -700,7 +715,8 @@ public enum NativePlannerBenchmarkSuite {
                     "local fallback",
                     "emergency tail mix",
                     "planner failure"
-                ]
+                ],
+                expectedTimingSource: .secondsFallback
             )
         )
     }
@@ -761,8 +777,6 @@ public enum NativePlannerBenchmarkSuite {
             expectation: NativePlannerBenchmarkExpectation(
                 allowedStyles: [.smoothBlend],
                 minConfidence: 0.62,
-                maxTransitionEndSec: 188,
-                expectedNextOffsetSec: 16,
                 expectTempoSync: true,
                 expectedCandidateId: analysisCandidate.id,
                 requiredEvidence: [
@@ -770,7 +784,9 @@ public enum NativePlannerBenchmarkSuite {
                     "evidence strong",
                     "phrase aligned",
                     "BPM delta"
-                ]
+                ],
+                expectedBarCount: 8,
+                expectedTimingSource: .beatGrid
             )
         )
     }
@@ -865,7 +881,14 @@ public enum NativePlannerBenchmarkSuite {
            ) {
             plan.reasoningSummary = "AI fixture: \(candidate.reason)"
             plan.evidence = ["ai planner fixture", "source \(candidate.source.rawValue)", candidate.reason]
-            return MixPlanValidator.validateAndClamp(plan, context: validationContext).plan
+            guard let validated = MixPlanValidator.validateAndClamp(plan, context: validationContext).plan else {
+                return nil
+            }
+            return BeatAlignedTransitionPolicy.apply(
+                to: validated,
+                request: request,
+                validationContext: validationContext
+            )
         }
 
         guard var plan = NativeFallbackMixPlanner.buildPlan(
@@ -897,16 +920,27 @@ public enum NativePlannerBenchmarkSuite {
                 }
             }
             .sorted()
+        let bpm = track.bpm
+        let beatGrid = bpm.map { bpm in
+            stride(from: 0.0, through: track.durationSec, by: 60 / bpm).map { $0 }
+        } ?? []
+        let barGrid = bpm.map { bpm in
+            stride(from: 0.0, through: track.durationSec, by: 240 / bpm).enumerated().map {
+                BarMarker(index: $0.offset, startSec: $0.element, beatIndex: $0.offset * 4)
+            }
+        } ?? []
         return TrackAnalysis(
             trackId: track.id,
             generatedAt: "2026-06-16T00:00:00Z",
             source: .derived,
             bpm: track.bpm,
             bpmConfidence: track.bpm == nil ? 0 : 0.86,
-            beatGridSec: stride(from: 0, through: min(track.durationSec, 16), by: 0.5).map { $0 },
-            downbeatsSec: [0],
-            barGrid: [BarMarker(index: 0, startSec: 0, beatIndex: 0)],
-            phraseMarkers: [PhraseMarker(index: 0, startSec: 0, bars: 8, confidence: 0.8)],
+            beatGridSec: beatGrid,
+            downbeatsSec: barGrid.map(\.startSec),
+            barGrid: barGrid,
+            phraseMarkers: barGrid.filter { $0.index.isMultiple(of: 8) }.map {
+                PhraseMarker(index: $0.index / 8, startSec: $0.startSec, bars: 8, confidence: 0.8)
+            },
             introCueSec: introCueSec,
             outroCueSec: outroCueSec,
             energyProfile: [rms, min(1, rms + 0.08), max(0, rms - 0.04)],

@@ -31,11 +31,16 @@ struct WaveformRenderPoint: Identifiable {
 
 struct AIMixSwitchToggleStyle: ToggleStyle {
     @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func makeBody(configuration: Configuration) -> some View {
         Button {
-            withAnimation(.spring(response: 0.22, dampingFraction: 0.82)) {
+            if reduceMotion {
                 configuration.isOn.toggle()
+            } else {
+                withAnimation(.spring(response: 0.22, dampingFraction: 0.82)) {
+                    configuration.isOn.toggle()
+                }
             }
         } label: {
             HStack(spacing: 8) {
@@ -107,6 +112,4 @@ struct CenteredIconButtonStyle: ButtonStyle {
 enum AppLayoutMetrics {
     static let minimumWindowWidth: CGFloat = 760
     static let minimumWindowHeight: CGFloat = 520
-    static let minimumContentWidth: CGFloat = 980
-    static let minimumContentHeight: CGFloat = 680
 }

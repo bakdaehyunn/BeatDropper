@@ -4,10 +4,18 @@ import SwiftUI
 extension ContentView {
     var creativeWorkspace: some View {
         VStack(spacing: 12) {
-            creativeTrackMonitor
-                .frame(height: 260)
-            creativePreviewTransportBar
-                .frame(height: 52)
+            VStack(spacing: 0) {
+                creativeTrackMonitor
+                Divider()
+                creativePreviewTransportBar
+            }
+                .frame(height: 304)
+                .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(.separator.opacity(0.32), lineWidth: 1)
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 8))
                 .zIndex(1)
             creativeCollectionArea
                 .frame(minHeight: 0, maxHeight: .infinity)
@@ -19,7 +27,7 @@ extension ContentView {
     var creativeCollectionArea: some View {
         HStack(spacing: 16) {
             playlistPane
-                .frame(minWidth: 560, idealWidth: 620, maxWidth: .infinity, maxHeight: .infinity)
+                .frame(minWidth: 420, idealWidth: 600, maxWidth: .infinity, maxHeight: .infinity)
                 .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
                 .overlay(
                     RoundedRectangle(cornerRadius: 8)
@@ -30,7 +38,7 @@ extension ContentView {
 
             if model.isLibraryBrowserVisible {
                 libraryPane
-                    .frame(minWidth: 320, idealWidth: 360, maxWidth: .infinity, maxHeight: .infinity)
+                    .frame(minWidth: 270, idealWidth: 340, maxWidth: .infinity, maxHeight: .infinity)
                     .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
                     .overlay(
                         RoundedRectangle(cornerRadius: 8)
@@ -49,7 +57,7 @@ extension ContentView {
             if let track = model.creativePreparationTrack {
                 HStack(alignment: .top, spacing: 12) {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("Track Prep")
+                        Label("Track Prep", systemImage: "waveform.badge.magnifyingglass")
                             .font(.title3.weight(.semibold))
                         Text(track.track.title)
                             .font(.headline)
@@ -58,6 +66,7 @@ extension ContentView {
                             metric("BPM", model.creativeEffectiveBPM.map { String(Int($0.rounded())) } ?? "--")
                             metric("Length", formatDuration(track.track.durationSec))
                             metric("Quality", model.creativePreparationAnalysis.map { "\(Int(($0.analysisConfidence * 100).rounded()))%" } ?? "--")
+                            metric("Grid", model.creativePreparationAnalysis.map { "\(Int(($0.analysisQuality.beatGrid * 100).rounded()))%" } ?? "--")
                             metric("Position", formatDuration(model.creativePlaybackPositionSec))
                         }
                     }
@@ -65,7 +74,7 @@ extension ContentView {
                     Spacer(minLength: 8)
 
                     creativeBPMControls
-                        .frame(width: 300)
+                        .frame(width: 330)
                 }
 
                 creativeWaveform(track: track)
@@ -157,6 +166,10 @@ extension ContentView {
 
     var creativeBPMControls: some View {
         VStack(alignment: .leading, spacing: 8) {
+            Label("Beat Grid", systemImage: "metronome")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+
             HStack(spacing: 8) {
                 TextField("BPM", text: $creativeBPMDraft)
                     .textFieldStyle(.roundedBorder)
@@ -257,7 +270,7 @@ extension ContentView {
                     }
             )
         }
-        .frame(height: 88)
+        .frame(height: 98)
         .accessibilityLabel("Creative waveform editor")
         .accessibilityValue("\(preparation.hotCues.count) hot cues")
     }

@@ -18,6 +18,11 @@ public enum EnergyStrategy: String, Codable, Sendable {
     case drop
 }
 
+public enum TransitionTimingSource: String, Codable, Sendable {
+    case beatGrid = "beat_grid"
+    case secondsFallback = "seconds_fallback"
+}
+
 public struct MixTempoSyncPlan: Codable, Hashable, Sendable {
     public var enabled: Bool
     public var targetRate: Double?
@@ -254,6 +259,9 @@ public struct MixPlan: Codable, Hashable, Sendable {
     public var energyStrategy: EnergyStrategy?
     public var evidence: [String]
     public var mixControls: MixControlPlan?
+    public var transitionBarCount: Int?
+    public var transitionTimingSource: TransitionTimingSource?
+    public var synchronizedBPM: Double?
 
     public init(
         transitionStartSec: Double,
@@ -269,7 +277,10 @@ public struct MixPlan: Codable, Hashable, Sendable {
         phraseAlignment: PhraseAlignment? = nil,
         energyStrategy: EnergyStrategy? = nil,
         evidence: [String] = [],
-        mixControls: MixControlPlan? = nil
+        mixControls: MixControlPlan? = nil,
+        transitionBarCount: Int? = nil,
+        transitionTimingSource: TransitionTimingSource? = nil,
+        synchronizedBPM: Double? = nil
     ) {
         self.transitionStartSec = transitionStartSec
         self.transitionEndSec = transitionEndSec
@@ -285,5 +296,8 @@ public struct MixPlan: Codable, Hashable, Sendable {
         self.energyStrategy = energyStrategy
         self.evidence = evidence
         self.mixControls = mixControls
+        self.transitionBarCount = transitionBarCount
+        self.transitionTimingSource = transitionTimingSource
+        self.synchronizedBPM = synchronizedBPM
     }
 }

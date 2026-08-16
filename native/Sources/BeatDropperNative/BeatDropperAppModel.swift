@@ -38,6 +38,7 @@ final class BeatDropperAppModel: ObservableObject {
     @Published var plannerStatus: String = "No AI mix plan"
     @Published var isAIMixEnabled: Bool = false
     @Published var scheduledMixCountdownSec: Double?
+    @Published var isManualTransitionScheduled: Bool = false
     @Published private(set) var creativePreparationTrackID: ImportedTrack.ID? {
         didSet {
             if oldValue != creativePreparationTrackID {
@@ -382,19 +383,33 @@ final class BeatDropperAppModel: ObservableObject {
                 currentMixPlanPair?.nextTrackId == target.id
                 ? currentMixPlan
                 : nil
-            selectedTrackID = target.id
 
             if audioEngine.isPlaybackActive {
+                if offset == 1 {
+                    guard let manualPlan = manualNextTransitionPlan(
+                        from: current,
+                        to: target,
+                        proposedPlan: matchingPlan
+                    ) else {
+                        throw NativePlaybackError.transitionUnavailable
+                    }
+                    currentMixPlan = manualPlan
+                    currentMixPlanPair = PlannedMixPair(currentTrackId: current.id, nextTrackId: target.id)
+                    currentMixPlanReview = nil
+                    isManualTransitionScheduled = true
+                    startMixPlanSchedulerIfNeeded()
+                    notice = "Next queued on bar · \(manualPlan.transitionBarCount.map { "\($0) bars" } ?? "seconds fallback")"
+                    return
+                }
                 try executeTransition(
                     from: current,
                     to: target,
-                    plan: matchingPlan,
+                    plan: nil,
                     clearPlanAfterStart: true
                 )
-                notice = matchingPlan == nil
-                    ? "Crossfading to \(target.track.title)"
-                    : "Executing AI mix plan"
+                notice = "Crossfading to \(target.track.title)"
             } else {
+                selectedTrackID = target.id
                 try audioEngine.play(url: target.url, track: target.track)
                 notice = "Playing \(target.track.title)"
             }
@@ -434,6 +449,46 @@ final class BeatDropperAppModel: ObservableObject {
         if clearPlanAfterStart {
             clearCurrentMixPlan()
         }
+    }
+
+    private func manualNextTransitionPlan(
+        from current: ImportedTrack,
+        to target: ImportedTrack,
+        proposedPlan: MixPlan?
+    ) -> MixPlan? {
+        let request = PlannerRequestBuilder.build(
+            currentTrack: current.track,
+            nextTrack: target.track,
+            elapsedSec: audioEngine.currentTrack?.id == current.id ? audioEngine.elapsedSec : 0,
+            currentAnalysis: trackAnalysesById[current.id],
+            nextAnalysis: trackAnalysesById[target.id],
+            currentPreparation: preparation(forTrackId: current.id),
+            nextPreparation: preparation(forTrackId: target.id),
+            settings: PlannerSettingsSnapshot(
+                fadeDurationSec: settings.fadeDurationSec,
+                aiDjMode: settings.aiDjMode
+            )
+        )
+        let context = MixPlanValidationContext(
+            currentPlaybackElapsedSec: request.currentPlayback.elapsedSec,
+            currentTrackDurationSec: current.track.durationSec,
+            nextTrackDurationSec: target.track.durationSec,
+            maxFadeDurationSec: settings.fadeDurationSec
+        )
+        if let proposedPlan {
+            return BeatAlignedTransitionPolicy.apply(
+                to: proposedPlan,
+                request: request,
+                validationContext: context,
+                intent: .manualNext
+            )
+        }
+        return NativeFallbackMixPlanner.buildPlan(
+            request: request,
+            validationContext: context,
+            failureReason: "manual_next",
+            intent: .manualNext
+        )
     }
 
     private func restoreSettings() {
@@ -641,11 +696,14 @@ struct ImportedMixReviewArtifactComparison: Identifiable, Equatable, Sendable {
 
 private enum NativePlaybackError: LocalizedError {
     case trackUnavailable(String)
+    case transitionUnavailable
 
     var errorDescription: String? {
         switch self {
         case .trackUnavailable(let title):
             return "\(title) is missing. Rescan or relink the source folder."
+        case .transitionUnavailable:
+            return "No safe transition window is available for the next track."
         }
     }
 }

@@ -21,7 +21,7 @@ extension BeatDropperAppModel {
 
     var nextDeckDisplayStatus: String {
         if audioEngine.queuedTrack != nil {
-            return "Queued"
+            return audioEngine.state == .crossfading ? "Crossfading" : "Queued"
         }
         guard let nextTrackAfterSelection else {
             return "No available next"
