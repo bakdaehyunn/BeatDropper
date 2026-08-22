@@ -1,5 +1,6 @@
 import AVFoundation
-import BeatDropperCore
+import BeatDropperDomain
+import BeatDropperDSP
 import Foundation
 
 @main
@@ -71,7 +72,6 @@ struct BeatDropperNativeAnalysisExtract {
         }.description
     }
 }
-
 enum ExtractError: LocalizedError {
     case message(String)
 

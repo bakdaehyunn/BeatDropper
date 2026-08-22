@@ -3,6 +3,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
+const { runPersistentAppLaunch } = require('./lib/macos-launch-smoke.cjs');
 
 const rootDir = path.resolve(__dirname, '..');
 const dmgPath = path.join(rootDir, 'native', 'dist', 'BeatDropper.dmg');
@@ -122,36 +123,19 @@ const main = () => {
       throw new Error(bundledNode.output || 'mounted bundled Node runtime failed to execute');
     }
 
-    const launched = run(executablePath, [], {
-      timeout: 8_000,
-      env: {
-        ...process.env,
-        BEATDROPPER_NATIVE_SMOKE: '1',
-        BEATDROPPER_NATIVE_SMOKE_DELAY_MS: '900'
-      }
-    });
+    const launched = runPersistentAppLaunch(executablePath);
     if (!launched.ok) {
       throw new Error(
-        launched.output || `mounted native app smoke failed with status ${launched.status ?? launched.signal}`
+        launched.output || `mounted native app exited before the ${launched.settleMs}ms launch window`
       );
-    }
-
-    const match = launched.output.match(/BEATDROPPER_NATIVE_SMOKE_READY visibleWindows=(\d+) keyWindow="([^"]*)"/);
-    if (!match) {
-      throw new Error(`mounted app did not print smoke readiness marker. Output:\n${launched.output}`);
-    }
-
-    const visibleWindows = Number(match[1]);
-    if (!Number.isFinite(visibleWindows) || visibleWindows < 1) {
-      throw new Error(`mounted app launched but no visible windows were reported. Output:\n${launched.output}`);
     }
 
     process.stdout.write(
       [
         'BeatDropper native DMG smoke passed.',
         `mount ${mountPoint}`,
-        `visible windows ${visibleWindows}`,
-        `key window ${match[2] || '--'}`
+        'process active true',
+        `launch window ms ${launched.settleMs}`
       ].join('\n') + '\n'
     );
   } finally {

@@ -1,5 +1,6 @@
 import AVFoundation
-import BeatDropperCore
+import BeatDropperDomain
+import BeatDropperDSP
 import Foundation
 
 @main
@@ -160,7 +161,6 @@ struct BeatDropperNativeLoudnessValidation {
         (value * 1_000).rounded() / 1_000
     }
 }
-
 struct NativeLoudnessValidationReport: Codable {
     var schemaVersion: Int
     var generatedAt: String

@@ -1,4 +1,4 @@
-import BeatDropperCore
+import BeatDropperApplication
 import SwiftUI
 
 extension ContentView {
@@ -54,39 +54,39 @@ extension ContentView {
             Spacer()
 
             Button("New Set", systemImage: "folder") {
-                model.newSet()
+                model.libraryActions.newSet()
             }
             .keyboardShortcut("o", modifiers: [.command])
             .help("Start a new set from selected audio files")
 
-            if !model.playlist.isEmpty {
+            if !library.playlist.isEmpty {
                 Button("Add Tracks", systemImage: "plus.circle") {
-                    model.addTracks()
+                    model.libraryActions.addTracks()
                 }
                 .keyboardShortcut("o", modifiers: [.command, .shift])
                 .help("Add tracks to the current set")
             }
 
             Button("Import Folder", systemImage: "folder.badge.plus") {
-                model.importFolder()
+                model.libraryActions.importFolder()
             }
             .keyboardShortcut("i", modifiers: [.command, .shift])
             .help("Import a music folder into the library")
 
-            if model.workspaceMode == .playing || !model.isLibraryBrowserVisible {
+            if navigation.workspaceMode == .playing || !navigation.isLibraryBrowserVisible {
                 Button("Library", systemImage: "rectangle.stack") {
-                    model.workspaceMode = .creative
-                    model.isLibraryBrowserVisible = true
+                    navigation.workspaceMode = .creative
+                    navigation.isLibraryBrowserVisible = true
                 }
                 .help("Show library browser")
             }
 
-            if model.workspaceMode == .playing {
-                Button(model.isInspectorVisible ? "Hide Inspector" : "Inspector", systemImage: "sidebar.right") {
-                    model.isInspectorVisible.toggle()
+            if navigation.workspaceMode == .playing {
+                Button(navigation.isInspectorVisible ? "Hide Inspector" : "Inspector", systemImage: "sidebar.right") {
+                    navigation.isInspectorVisible.toggle()
                 }
                 .keyboardShortcut("3", modifiers: [.command])
-                .help(model.isInspectorVisible ? "Hide mix inspector" : "Show mix inspector")
+                .help(navigation.isInspectorVisible ? "Hide mix inspector" : "Show mix inspector")
             }
 
         }
@@ -100,30 +100,30 @@ extension ContentView {
             Spacer(minLength: 4)
             Menu("Actions", systemImage: "ellipsis.circle") {
                 Button("New Set", systemImage: "folder") {
-                    model.newSet()
+                    model.libraryActions.newSet()
                 }
                 .keyboardShortcut("o", modifiers: [.command])
 
-                if !model.playlist.isEmpty {
+                if !library.playlist.isEmpty {
                     Button("Add Tracks", systemImage: "plus.circle") {
-                        model.addTracks()
+                        model.libraryActions.addTracks()
                     }
                     .keyboardShortcut("o", modifiers: [.command, .shift])
                 }
 
                 Button("Import Folder", systemImage: "folder.badge.plus") {
-                    model.importFolder()
+                    model.libraryActions.importFolder()
                 }
                 .keyboardShortcut("i", modifiers: [.command, .shift])
 
                 Button("Show Library", systemImage: "rectangle.stack") {
-                    model.workspaceMode = .creative
-                    model.isLibraryBrowserVisible = true
+                    navigation.workspaceMode = .creative
+                    navigation.isLibraryBrowserVisible = true
                 }
 
-                if model.workspaceMode == .playing {
-                    Button(model.isInspectorVisible ? "Hide Inspector" : "Show Inspector", systemImage: "sidebar.right") {
-                        model.isInspectorVisible.toggle()
+                if navigation.workspaceMode == .playing {
+                    Button(navigation.isInspectorVisible ? "Hide Inspector" : "Show Inspector", systemImage: "sidebar.right") {
+                        navigation.isInspectorVisible.toggle()
                     }
                     .keyboardShortcut("3", modifiers: [.command])
                 }
@@ -136,7 +136,7 @@ extension ContentView {
         VStack(alignment: .leading, spacing: 2) {
             Text("BeatDropper")
                 .font(.title2.weight(.semibold))
-            if let analysisQueueStatus = model.analysisQueueStatus {
+            if let analysisQueueStatus = library.analysisQueueStatus {
                 Text(analysisQueueStatus)
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -146,7 +146,7 @@ extension ContentView {
     }
 
     var workspaceModePicker: some View {
-        Picker("Mode", selection: $model.workspaceMode) {
+        Picker("Mode", selection: $navigation.workspaceMode) {
             ForEach(NativeWorkspaceMode.allCases) { mode in
                 Text(mode.rawValue).tag(mode)
             }
@@ -158,7 +158,7 @@ extension ContentView {
 
     @ViewBuilder
     var workspaceContent: some View {
-        if model.workspaceMode == .creative {
+        if navigation.workspaceMode == .creative {
             creativeWorkspace
         } else {
             playingWorkspace
@@ -184,7 +184,7 @@ extension ContentView {
     }
 
     var shouldShowInspectorDrawer: Bool {
-        model.workspaceMode == .playing && model.isInspectorVisible
+        navigation.workspaceMode == .playing && navigation.isInspectorVisible
     }
 
     var inspectorDrawer: some View {

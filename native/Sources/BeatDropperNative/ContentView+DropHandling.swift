@@ -27,9 +27,9 @@ extension ContentView {
         group.notify(queue: .main) {
             let urls = accumulator.snapshot()
             if urls.isEmpty {
-                model.notice = "No supported audio files"
+                shell.presentNotice("No supported audio files")
             } else {
-                model.openDroppedItemsAsSet(urls)
+                model.libraryActions.openDroppedItemsAsSet(urls)
             }
         }
 

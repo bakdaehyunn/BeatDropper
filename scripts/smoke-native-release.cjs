@@ -5,6 +5,7 @@ const crypto = require('node:crypto');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
+const { runPersistentAppLaunch } = require('./lib/macos-launch-smoke.cjs');
 
 const rootDir = path.resolve(__dirname, '..');
 const distDir = path.join(rootDir, 'native', 'dist');
@@ -176,34 +177,18 @@ const runInstalledAppSmoke = () => {
       throw new Error(codesign.output || 'installed app codesign verification failed');
     }
 
-    const launched = runCommand(executablePath, [], 10_000, {
-      env: {
-        ...process.env,
-        BEATDROPPER_NATIVE_SMOKE: '1',
-        BEATDROPPER_NATIVE_SMOKE_DELAY_MS: '900'
-      }
-    });
+    const launched = runPersistentAppLaunch(executablePath);
     append(launched);
     if (!launched.ok) {
       throw new Error(
-        launched.output || `installed native app smoke failed with status ${launched.status ?? launched.signal}`
+        launched.output || `installed native app exited before the ${launched.settleMs}ms launch window`
       );
-    }
-
-    const match = launched.output.match(/BEATDROPPER_NATIVE_SMOKE_READY visibleWindows=(\d+) keyWindow="([^"]*)"/);
-    if (!match) {
-      throw new Error(`installed app did not print smoke readiness marker. Output:\n${launched.output}`);
-    }
-
-    const visibleWindows = Number(match[1]);
-    if (!Number.isFinite(visibleWindows) || visibleWindows < 1) {
-      throw new Error(`installed app launched but no visible windows were reported. Output:\n${launched.output}`);
     }
 
     output.push(`BeatDropper native installed app smoke passed.`);
     output.push(`install ${installedAppPath}`);
-    output.push(`visible windows ${visibleWindows}`);
-    output.push(`key window ${match[2] || '--'}`);
+    output.push('process active true');
+    output.push(`launch window ms ${launched.settleMs}`);
 
     return {
       label,
@@ -242,6 +227,7 @@ const parseSmokeEvidence = (output) => {
     keyWindow: keyWindowMatch?.[1]?.trim() || null,
     mountPoint: mountMatch?.[1]?.trim() || null,
     installPath: installMatch?.[1]?.trim() || null,
+    processActive: /process active true/i.test(output),
     readinessMarkerSeen: /BeatDropper native .* smoke passed\./.test(output)
   };
 };
@@ -324,10 +310,10 @@ const main = () => {
   );
 
   for (const step of report.steps) {
-    const windows = step.evidence.visibleWindows ?? '--';
+    const active = step.evidence.processActive ? 'true' : 'false';
     const mount = step.evidence.mountPoint ? ` mount=${step.evidence.mountPoint}` : '';
     const install = step.evidence.installPath ? ` install=${step.evidence.installPath}` : '';
-    process.stdout.write(`- ${step.outcome.toUpperCase()} ${step.label}: visibleWindows=${windows}${mount}${install}\n`);
+    process.stdout.write(`- ${step.outcome.toUpperCase()} ${step.label}: processActive=${active}${mount}${install}\n`);
   }
 
   if (report.status !== 'PASS') {

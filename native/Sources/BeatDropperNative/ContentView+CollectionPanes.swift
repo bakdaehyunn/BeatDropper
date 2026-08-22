@@ -1,4 +1,4 @@
-import BeatDropperCore
+import BeatDropperApplication
 import SwiftUI
 
 extension ContentView {
@@ -6,11 +6,11 @@ extension ContentView {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(model.workspaceMode == .playing ? "Set Flow" : "Set Builder")
+                    Text(navigation.workspaceMode == .playing ? "Set Flow" : "Set Builder")
                         .font(.title3.weight(.semibold))
                         .lineLimit(1)
                         .fixedSize(horizontal: false, vertical: true)
-                    Text("\(model.playlist.count) tracks · \(formatDuration(model.totalDurationSec)) total")
+                    Text("\(library.playlist.count) tracks · \(formatDuration(library.totalDurationSec)) total")
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .fixedSize(horizontal: false, vertical: true)
@@ -18,14 +18,14 @@ extension ContentView {
                 Spacer()
             }
 
-            if model.workspaceMode == .creative {
+            if navigation.workspaceMode == .creative {
                 savedSetsManagementBar
                 creativeEnergyFlow
             } else {
                 playingSetFlowSummary
             }
 
-            if !model.playlist.isEmpty {
+            if !library.playlist.isEmpty {
                 playlistEditActions
             }
 
@@ -33,7 +33,7 @@ extension ContentView {
                 .frame(minHeight: 120, maxHeight: .infinity)
         }
         .padding(.horizontal, 16)
-        .padding(.top, model.workspaceMode == .creative ? 20 : 18)
+        .padding(.top, navigation.workspaceMode == .creative ? 20 : 18)
         .padding(.bottom, 16)
     }
 
@@ -44,46 +44,46 @@ extension ContentView {
                 help: "Move selected track up",
                 accessibilityLabel: "Move selected track up"
             ) {
-                model.moveSelectedTrack(offset: -1)
+                model.libraryActions.moveSelectedTrack(offset: -1)
             }
-            .disabled(!model.canMoveSelectedTrackUp)
+            .disabled(!library.canMoveSelectedTrackUp)
 
             centeredIconButton(
                 systemImage: "arrow.down",
                 help: "Move selected track down",
                 accessibilityLabel: "Move selected track down"
             ) {
-                model.moveSelectedTrack(offset: 1)
+                model.libraryActions.moveSelectedTrack(offset: 1)
             }
-            .disabled(!model.canMoveSelectedTrackDown)
+            .disabled(!library.canMoveSelectedTrackDown)
 
             centeredIconButton(
                 systemImage: "trash",
                 help: "Remove selected track",
                 accessibilityLabel: "Remove selected track"
             ) {
-                model.removeSelectedTrack()
+                model.libraryActions.removeSelectedTrack()
             }
-            .disabled(!model.canRemoveSelectedTrack)
+            .disabled(!library.canRemoveSelectedTrack)
 
             centeredIconButton(
                 systemImage: "text.badge.xmark",
                 help: "Clear playlist",
                 accessibilityLabel: "Clear playlist"
             ) {
-                model.clearPlaylist()
+                model.libraryActions.clearPlaylist()
             }
-            .disabled(!model.canClearPlaylist)
+            .disabled(!library.canClearPlaylist)
         }
     }
 
     @ViewBuilder
     var playlistContent: some View {
-        if model.playlist.isEmpty {
+        if library.playlist.isEmpty {
             emptyPanel("No Tracks", systemImage: "music.note")
                 .accessibilityLabel("Current playlist")
         } else {
-            Table(model.playlist, selection: $model.selectedTrackID) {
+            Table(library.playlist, selection: playlistSelection) {
                 TableColumn("#") { imported in
                     Text(rowNumber(for: imported))
                         .foregroundStyle(.secondary)
@@ -92,7 +92,7 @@ extension ContentView {
 
                 TableColumn("Track") { imported in
                     HStack(spacing: 6) {
-                        if !model.isTrackAvailable(imported) {
+                        if !library.isAvailable(imported) {
                             Image(systemName: "exclamationmark.triangle")
                                 .foregroundStyle(.red)
                         }
@@ -100,11 +100,11 @@ extension ContentView {
                             .lineLimit(1)
                             .truncationMode(.middle)
                     }
-                    .foregroundStyle(model.isTrackAvailable(imported) ? .primary : .secondary)
+                    .foregroundStyle(library.isAvailable(imported) ? .primary : .secondary)
                 }
 
                 TableColumn("BPM") { imported in
-                    Text(model.displayBPM(for: imported))
+                    Text(library.displayBPM(for: imported))
                         .monospacedDigit()
                 }
                 .width(52)
@@ -130,12 +130,12 @@ extension ContentView {
         HStack(spacing: 8) {
             setFlowSummaryMetric(
                 "Current",
-                model.currentDeckDisplayTrack?.title ?? "Not loaded",
+                playing.currentDisplayTrack?.title ?? "Not loaded",
                 systemImage: "play.circle.fill"
             )
             setFlowSummaryMetric(
                 "Next",
-                model.nextDeckDisplayTrack?.title ?? "Not queued",
+                playing.nextDisplayTrack?.title ?? "Not queued",
                 systemImage: "forward.end.circle"
             )
             setFlowSummaryMetric(
@@ -153,26 +153,26 @@ extension ContentView {
                 Label("Energy Flow", systemImage: "chart.xyaxis.line")
                     .font(.caption.weight(.semibold))
                 Spacer()
-                Text(model.playlist.isEmpty ? "Add tracks to shape the set" : "Analysis profile by set order")
+                Text(library.playlist.isEmpty ? "Add tracks to shape the set" : "Analysis profile by set order")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
 
-            if model.playlist.isEmpty {
+            if library.playlist.isEmpty {
                 RoundedRectangle(cornerRadius: 4)
                     .fill(Color(nsColor: .separatorColor).opacity(0.18))
                     .frame(height: 32)
             } else {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(alignment: .bottom, spacing: 5) {
-                        ForEach(Array(model.playlist.enumerated()), id: \.element.id) { index, imported in
+                        ForEach(Array(library.playlist.enumerated()), id: \.element.id) { index, imported in
                             let energy = setEnergyLevel(for: imported)
                             Button {
-                                model.selectedTrackID = imported.id
+                                model.libraryActions.selectPlaylistTrack(imported.id)
                             } label: {
                                 VStack(spacing: 3) {
                                     Capsule()
-                                        .fill(model.selectedTrackID == imported.id ? Color.accentColor : Color.accentColor.opacity(0.42))
+                                        .fill(library.selectedTrackID == imported.id ? Color.accentColor : Color.accentColor.opacity(0.42))
                                         .frame(width: 18, height: 8 + (energy * 24))
                                     Text("\(index + 1)")
                                         .font(.system(size: 8, weight: .semibold, design: .monospaced))
@@ -198,7 +198,7 @@ extension ContentView {
     }
 
     func setEnergyLevel(for imported: ImportedTrack) -> Double {
-        guard let profile = model.trackAnalysesById[imported.id]?.energyProfile,
+        guard let profile = library.analysesByTrackID[imported.id]?.energyProfile,
               !profile.isEmpty else {
             return 0.2
         }
@@ -226,27 +226,27 @@ extension ContentView {
     }
 
     var remainingSetFlowTrackCount: Int {
-        guard let currentID = model.audioEngine.currentTrack?.id,
-              let index = model.playlist.firstIndex(where: { $0.track.id == currentID }) else {
-            return model.playlist.count
+        guard let currentID = playing.session.currentTrack?.id,
+              let index = library.playlist.firstIndex(where: { $0.track.id == currentID }) else {
+            return library.playlist.count
         }
-        return max(0, model.playlist.count - index - 1)
+        return max(0, library.playlist.count - index - 1)
     }
 
     func setFlowState(for imported: ImportedTrack) -> String {
-        if !model.isTrackAvailable(imported) {
+        if !library.isAvailable(imported) {
             return "Missing"
         }
-        if model.audioEngine.currentTrack?.id == imported.track.id {
+        if playing.session.currentTrack?.id == imported.track.id {
             return "Current"
         }
-        if model.audioEngine.queuedTrack?.id == imported.track.id || model.nextDeckDisplayTrack?.id == imported.track.id {
+        if playing.session.queuedTrack?.id == imported.track.id {
             return "Next"
         }
-        if model.analyzingTrackIds.contains(imported.id) {
+        if library.analyzingTrackIDs.contains(imported.id) {
             return "Analyzing"
         }
-        return model.trackAnalysesById[imported.id] == nil ? "Pending" : "Ready"
+        return library.analysesByTrackID[imported.id] == nil ? "Pending" : "Ready"
     }
 
     func setFlowStateColor(for imported: ImportedTrack) -> Color {
@@ -261,27 +261,27 @@ extension ContentView {
 
     var maintenanceActions: some View {
         HStack(spacing: 8) {
-            if model.hasLibrarySourceFolders {
+            if library.hasSourceFolders {
                 Button("Rescan", systemImage: "arrow.triangle.2.circlepath") {
-                    model.rescanLibraryFolders()
+                    model.libraryActions.rescanLibraryFolders()
                 }
                 .help("Rescan imported library folders")
             }
 
-            if model.hasMissingSourceFolders {
+            if library.hasMissingSourceFolders {
                 Menu("Relink", systemImage: "link") {
-                    ForEach(model.missingSourceFolders) { folder in
+                    ForEach(library.missingSourceFolders) { folder in
                         Button(folder.displayName, systemImage: "folder.badge.questionmark") {
-                            model.relinkMissingSourceFolder(folder)
+                            model.libraryActions.relinkMissingSourceFolder(folder)
                         }
                     }
                 }
                 .help("Relink missing library folders")
             }
 
-            if model.selectedTrackNeedsRelink {
+            if library.selectedTrackNeedsRelink {
                 Button("Relink File", systemImage: "link") {
-                    model.relinkSelectedTrack()
+                    model.libraryActions.relinkSelectedTrack()
                 }
             }
         }
@@ -296,7 +296,7 @@ extension ContentView {
                         .font(.title3.weight(.semibold))
                         .lineLimit(1)
                         .fixedSize(horizontal: false, vertical: true)
-                    Text("\(model.libraryBrowserTracks.count) tracks")
+                    Text("\(library.browserTracks.count) tracks")
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .fixedSize(horizontal: false, vertical: true)
@@ -311,19 +311,19 @@ extension ContentView {
                     help: "Hide library browser",
                     accessibilityLabel: "Hide library browser"
                 ) {
-                    model.isLibraryBrowserVisible = false
+                    navigation.isLibraryBrowserVisible = false
                 }
             }
 
-            if !model.libraryBrowserTracks.isEmpty || !model.librarySearchText.isEmpty {
-                TextField("Search library", text: $model.librarySearchText)
+            if !library.browserTracks.isEmpty || !library.searchText.isEmpty {
+                TextField("Search library", text: librarySearchBinding)
                     .textFieldStyle(.roundedBorder)
                     .accessibilityLabel("Search library")
             }
 
-            if model.canAddSelectedLibraryTrackToPlaylist {
+            if library.canAddSelectedLibraryTrackToPlaylist {
                 Button("Add to Set", systemImage: "plus.circle") {
-                    model.addSelectedLibraryTrackToPlaylist()
+                    model.libraryActions.addSelectedLibraryTrackToPlaylist()
                 }
                 .help("Add selected library track to the current set")
             }
@@ -338,14 +338,14 @@ extension ContentView {
 
     @ViewBuilder
     var libraryContent: some View {
-        if model.filteredLibraryTracks.isEmpty {
+        if library.filteredBrowserTracks.isEmpty {
             emptyPanel(libraryEmptyTitle, systemImage: "rectangle.stack")
                 .accessibilityLabel("Library browser")
         } else {
-            Table(model.filteredLibraryTracks, selection: $model.selectedLibraryTrackID) {
+            Table(library.filteredBrowserTracks, selection: librarySelection) {
                 TableColumn("Track") { row in
                     HStack(spacing: 6) {
-                        if !model.isTrackAvailable(row) {
+                        if !library.isAvailable(row) {
                             Image(systemName: "exclamationmark.triangle")
                                 .foregroundStyle(.red)
                         }
@@ -353,11 +353,11 @@ extension ContentView {
                             .lineLimit(1)
                             .truncationMode(.middle)
                     }
-                    .foregroundStyle(model.isTrackAvailable(row) ? .primary : .secondary)
+                    .foregroundStyle(library.isAvailable(row) ? .primary : .secondary)
                 }
 
                 TableColumn("BPM") { row in
-                    Text(model.displayBPM(for: row))
+                    Text(library.displayBPM(for: row))
                         .monospacedDigit()
                 }
                 .width(48)
@@ -367,7 +367,7 @@ extension ContentView {
     }
 
     var libraryEmptyTitle: String {
-        model.librarySearchText.isEmpty ? "No Library Tracks" : "No Matches"
+        library.searchText.isEmpty ? "No Library Tracks" : "No Matches"
     }
 
     func emptyPanel(_ title: String, systemImage: String) -> some View {
@@ -399,14 +399,14 @@ extension ContentView {
 
             Picker("Saved Set", selection: savedSetSelection) {
                 Text("New Saved Set").tag("")
-                ForEach(model.userPlaylists) { playlist in
+                ForEach(library.userPlaylists) { playlist in
                     Text(playlist.name).tag(playlist.id)
                 }
             }
             .labelsHidden()
             .frame(width: 170)
 
-            TextField("Set name", text: $model.userPlaylistNameDraft)
+            TextField("Set name", text: $library.userPlaylistNameDraft)
                 .textFieldStyle(.roundedBorder)
                 .frame(minWidth: 180)
 
@@ -414,7 +414,7 @@ extension ContentView {
 
             Spacer(minLength: 0)
 
-            Text("\(model.userPlaylists.count) saved")
+            Text("\(library.userPlaylists.count) saved")
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
         }
@@ -429,20 +429,20 @@ extension ContentView {
             HStack(spacing: 10) {
                 Picker("Saved Set", selection: savedSetSelection) {
                     Text("New Saved Set").tag("")
-                    ForEach(model.userPlaylists) { playlist in
+                    ForEach(library.userPlaylists) { playlist in
                         Text(playlist.name).tag(playlist.id)
                     }
                 }
                 .labelsHidden()
 
-                TextField("Set name", text: $model.userPlaylistNameDraft)
+                TextField("Set name", text: $library.userPlaylistNameDraft)
                     .textFieldStyle(.roundedBorder)
             }
 
             HStack(spacing: 8) {
                 savedSetActions
                 Spacer()
-                Text("\(model.userPlaylists.count) saved")
+                Text("\(library.userPlaylists.count) saved")
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
@@ -455,26 +455,26 @@ extension ContentView {
             HStack(spacing: 8) {
                 if shouldShowSaveSetAction {
                     Button("Save", systemImage: "square.and.arrow.down") {
-                        model.saveCurrentSet()
+                        model.libraryActions.saveCurrentSet()
                     }
-                    .disabled(!model.canSaveCurrentSet)
+                    .disabled(!library.canSaveCurrentSet)
                     .help("Save the current set as a taste playlist")
                 }
 
-                if model.canLoadSelectedSet {
+                if library.canLoadSelectedSet {
                     Button("Load", systemImage: "arrow.down.doc") {
-                        model.loadSelectedSavedSet()
+                        model.libraryActions.loadSelectedSavedSet()
                     }
                     .help("Load the selected saved set")
 
                     Button("Rename", systemImage: "pencil") {
-                        model.renameSelectedSavedSet()
+                        model.libraryActions.renameSelectedSavedSet()
                     }
-                    .disabled(model.userPlaylistNameDraft.isEmpty)
+                    .disabled(library.userPlaylistNameDraft.isEmpty)
                     .help("Rename the selected saved set")
 
                     Button("Delete", systemImage: "trash") {
-                        model.deleteSelectedSavedSet()
+                        model.libraryActions.deleteSelectedSavedSet()
                     }
                     .help("Delete the selected saved set")
                 }
@@ -484,22 +484,43 @@ extension ContentView {
     }
 
     var shouldShowSavedSetActions: Bool {
-        shouldShowSaveSetAction || model.canLoadSelectedSet
+        shouldShowSaveSetAction || library.canLoadSelectedSet
     }
 
     var shouldShowSaveSetAction: Bool {
-        !model.playlist.isEmpty || !model.userPlaylistNameDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        !library.playlist.isEmpty || !library.userPlaylistNameDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     var savedSetSelection: Binding<String> {
         Binding(
-            get: { model.selectedUserPlaylistId },
-            set: { model.selectUserPlaylist($0) }
+            get: { library.selectedUserPlaylistID },
+            set: { model.libraryActions.selectUserPlaylist($0) }
+        )
+    }
+
+    var playlistSelection: Binding<ImportedTrack.ID?> {
+        Binding(
+            get: { library.selectedTrackID },
+            set: { trackID in model.libraryActions.selectPlaylistTrack(trackID) }
+        )
+    }
+
+    var librarySelection: Binding<ImportedTrack.ID?> {
+        Binding(
+            get: { library.selectedLibraryTrackID },
+            set: { trackID in model.libraryActions.selectLibraryTrack(trackID) }
+        )
+    }
+
+    var librarySearchBinding: Binding<String> {
+        Binding(
+            get: { library.searchText },
+            set: { text in library.updateSearchText(text) }
         )
     }
 
     func rowNumber(for imported: ImportedTrack) -> String {
-        guard let index = model.playlist.firstIndex(where: { $0.id == imported.id }) else {
+        guard let index = library.playlist.firstIndex(where: { $0.id == imported.id }) else {
             return "--"
         }
         return String(index + 1)

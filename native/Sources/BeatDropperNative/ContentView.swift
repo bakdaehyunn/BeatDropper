@@ -1,8 +1,15 @@
-import BeatDropperCore
+import BeatDropperApplication
 import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject var model: BeatDropperAppModel
+    @EnvironmentObject var playing: PlayingFeature
+    @EnvironmentObject var library: LibraryFeature
+    @EnvironmentObject var creative: CreativeFeature
+    @EnvironmentObject var planning: MixPlanningFeature
+    @EnvironmentObject var review: MixReviewFeature
+    @EnvironmentObject var navigation: AppNavigation
+    @EnvironmentObject var shell: AppShellFeature
     @State var isFileDropTargeted = false
     @State var creativeCueKind: TrackPreparationCueKind = .drop
     @State var creativeBPMDraft = ""

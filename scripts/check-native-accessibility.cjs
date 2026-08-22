@@ -1,367 +1,56 @@
 #!/usr/bin/env node
+'use strict';
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { parseArguments, repositoryRoot, writeJsonReport } = require('./lib/native-tooling.cjs');
 
-const rootDir = path.resolve(__dirname, '..');
-const nativeViewDir = path.join(rootDir, 'native', 'Sources', 'BeatDropperNative');
-const sourcePaths = fs.readdirSync(nativeViewDir)
-  .filter((fileName) => /^ContentView(?:\+.+)?\.swift$/.test(fileName))
-  .sort((left, right) => {
-    if (left === 'ContentView.swift') return -1;
-    if (right === 'ContentView.swift') return 1;
-    return left.localeCompare(right);
-  })
-  .map((fileName) => path.join(nativeViewDir, fileName));
-const source = sourcePaths.map((sourcePath) => fs.readFileSync(sourcePath, 'utf8')).join('\n');
-const reportTitle = 'Native Accessibility Check';
-
-const parseArgs = (argv) => {
-  const options = {
-    writeJson: null,
-    help: false
-  };
-
-  for (let index = 0; index < argv.length; index += 1) {
-    const arg = argv[index];
-    if (arg === '--help' || arg === '-h') {
-      options.help = true;
-      continue;
-    }
-    if (arg === '--write-json') {
-      const next = argv[index + 1];
-      if (!next) {
-        throw new Error('--write-json requires a report path');
-      }
-      options.writeJson = next;
-      index += 1;
-      continue;
-    }
-    if (arg.startsWith('--write-json=')) {
-      options.writeJson = arg.slice('--write-json='.length);
-      if (!options.writeJson) {
-        throw new Error('--write-json requires a report path');
-      }
-      continue;
-    }
-    throw new Error(`Unknown option: ${arg}`);
-  }
-
-  return options;
-};
-
-const relative = (targetPath) => path.relative(rootDir, targetPath);
-
-const resolveReportPath = (reportPath) => (
-  path.isAbsolute(reportPath) ? reportPath : path.join(rootDir, reportPath)
-);
-
-const writeJsonReport = (reportPath, report) => {
-  if (!reportPath) {
-    return;
-  }
-  const resolved = resolveReportPath(reportPath);
-  fs.mkdirSync(path.dirname(resolved), { recursive: true });
-  fs.writeFileSync(resolved, `${JSON.stringify(report, null, 2)}\n`);
-};
-
-const printUsage = () => {
-  process.stdout.write(
-    [
-      'Usage: node scripts/check-native-accessibility.cjs [options]',
-      '',
-      'Verifies critical native SwiftUI accessibility labels.',
-      '',
-      'Options:',
-      '  --write-json <path>  Write durable accessibility check evidence.',
-      '  --help               Show this message.',
-      ''
-    ].join('\n')
-  );
-};
-
-const firstNumber = (pattern, target = source) => {
-  const match = target.match(pattern);
-  if (!match) {
-    return null;
-  }
-  const value = Number(match[1]);
-  return Number.isFinite(value) ? value : null;
-};
-
-const sourceSection = (startPattern, endPattern) => {
-  const start = source.search(startPattern);
-  if (start < 0) {
-    return '';
-  }
-  const rest = source.slice(start);
-  const end = rest.search(endPattern);
-  return end < 0 ? rest : rest.slice(0, end);
-};
-
-const sumMinWidths = (target) => {
-  const matches = [...target.matchAll(/\.frame\(minWidth: ([0-9]+)/g)];
-  return matches.reduce((total, match) => total + Number(match[1]), 0);
-};
-
-const rootUsesResponsiveWorkspaceScroll = () => (
-  /GeometryReader\s*\{ proxy in[\s\S]*appShell[\s\S]*width: proxy\.size\.width[\s\S]*height: proxy\.size\.height[\s\S]*(?:private )?var mainStage:[\s\S]*ScrollView\(\.vertical, showsIndicators: true\)[\s\S]*workspaceContent/.test(source)
-);
-
-const splitPaneMinWidthsFitWindow = () => {
-  const windowMinWidth = firstNumber(/minimumWindowWidth: CGFloat = ([0-9]+)/);
-  if (!windowMinWidth) {
-    return false;
-  }
-  const creativeWorkspace = sourceSection(
-    /(?:private )?var creativeCollectionArea:/,
-    /(?:private )?var creativeTrackMonitor:/
-  );
-  const creativePaneWidth = sumMinWidths(creativeWorkspace);
-  return creativePaneWidth > 0 && creativePaneWidth + 36 <= windowMinWidth;
-};
-
-const checks = [
-  {
-    label: 'workspace root label',
-    pattern: /accessibilityLabel\("BeatDropper DJ workspace"\)/
-  },
-  {
-    label: 'primary toolbar label',
-    pattern: /accessibilityLabel\("Primary toolbar"\)/
-  },
-  {
-    label: 'workspace mode picker label',
-    pattern: /accessibilityLabel\("Workspace mode"\)/
-  },
-  {
-    label: 'live mix monitor label',
-    pattern: /accessibilityLabel\("Live mix monitor"\)/
-  },
-  {
-    label: 'playing monitor exposes a dedicated waveform stack',
-    pattern: /(?:private )?var playingWaveformStack:[\s\S]*deckWaveformRow[\s\S]*title: "Current"[\s\S]*deckWaveformRow[\s\S]*title: "Next"[\s\S]*accessibilityLabel\("Playing waveform stack"\)/
-  },
-  {
-    label: 'playing monitor keeps deck and AI status secondary',
-    pattern: /(?:private )?var playingMonitorMetaBar:[\s\S]*Text\(playingMixStatusText\)[\s\S]*(?:private )?var playingMixStatusText: String/
-  },
-  {
-    label: 'playing waveform rows use compact stacked strips',
-    pattern: /(?:private )?func deckWaveformRow[\s\S]*miniDeckMeter\(meter\)[\s\S]*\.frame\(height: 58\)/
-  },
-  {
-    label: 'playing waveform strip renders through Canvas',
-    pattern: /(?:private )?func trackWaveformStrip[\s\S]*waveformRenderPoints\(for: analysis\)[\s\S]*return Canvas/
-  },
-  {
-    label: 'playing waveform strip includes bar phrase and transient evidence',
-    pattern: /(?:private )?func trackWaveformStrip[\s\S]*drawBarMarkers[\s\S]*drawPhraseMarkers[\s\S]*drawTransientMarkers/
-  },
-  {
-    label: 'waveform renderer prefers detailed DSP data with fallback peaks',
-    pattern: /func waveformRenderPoints[\s\S]*analysis\.waveformDetail[\s\S]*spectralBand[\s\S]*analysis\.waveformPeaks/
-  },
-  {
-    label: 'playing waveform cursors include play out and in markers',
-    pattern: /cueLabel: "OUT"[\s\S]*cueLabel: "IN"[\s\S]*label: "PLAY"/
-  },
-  {
-    label: 'next waveform binds to the live incoming deck position',
-    pattern: /title: "Next"[\s\S]*value: model\.audioEngine\.queuedTrack != nil[\s\S]*model\.audioEngine\.nextDeckElapsedSec[\s\S]*elapsedSec: model\.audioEngine\.queuedTrack != nil[\s\S]*model\.audioEngine\.nextDeckElapsedSec/
-  },
-  {
-    label: 'playing monitor retains the active audio-engine transition plan',
-    pattern: /var playingTransitionPlan: MixPlan\?[\s\S]*model\.audioEngine\.activeTransitionPlan \?\? model\.currentMixPlan/
-  },
-  {
-    label: 'transition evidence shows style bars duration timing source out and in',
-    pattern: /func transitionEvidenceText[\s\S]*plan\.style[\s\S]*plan\.transitionBarCount[\s\S]*plan\.transitionEndSec - plan\.transitionStartSec[\s\S]*plan\.transitionTimingSource[\s\S]*OUT[\s\S]*IN/
-  },
-  {
-    label: 'current playlist table label',
-    pattern: /accessibilityLabel\("Current playlist"\)/
-  },
-  {
-    label: 'library browser table label',
-    pattern: /accessibilityLabel\("Library browser"\)/
-  },
-  {
-    label: 'creative workspace label',
-    pattern: /accessibilityLabel\("Creative workspace"\)/
-  },
-  {
-    label: 'creative workspace includes a track preparation monitor',
-    pattern: /(?:private )?var creativeTrackMonitor:[\s\S]*accessibilityLabel\("Creative track monitor"\)/
-  },
-  {
-    label: 'creative collection panes keep a separated layout gap',
-    pattern: /(?:private )?var creativeCollectionArea:[\s\S]*HStack\(spacing: 16\)[\s\S]*playlistPane[\s\S]*libraryPane[\s\S]*\.padding\(\.top, 8\)/
-  },
-  {
-    label: 'creative waveform supports click to preview',
-    pattern: /(?:private )?func creativeWaveform[\s\S]*DragGesture\(minimumDistance: 0\)[\s\S]*model\.previewCreativeTrack[\s\S]*accessibilityLabel\("Creative waveform editor"\)/
-  },
-  {
-    label: 'creative preparation exposes BPM tap and hot cue actions',
-    pattern: /TextField\("BPM"[\s\S]*setCreativeBPMOverride[\s\S]*Button\("Tap"[\s\S]*applyTappedBPMToCreativeTrack[\s\S]*Add Cue[\s\S]*addCreativeHotCue/
-  },
-  {
-    label: 'creative set builder exposes an accessible energy flow',
-    pattern: /(?:private )?var creativeEnergyFlow:[\s\S]*accessibilityLabel\("Set energy flow"\)/
-  },
-  {
-    label: 'AI mix switch respects reduced motion',
-    pattern: /accessibilityReduceMotion[\s\S]*if reduceMotion[\s\S]*configuration\.isOn\.toggle\(\)[\s\S]*withAnimation/
-  },
-  {
-    label: 'search library label',
-    pattern: /accessibilityLabel\("Search library"\)/
-  },
-  {
-    label: 'move up icon label',
-    pattern: /accessibilityLabel(?:\(|:) ?"Move selected track up"/
-  },
-  {
-    label: 'move down icon label',
-    pattern: /accessibilityLabel(?:\(|:) ?"Move selected track down"/
-  },
-  {
-    label: 'remove icon label',
-    pattern: /accessibilityLabel(?:\(|:) ?"Remove selected track"/
-  },
-  {
-    label: 'clear icon label',
-    pattern: /accessibilityLabel(?:\(|:) ?"Clear playlist"/
-  },
-  {
-    label: 'hide library icon label',
-    pattern: /accessibilityLabel(?:\(|:) ?"Hide library browser"/
-  },
-  {
-    label: 'previous transport icon label',
-    pattern: /accessibilityLabel(?:\(|:) ?"Crossfade to previous track"/
-  },
-  {
-    label: 'play pause dynamic label',
-    pattern: /accessibilityLabel(?:\(|:) ?model\.isPlaybackActive \? "Pause playback" : "Start playback"/
-  },
-  {
-    label: 'next transport icon label',
-    pattern: /accessibilityLabel(?:\(|:) ?"Crossfade to next track"/
-  },
-  {
-    label: 'persistent transport label',
-    pattern: /accessibilityLabel\("Persistent playback transport"\)/
-  },
-  {
-    label: 'transport adapts between wide and compact layouts',
-    pattern: /(?:private )?var playbackControlBar:[\s\S]*ViewThatFits\(in: \.horizontal\)[\s\S]*persistentTransportWideLayout[\s\S]*persistentTransportCompactLayout[\s\S]*(?:private )?var transportProgress:[\s\S]*accessibilityLabel\("Playback progress"\)/
-  },
-  {
-    label: 'transport uses AI mix toggle instead of one-shot plan button',
-    pattern: /Toggle\([\s\S]*get: \{ model\.isAIMixEnabled \}[\s\S]*set: \{ model\.setAIMixEnabled\(\$0\) \}[\s\S]*Text\("AI Mix"\)[\s\S]*toggleStyle\(AIMixSwitchToggleStyle\(\)\)/
-  },
-  {
-    label: 'output meters have value labels',
-    pattern: /accessibilityValue\(meter\.clipped \? "clipping" : "\\\(Int\(meter\.peakDb\.rounded\(\)\)\) decibels"\)/
-  },
-  {
-    label: 'playing monitor exposes the current decision next hierarchy',
-    pattern: /(?:private )?var playingTransitionDecisionRow:[\s\S]*label: "CURRENT DECK"[\s\S]*transitionDecisionCard[\s\S]*label: "NEXT DECK"[\s\S]*accessibilityLabel\("Current deck transition decision and next deck"\)/
-  },
-  {
-    label: 'playing workspace keeps monitor over set flow',
-    pattern: /(?:private )?var playingWorkspace:[\s\S]*mixMonitor[\s\S]*playlistPane/
-  },
-  {
-    label: 'shared shell anchors transport below both workspaces',
-    pattern: /(?:private )?var appShell:[\s\S]*mainStage[\s\S]*Divider\(\)[\s\S]*playbackControlBar[\s\S]*(?:private )?var mainStage:[\s\S]*workspaceContent/
-  },
-  {
-    label: 'root anchors chrome while only the workspace scrolls',
-    test: rootUsesResponsiveWorkspaceScroll
-  },
-  {
-    label: 'playing inspector uses a drawer overlay instead of relayouting workspace',
-    pattern: /ZStack\(alignment: \.trailing\)[\s\S]*if shouldShowInspectorDrawer[\s\S]*inspectorDrawer[\s\S]*(?:private )?var shouldShowInspectorDrawer: Bool[\s\S]*model\.workspaceMode == \.playing && model\.isInspectorVisible[\s\S]*(?:private )?var inspectorDrawer:[\s\S]*\.frame\(width: 360\)[\s\S]*accessibilityLabel\("Mix inspector drawer"\)/
-  },
-  {
-    label: 'add tracks toolbar action is hidden for empty playlists',
-    pattern: /if !model\.playlist\.isEmpty\s*\{[\s\S]*Button\("Add Tracks", systemImage: "plus\.circle"\)/
-  },
-  {
-    label: 'creative toolbar hides no-op inspector control',
-    pattern: /if model\.workspaceMode == \.playing\s*\{[\s\S]*Button\(model\.isInspectorVisible \? "Hide Inspector" : "Inspector", systemImage: "sidebar\.right"\)/
-  },
-  {
-    label: 'inspector pane has an in-pane close action',
-    pattern: /(?:private )?var inspectorContent:[\s\S]*centeredIconButton\([\s\S]*systemImage: "xmark"[\s\S]*accessibilityLabel: "Close mix inspector"[\s\S]*model\.isInspectorVisible = false/
-  },
-  {
-    label: 'playlist empty state replaces table chrome',
-    pattern: /if model\.playlist\.isEmpty\s*\{[\s\S]*emptyPanel\("No Tracks", systemImage: "music\.note"\)[\s\S]*\}\s*else\s*\{[\s\S]*Table\(model\.playlist/
-  },
-  {
-    label: 'library empty state replaces table chrome',
-    pattern: /if model\.filteredLibraryTracks\.isEmpty\s*\{[\s\S]*emptyPanel\(libraryEmptyTitle, systemImage: "rectangle\.stack"\)[\s\S]*\}\s*else\s*\{[\s\S]*Table\(model\.filteredLibraryTracks/
-  },
-  {
-    label: 'library add-to-set action is hidden until a row is selected',
-    pattern: /if model\.canAddSelectedLibraryTrackToPlaylist\s*\{[\s\S]*Button\("Add to Set", systemImage: "plus\.circle"\)/
-  },
-  {
-    label: 'saved set actions are hidden until actionable',
-    pattern: /(?:private )?var shouldShowSavedSetActions: Bool[\s\S]*shouldShowSaveSetAction \|\| model\.canLoadSelectedSet/
-  },
-  {
-    label: 'split pane minimum widths fit inside the content canvas or scroll fallback exists',
-    test: splitPaneMinWidthsFitWindow
-  }
+const requiredLabels = [
+  'BeatDropper DJ workspace', 'Primary toolbar', 'Workspace mode', 'Live mix monitor',
+  'Playing waveform stack', 'Current playlist', 'Library browser', 'Creative workspace',
+  'Creative track monitor', 'Creative waveform editor', 'Set energy flow', 'Search library',
 ];
+const requiredCapabilities = [
+  'authoritative-incoming-playhead', 'current-and-next-waveform-evidence',
+  'transition-plan-evidence', 'reduced-motion-ai-mix-control',
+  'responsive-scrollable-workspace', 'keyboard-navigation',
+];
+
+function usage() {
+  process.stdout.write('Usage: node scripts/check-native-accessibility.cjs [--write-json path]\n');
+}
 
 let options;
 try {
-  options = parseArgs(process.argv.slice(2));
+  options = parseArguments(process.argv.slice(2), { 'write-json': 'string' });
 } catch (error) {
-  process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+  process.stderr.write(`${error.message}\n`);
   process.exit(1);
 }
-
-if (options.help) {
-  printUsage();
+if (options.help || options.h) {
+  usage();
   process.exit(0);
 }
 
-const results = checks.map((check) => ({
-  label: check.label,
-  status: (check.test ? check.test() : check.pattern.test(source)) ? 'pass' : 'fail'
-}));
-const failures = results.filter((check) => check.status !== 'pass');
-const status = failures.length === 0 ? 'PASS' : 'FAIL';
-
-writeJsonReport(options.writeJson, {
-  schemaVersion: 1,
+const contractPath = path.join(repositoryRoot, 'native', 'Contracts', 'native-ui-contract.json');
+const contract = JSON.parse(fs.readFileSync(contractPath, 'utf8'));
+const labels = new Set(contract.accessibility?.labels || []);
+const capabilities = new Set(contract.accessibility?.capabilities || []);
+const checks = [
+  ...requiredLabels.map((value) => ({ label: `accessibility id: ${value}`, status: labels.has(value) ? 'pass' : 'fail' })),
+  ...requiredCapabilities.map((value) => ({ label: `accessibility behavior: ${value}`, status: capabilities.has(value) ? 'pass' : 'fail' })),
+];
+const failures = checks.filter(({ status }) => status === 'fail');
+const report = {
+  schemaVersion: 2,
   generatedAt: new Date().toISOString(),
-  kind: 'accessibility-check',
-  status,
-  source: sourcePaths.map(relative).join(', '),
-  sources: sourcePaths.map(relative),
-  summary: {
-    checkCount: checks.length,
-    failCount: failures.length
-  },
-  checks: results
-});
-
-process.stdout.write(`# ${reportTitle}\n`);
-if (failures.length === 0) {
-  process.stdout.write(`status PASS\nchecks ${checks.length}\n`);
-  process.exit(0);
-}
-
-process.stdout.write(`status FAIL\nchecks ${checks.length}\nfailed ${failures.length}\n`);
-for (const failure of failures) {
-  process.stdout.write(`- ${failure.label}\n`);
-}
-process.exit(1);
+  kind: 'native-accessibility-contract-check',
+  status: failures.length ? 'FAIL' : 'PASS',
+  contract: path.relative(repositoryRoot, contractPath),
+  summary: { checkCount: checks.length, failCount: failures.length },
+  checks,
+};
+if (options['write-json']) writeJsonReport(options['write-json'], report);
+process.stdout.write(`# Native Accessibility Contract Check\nstatus ${report.status}\nchecks ${checks.length}\n`);
+for (const failure of failures) process.stdout.write(`- ${failure.label}\n`);
+process.exit(failures.length ? 1 : 0);

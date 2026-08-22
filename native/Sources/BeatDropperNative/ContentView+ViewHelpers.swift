@@ -1,4 +1,4 @@
-import BeatDropperCore
+import BeatDropperApplication
 import SwiftUI
 
 extension ContentView {

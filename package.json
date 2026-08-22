@@ -20,6 +20,7 @@
     "native:benchmark:planner": "node scripts/evaluate-native-planner-benchmarks.cjs",
     "native:accessibility:check": "node scripts/check-native-accessibility.cjs",
     "native:macos-shell:check": "node scripts/check-native-macos-shell.cjs",
+    "native:architecture:check": "node scripts/check-native-module-graph.cjs",
     "native:test": "swift test --package-path native",
     "native:package": "scripts/package-native-app.sh",
     "native:parity": "node scripts/evaluate-native-parity.cjs",

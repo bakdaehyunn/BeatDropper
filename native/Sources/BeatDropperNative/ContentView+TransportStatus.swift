@@ -1,4 +1,4 @@
-import BeatDropperCore
+import BeatDropperApplication
 import SwiftUI
 
 extension ContentView {
@@ -23,7 +23,7 @@ extension ContentView {
                 .fixedSize()
             aiMixTransportToggle
                 .fixedSize()
-            outputLevelMeter("MASTER", model.audioEngine.outputMeter)
+            outputLevelMeter("MASTER", playing.session.outputMeter)
                 .frame(width: 132)
         }
     }
@@ -34,7 +34,7 @@ extension ContentView {
                 transportNowPlayingSummary
                 Spacer(minLength: 8)
                 aiMixTransportToggle
-                outputLevelMeter("MASTER", model.audioEngine.outputMeter)
+                outputLevelMeter("MASTER", playing.session.outputMeter)
                     .frame(width: 112)
             }
             HStack(spacing: 14) {
@@ -47,11 +47,11 @@ extension ContentView {
 
     var transportNowPlayingSummary: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(model.audioEngine.currentTrack?.title ?? model.selectedTrack?.track.title ?? "No track loaded")
+            Text(playing.session.currentTrack?.title ?? "No track loaded")
                 .font(.callout.weight(.semibold))
                 .lineLimit(1)
                 .truncationMode(.tail)
-            Text("\(model.audioEngine.state.rawValue) · \(transportDetail)")
+            Text("\(playing.session.mode.rawValue) · \(transportDetail)")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
@@ -62,8 +62,8 @@ extension ContentView {
     }
 
     var transportProgress: some View {
-        let durationSec = max(0, model.audioEngine.currentTrack?.durationSec ?? 0)
-        let elapsedSec = min(durationSec, max(0, model.audioEngine.elapsedSec))
+        let durationSec = max(0, playing.session.currentTrack?.durationSec ?? 0)
+        let elapsedSec = min(durationSec, max(0, playing.session.currentElapsedSec))
 
         return VStack(spacing: 3) {
             ProgressView(value: durationSec > 0 ? elapsedSec / durationSec : 0)
@@ -89,9 +89,9 @@ extension ContentView {
                 help: "Crossfade to previous track",
                 accessibilityLabel: "Crossfade to previous track"
             ) {
-                model.playPreviousTrack()
+                model.playingActions.playPreviousTrack()
             }
-            .disabled(!model.hasPreviousTrack)
+            .disabled(!library.hasPreviousTrack)
 
             transportPlayPauseButton
 
@@ -100,15 +100,15 @@ extension ContentView {
                 help: "Crossfade to next track",
                 accessibilityLabel: "Crossfade to next track"
             ) {
-                model.playNextTrack()
+                model.playingActions.playNextTrack()
             }
-            .disabled(!model.hasNextTrack)
+            .disabled(!library.hasNextTrack)
         }
     }
 
     @ViewBuilder
     var transportPlayPauseButton: some View {
-        if model.workspaceMode == .playing {
+        if navigation.workspaceMode == .playing {
             transportPlayPauseButtonBase
                 .keyboardShortcut(.space, modifiers: [])
         } else {
@@ -118,38 +118,38 @@ extension ContentView {
 
     var transportPlayPauseButtonBase: some View {
         centeredIconButton(
-            systemImage: model.isPlaybackActive ? "pause.fill" : "play.fill",
-            help: model.isPlaybackActive ? "Pause playback" : "Start playback",
-            accessibilityLabel: model.isPlaybackActive ? "Pause playback" : "Start playback"
+            systemImage: playing.isPlaybackActive ? "pause.fill" : "play.fill",
+            help: playing.isPlaybackActive ? "Pause playback" : "Start playback",
+            accessibilityLabel: playing.isPlaybackActive ? "Pause playback" : "Start playback"
         ) {
-            model.playPause()
+            model.playingActions.playPause()
         }
-        .disabled(!model.canUseTransportPlayPause)
+        .disabled(!playing.canUseTransport(in: library))
     }
 
     var aiMixTransportToggle: some View {
         Toggle(
             isOn: Binding(
-                get: { model.isAIMixEnabled },
-                set: { model.setAIMixEnabled($0) }
+                get: { planning.isEnabled },
+                set: { model.planningActions.setAIMixEnabled($0) }
             )
         ) {
             Text("AI Mix")
         }
         .toggleStyle(AIMixSwitchToggleStyle())
-        .disabled(!model.isAIMixEnabled && !model.canEnableAIMix)
-        .help(model.isAIMixEnabled ? "Turn off AI mix automation" : "Analyze this playlist and keep AI mix planning active")
-        .accessibilityLabel(model.isAIMixEnabled ? "Turn off AI mix" : "Turn on AI mix")
+        .disabled(!planning.isEnabled && !planning.canEnable(in: library))
+        .help(planning.isEnabled ? "Turn off AI mix automation" : "Analyze this playlist and keep AI mix planning active")
+        .accessibilityLabel(planning.isEnabled ? "Turn off AI mix" : "Turn on AI mix")
     }
 
     var transportDetail: String {
-        if let recoveryNotice = model.audioEngine.recoveryNotice {
+        if let recoveryNotice = playing.session.recoveryNotice {
             return recoveryNotice
         }
-        if model.audioEngine.state == .crossfading {
-            return "\(model.notice) · \(Int((model.audioEngine.crossfadeProgress * 100).rounded()))%"
+        if playing.session.mode == .crossfading {
+            return "\(shell.notice) · \(Int((playing.session.transitionProgress * 100).rounded()))%"
         }
-        return model.notice
+        return shell.notice
     }
 
     func outputLevelMeter(_ label: String, _ meter: AudioLevelMeter) -> some View {

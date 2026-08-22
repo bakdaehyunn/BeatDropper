@@ -258,10 +258,10 @@ const makeBaseReport = (status, options, folderInfo = null) => ({
   generatedAt: new Date().toISOString(),
   kind: 'real-folder-validation',
   status,
-  app: {
-    mode: options?.swiftRun ? 'swift-run' : 'packaged-app',
-    path: path.relative(rootDir, appPath),
-    executablePath: path.relative(rootDir, executablePath)
+  harness: {
+    mode: 'swift-test',
+    target: 'BeatDropperNativeTests',
+    filter: 'BeatDropperNativeAutomationTests/realFolderValidation'
   },
   folder: folderInfo,
   stress: {
@@ -302,9 +302,9 @@ const parseReadyMarker = (output) => {
     maxRunning: numberValue('maxRunning'),
     planConfidence: numberValue('planConfidence'),
     planSource: raw.planSource || 'unknown',
-    phraseAlignment: raw.phraseAlignment || 'unknown',
+    phraseAlignment: raw.phraseAlignment || raw.phrase || 'unknown',
     tempoSync: raw.tempoSync === 'true',
-    evidenceCount: numberValue('evidenceCount'),
+    evidenceCount: numberValue('evidenceCount') || numberValue('evidence'),
     keyAvailable: numberValue('keyAvailable'),
     keyStrong: numberValue('keyStrong'),
     keyPartial: numberValue('keyPartial'),
@@ -346,19 +346,19 @@ const main = (options) => {
       [
         'Usage: node scripts/validate-native-real-folder.cjs --folder <path> [options]',
         '',
-        'Runs the native app through a local real-track folder import, analysis queue drain, and one planner request.',
+        'Runs isolated native automation through a local real-track folder import, analysis queue drain, and one planner request.',
         'The report records counts and planner evidence categories only; it does not print track names or upload audio.',
         '',
         'Options:',
         '  --folder <path>       Local folder containing .mp3 or .wav files.',
         '  --write-json <path>   Write durable real-folder validation evidence.',
-        '  --swift-run           Run through swift run instead of the packaged app; avoids packaging/signing.',
+        '  --swift-run           Deprecated compatibility flag; automation always runs through Swift tests.',
         '  --timeout-ms=<n>      Override app automation timeout. Default: 180000.',
         '  --min-duration-sec=<n> Stage only supported files at least this long using anonymized names.',
         '  --max-files=<n>        Stage at most this many selected files. Default: no cap.',
         '  --help                Show this message.',
         '',
-        'Run npm run native:package first for packaged-app mode after changing the native app.',
+        'No packaged app or signing identity is required.',
         ''
       ].join('\n')
     );
@@ -387,28 +387,12 @@ const main = (options) => {
     throw new Error(`folder must contain at least two selected supported audio files; found ${folderInfo.selectedFileCount}`);
   }
 
-  let codesign = null;
-  let command = executablePath;
-  let args = [];
-  if (options.swiftRun) {
-    command = 'swift';
-    args = ['run', '--package-path', 'native', 'BeatDropperNative'];
-  } else {
-    if (!fs.existsSync(appPath)) {
-      throw new Error(`BeatDropper.app missing: ${appPath}`);
-    }
-    if (!fs.existsSync(executablePath)) {
-      throw new Error(`BeatDropperNative executable missing: ${executablePath}`);
-    }
-    codesign = run('codesign', ['--verify', '--deep', '--strict', appPath]);
-    if (!codesign.ok) {
-      throw new Error(codesign.output || 'codesign verification failed');
-    }
-  }
-
   let launched;
   try {
-    launched = run(command, args, {
+    launched = run('swift', [
+      'test', '--package-path', 'native', '--filter',
+      'BeatDropperNativeAutomationTests/realFolderValidation'
+    ], {
       timeout: options.timeoutMs,
       env: {
         ...process.env,
@@ -447,17 +431,11 @@ const main = (options) => {
 
   writeJsonReport(options.writeJson, {
     ...makeBaseReport('PASS', options, folderInfo),
-    codesign: codesign
-      ? {
-          ok: codesign.ok,
-          status: codesign.status,
-          signal: codesign.signal,
-          outputPreview: compactOutput(codesign.output)
-        }
-      : {
-          skipped: true,
-          reason: '--swift-run mode avoids packaging/signing'
-        },
+    harness: {
+      kind: 'swift-test',
+      target: 'BeatDropperNativeTests',
+      filter: 'BeatDropperNativeAutomationTests/realFolderValidation'
+    },
     launch: {
       ok: launched.ok,
       status: launched.status,

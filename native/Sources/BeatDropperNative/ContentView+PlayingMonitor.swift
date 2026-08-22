@@ -1,9 +1,11 @@
-import BeatDropperCore
+import BeatDropperApplication
 import SwiftUI
 
 extension ContentView {
     var playingTransitionPlan: MixPlan? {
-        model.audioEngine.activeTransitionPlan ?? model.currentMixPlan
+        playing.session.isTransitionActive
+            ? playing.session.activeTransitionPlan
+            : planning.currentPlan
     }
 
     var mixMonitor: some View {
@@ -42,9 +44,9 @@ extension ContentView {
         HStack(spacing: 10) {
             deckDecisionCard(
                 label: "CURRENT DECK",
-                track: model.currentDeckDisplayTrack,
-                analysis: model.currentDeckAnalysis,
-                status: model.currentDeckDisplayStatus,
+                track: playing.currentDisplayTrack,
+                analysis: playing.currentAnalysis(in: library),
+                status: playing.currentDisplayStatus(in: library),
                 accent: .orange
             )
 
@@ -53,9 +55,9 @@ extension ContentView {
 
             deckDecisionCard(
                 label: "NEXT DECK",
-                track: model.nextDeckDisplayTrack,
-                analysis: model.nextDeckAnalysis,
-                status: model.nextDeckDisplayStatus,
+                track: playing.nextDisplayTrack,
+                analysis: playing.nextAnalysis(in: library),
+                status: playing.nextDisplayStatus(in: library),
                 accent: .cyan
             )
         }
@@ -98,21 +100,21 @@ extension ContentView {
     var transitionDecisionCard: some View {
         VStack(spacing: 4) {
             HStack(spacing: 8) {
-                if model.isPlanningMix {
+                if planning.isPlanning {
                     ProgressView()
                         .controlSize(.small)
                     Text("Planning transition")
                 } else if let plan = playingTransitionPlan {
-                    Text(model.audioEngine.state == .crossfading
-                        ? "MIX LIVE \(Int((model.audioEngine.crossfadeProgress * 100).rounded()))%"
-                        : model.scheduledMixCountdownSec.map { "MIX IN \(formatDuration($0))" } ?? "TRANSITION READY")
+                    Text(playing.session.mode == .crossfading
+                        ? "MIX LIVE \(Int((playing.session.transitionProgress * 100).rounded()))%"
+                        : planning.scheduledCountdownSec.map { "MIX IN \(formatDuration($0))" } ?? "TRANSITION READY")
                         .font(.headline.monospacedDigit())
                     Text("·")
                         .foregroundStyle(.tertiary)
                     Text("\(Int((plan.confidence * 100).rounded()))%")
                         .font(.callout.weight(.semibold).monospacedDigit())
                 } else {
-                    Text(model.isAIMixEnabled ? "WAITING FOR PAIR" : "AI MIX OFF")
+                    Text(planning.isEnabled ? "WAITING FOR PAIR" : "AI MIX OFF")
                         .font(.headline)
                 }
             }
@@ -131,7 +133,7 @@ extension ContentView {
             }
 
             HStack(spacing: 8) {
-                if let review = model.currentMixPlanReview {
+                if let review = planning.currentReview {
                     Text("Quality \(review.renderedQuality.grade.rawValue) \(Int((review.renderedQuality.score * 100).rounded()))%")
                         .foregroundStyle(renderedQualityColor(review.renderedQuality.grade))
                 } else {
@@ -139,10 +141,10 @@ extension ContentView {
                         .foregroundStyle(.secondary)
                 }
                 Button("Evidence", systemImage: "sidebar.right") {
-                    model.isInspectorVisible = true
+                    navigation.isInspectorVisible = true
                 }
                 .buttonStyle(.borderless)
-                .disabled(model.selectedTrack == nil)
+                .disabled(library.selectedTrack == nil)
                 .help("Open planner evidence and rendered mix quality")
             }
             .font(.caption2.weight(.semibold))
@@ -160,18 +162,18 @@ extension ContentView {
 
     var playingMixStatusText: String {
         if let plan = playingTransitionPlan {
-            let qualityText = model.currentMixPlanReview.map {
+            let qualityText = planning.currentReview.map {
                 " · Q \($0.renderedQuality.grade.rawValue) \(Int(($0.renderedQuality.score * 100).rounded()))%"
             } ?? ""
-            let phase = model.audioEngine.state == .crossfading
-                ? "live \(Int((model.audioEngine.crossfadeProgress * 100).rounded()))%"
-                : model.scheduledMixCountdownSec.map { "in \(formatDuration($0))" } ?? "ready"
+            let phase = playing.session.mode == .crossfading
+                ? "live \(Int((playing.session.transitionProgress * 100).rounded()))%"
+                : planning.scheduledCountdownSec.map { "in \(formatDuration($0))" } ?? "ready"
             return "Mix \(phase) · \(transitionEvidenceText(plan)) · \(Int((plan.confidence * 100).rounded()))%\(qualityText)"
         }
-        if model.isPlanningMix {
+        if planning.isPlanning {
             return "AI Mix planning"
         }
-        if model.isAIMixEnabled {
+        if planning.isEnabled {
             return "AI Mix active"
         }
         return "AI Mix off"
@@ -181,34 +183,34 @@ extension ContentView {
         VStack(spacing: 10) {
             deckWaveformRow(
                 title: "Current",
-                value: model.audioEngine.currentTrack != nil
-                    ? formatDuration(model.audioEngine.elapsedSec)
-                    : formatDuration(playingTransitionPlan?.transitionStartSec ?? model.currentDeckAnalysis?.outroCueSec ?? 0),
-                track: model.currentDeckDisplayTrack,
-                analysis: model.currentDeckAnalysis,
-                elapsedSec: model.audioEngine.currentTrack != nil ? model.audioEngine.elapsedSec : nil,
-                cueTimeSec: playingTransitionPlan?.transitionStartSec ?? model.currentDeckAnalysis?.outroCueSec,
+                value: playing.session.currentTrack != nil
+                    ? formatDuration(playing.session.currentElapsedSec)
+                    : formatDuration(playingTransitionPlan?.transitionStartSec ?? playing.currentAnalysis(in: library)?.outroCueSec ?? 0),
+                track: playing.currentDisplayTrack,
+                analysis: playing.currentAnalysis(in: library),
+                elapsedSec: playing.session.currentTrack != nil ? playing.session.currentElapsedSec : nil,
+                cueTimeSec: playingTransitionPlan?.transitionStartSec ?? playing.currentAnalysis(in: library)?.outroCueSec,
                 cueLabel: "OUT",
                 isNextDeck: false,
-                status: model.currentDeckDisplayStatus,
-                meter: model.audioEngine.currentDeckMeter
+                status: playing.currentDisplayStatus(in: library),
+                meter: playing.session.currentDeckMeter
             )
 
             deckWaveformRow(
                 title: "Next",
-                value: model.audioEngine.queuedTrack != nil
-                    ? formatDuration(model.audioEngine.nextDeckElapsedSec)
-                    : formatDuration(playingTransitionPlan?.nextTrackStartOffsetSec ?? model.nextDeckAnalysis?.introCueSec ?? 0),
-                track: model.nextDeckDisplayTrack,
-                analysis: model.nextDeckAnalysis,
-                elapsedSec: model.audioEngine.queuedTrack != nil
-                    ? model.audioEngine.nextDeckElapsedSec
+                value: playing.session.queuedTrack != nil
+                    ? formatDuration(playing.session.queuedElapsedSec)
+                    : formatDuration(playingTransitionPlan?.nextTrackStartOffsetSec ?? playing.nextAnalysis(in: library)?.introCueSec ?? 0),
+                track: playing.nextDisplayTrack,
+                analysis: playing.nextAnalysis(in: library),
+                elapsedSec: playing.session.queuedTrack != nil
+                    ? playing.session.queuedElapsedSec
                     : nil,
-                cueTimeSec: playingTransitionPlan?.nextTrackStartOffsetSec ?? model.nextDeckAnalysis?.introCueSec,
+                cueTimeSec: playingTransitionPlan?.nextTrackStartOffsetSec ?? playing.nextAnalysis(in: library)?.introCueSec,
                 cueLabel: "IN",
                 isNextDeck: true,
-                status: model.nextDeckDisplayStatus,
-                meter: model.audioEngine.nextDeckMeter
+                status: playing.nextDisplayStatus(in: library),
+                meter: playing.session.queuedDeckMeter
             )
         }
         .padding(8)

@@ -1,4 +1,4 @@
-import BeatDropperCore
+import BeatDropperApplication
 import SwiftUI
 
 extension ContentView {
@@ -21,27 +21,27 @@ extension ContentView {
                     help: "Close mix inspector",
                     accessibilityLabel: "Close mix inspector"
                 ) {
-                    model.isInspectorVisible = false
+                    navigation.isInspectorVisible = false
                 }
             }
 
-            if let selectedTrack = model.selectedTrack {
+            if let selectedTrack = library.selectedTrack {
                 GroupBox("Selected Track") {
                     VStack(alignment: .leading, spacing: 8) {
-                        if !model.isTrackAvailable(selectedTrack) {
+                        if !library.isAvailable(selectedTrack) {
                             HStack {
                                 Label("File unavailable", systemImage: "exclamationmark.triangle")
                                     .foregroundStyle(.red)
                                 Spacer()
                                 Button("Relink File", systemImage: "link") {
-                                    model.relinkSelectedTrack()
+                                    model.libraryActions.relinkSelectedTrack()
                                 }
                             }
                         }
                         Text(selectedTrack.track.title)
                             .font(.headline)
                             .lineLimit(2)
-                        LabeledContent("Status", value: model.availabilityStatus(for: selectedTrack))
+                        LabeledContent("Status", value: library.availabilityStatus(for: selectedTrack))
                         LabeledContent("BPM", value: selectedTrack.track.bpm.map { String(Int($0.rounded())) } ?? "--")
                         LabeledContent("Length", value: formatDuration(selectedTrack.track.durationSec))
                         LabeledContent("Format", value: selectedTrack.track.format.rawValue.uppercased())
@@ -63,48 +63,48 @@ extension ContentView {
                 GroupBox("Mix Review Notes") {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
-                            Text("\(model.recentMixReviewEvents.count) saved · \(model.importedMixReviewArtifacts.count) imported")
+                            Text("\(review.recentEvents.count) saved · \(review.importedArtifacts.count) imported")
                                 .font(.caption2.weight(.semibold))
                                 .foregroundStyle(.secondary)
                             Spacer()
                             Button("Import", systemImage: "tray.and.arrow.down") {
-                                model.importMixReviewArtifact()
+                                model.reviewActions.importMixReviewArtifact()
                             }
                             .controlSize(.small)
                             .help("Import exported mix review notes as review-only artifacts")
                             Menu {
                                 Menu("All Recent") {
                                     Button("Markdown", systemImage: "doc.text") {
-                                        mixReviewExportPreview = model.buildMixReviewExportPreview(format: .markdown)
+                                        mixReviewExportPreview = model.reviewActions.buildMixReviewExportPreview(format: .markdown)
                                     }
                                     Button("JSON", systemImage: "curlybraces") {
-                                        mixReviewExportPreview = model.buildMixReviewExportPreview(format: .json)
+                                        mixReviewExportPreview = model.reviewActions.buildMixReviewExportPreview(format: .json)
                                     }
                                 }
                                 Menu("Latest Selected Pair") {
                                     Button("Markdown", systemImage: "doc.text") {
-                                        mixReviewExportPreview = model.buildMixReviewExportPreview(format: .markdown, scope: .latestSelectedPair)
+                                        mixReviewExportPreview = model.reviewActions.buildMixReviewExportPreview(format: .markdown, scope: .latestSelectedPair)
                                     }
                                     Button("JSON", systemImage: "curlybraces") {
-                                        mixReviewExportPreview = model.buildMixReviewExportPreview(format: .json, scope: .latestSelectedPair)
+                                        mixReviewExportPreview = model.reviewActions.buildMixReviewExportPreview(format: .json, scope: .latestSelectedPair)
                                     }
                                 }
-                                .disabled(!model.canPreviewSelectedPairMixReviewNotes)
+                                .disabled(!model.reviewActions.canPreviewSelectedPairMixReviewNotes)
                             } label: {
                                 Label("Export", systemImage: "square.and.arrow.up")
                             }
                             .controlSize(.small)
-                            .disabled(!model.canExportMixReviewNotes)
+                            .disabled(!model.reviewActions.canExportMixReviewNotes)
                             .help("Export recent AI and fallback review diffs as Markdown or JSON")
                         }
-                        if !model.recentMixReviewEvents.isEmpty {
+                        if !review.recentEvents.isEmpty {
                             recentMixReviewEventsSummary
                         } else {
                             Text("No recent in-app review notes")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
-                        if !model.importedMixReviewArtifacts.isEmpty {
+                        if !review.importedArtifacts.isEmpty {
                             Divider()
                             importedMixReviewArtifactsSummary
                         }
@@ -159,12 +159,12 @@ extension ContentView {
                     .foregroundStyle(.secondary)
                 Spacer()
                 Button("Copy \(preview.format.noticeLabel)", systemImage: "doc.on.doc") {
-                    model.copyMixReviewExportPreviewToClipboard(preview)
+                    model.reviewActions.copyMixReviewExportPreviewToClipboard(preview)
                 }
                 .help("Copy the previewed \(preview.format.noticeLabel) notes to the clipboard")
                 Button("Export \(preview.format.noticeLabel)", systemImage: "square.and.arrow.down") {
                     mixReviewExportPreview = nil
-                    model.exportMixReviewPreview(preview)
+                    model.reviewActions.exportMixReviewPreview(preview)
                 }
                 .keyboardShortcut(.defaultAction)
             }
@@ -250,13 +250,13 @@ extension ContentView {
                 Spacer()
 
                 Button {
-                    model.copyImportedMixReviewArtifactComparisonSummary(comparison)
+                    model.reviewActions.copyImportedMixReviewArtifactComparisonSummary(comparison)
                 } label: {
                     Label("Copy Summary", systemImage: "doc.on.doc")
                 }
 
                 Button {
-                    model.exportImportedMixReviewArtifactComparisonSummary(comparison)
+                    model.reviewActions.exportImportedMixReviewArtifactComparisonSummary(comparison)
                 } label: {
                     Label("Export Summary", systemImage: "square.and.arrow.down")
                 }
@@ -436,8 +436,8 @@ extension ContentView {
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(.secondary)
             TextEditor(text: Binding(
-                get: { model.importedMixReviewArtifactAnnotation(for: artifact.id) },
-                set: { model.updateImportedMixReviewArtifactAnnotation(for: artifact.id, annotation: $0) }
+                get: { model.reviewActions.importedMixReviewArtifactAnnotation(for: artifact.id) },
+                set: { model.reviewActions.updateImportedMixReviewArtifactAnnotation(for: artifact.id, annotation: $0) }
             ))
             .font(.caption)
             .frame(minHeight: 58, maxHeight: 72)
@@ -521,13 +521,13 @@ extension ContentView {
 
     @ViewBuilder
     func analysisSummary(for selectedTrack: ImportedTrack) -> some View {
-        if !model.isTrackAvailable(selectedTrack) {
+        if !library.isAvailable(selectedTrack) {
             Text("--")
                 .foregroundStyle(.secondary)
-        } else if model.analyzingTrackIds.contains(selectedTrack.id) {
+        } else if library.analyzingTrackIDs.contains(selectedTrack.id) {
             ProgressView("Analyzing")
                 .controlSize(.small)
-        } else if let analysis = model.selectedTrackAnalysis {
+        } else if let analysis = library.selectedTrackAnalysis {
             VStack(alignment: .leading, spacing: 8) {
                 LabeledContent("Ready", value: analysis.analysisConfidence >= 0.65 ? "Yes" : "Low")
                 LabeledContent("BPM", value: analysis.bpm.map { String(Int($0.rounded())) } ?? "--")
@@ -549,19 +549,19 @@ extension ContentView {
 
     @ViewBuilder
     var mixPlanSummary: some View {
-        if model.isPlanningMix {
+        if planning.isPlanning {
             ProgressView("Planning")
                 .controlSize(.small)
-        } else if let plan = model.currentMixPlan {
+        } else if let plan = planning.currentPlan {
             VStack(alignment: .leading, spacing: 8) {
                 LabeledContent("Transition", value: "\(formatDuration(plan.transitionStartSec)) -> \(formatDuration(plan.transitionEndSec))")
                 LabeledContent("Next In", value: formatDuration(plan.nextTrackStartOffsetSec))
                 LabeledContent("Style", value: plan.style.rawValue.replacingOccurrences(of: "_", with: " "))
                 LabeledContent("Confidence", value: "\(Int((plan.confidence * 100).rounded()))%")
-                if let countdown = model.scheduledMixCountdownSec {
+                if let countdown = planning.scheduledCountdownSec {
                     LabeledContent("Starts", value: formatDuration(countdown))
                 }
-                if let review = model.currentMixPlanReview {
+                if let review = planning.currentReview {
                     Divider()
                     mixReviewSummary(plan: plan, review: review)
                 }
@@ -574,7 +574,7 @@ extension ContentView {
 
     var recentMixReviewEventsSummary: some View {
         VStack(alignment: .leading, spacing: 8) {
-            ForEach(model.recentMixReviewEvents.prefix(5)) { event in
+            ForEach(review.recentEvents.prefix(5)) { event in
                 HStack(alignment: .top, spacing: 8) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("\(formatDuration(event.transitionStartSec)) -> \(formatDuration(event.transitionEndSec)) · \(event.style.rawValue.replacingOccurrences(of: "_", with: " "))")
@@ -603,14 +603,14 @@ extension ContentView {
     }
 
     var importedMixReviewArtifactsSummary: some View {
-        let artifacts = model.visibleImportedMixReviewArtifacts
+        let artifacts = model.reviewActions.visibleImportedMixReviewArtifacts
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Imported Review Artifacts")
                         .font(.caption2.weight(.semibold))
                         .foregroundStyle(.secondary)
-                    Text(model.importedMixReviewArtifactFilterSummary)
+                    Text(model.reviewActions.importedMixReviewArtifactFilterSummary)
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
@@ -618,26 +618,26 @@ extension ContentView {
                 Spacer(minLength: 8)
 
                 Toggle("Selected Pair", isOn: Binding(
-                    get: { model.isImportedMixReviewArtifactPairFilterEnabled },
-                    set: { model.isImportedMixReviewArtifactPairFilterEnabled = $0 }
+                    get: { review.isPairFilterEnabled },
+                    set: { review.isPairFilterEnabled = $0 }
                 ))
                 .toggleStyle(.checkbox)
                 .controlSize(.small)
-                .disabled(!model.canFilterImportedMixReviewArtifactsBySelectedPair)
+                .disabled(!model.reviewActions.canFilterImportedMixReviewArtifactsBySelectedPair)
                 .help("Show only imported review artifacts that include the selected current-to-next track pair")
 
                 Button("Clear", systemImage: "xmark.circle") {
-                    model.clearImportedMixReviewArtifactComparisonSelection()
+                    model.reviewActions.clearImportedMixReviewArtifactComparisonSelection()
                 }
                 .controlSize(.small)
-                .disabled(model.selectedImportedMixReviewComparisonArtifactIds.isEmpty)
+                .disabled(review.selectedComparisonArtifactIDs.isEmpty)
                 .help("Clear imported artifact comparison selection")
 
                 Button("Compare", systemImage: "rectangle.split.2x1") {
-                    mixReviewImportedArtifactComparison = model.buildImportedMixReviewArtifactComparison()
+                    mixReviewImportedArtifactComparison = model.reviewActions.buildImportedMixReviewArtifactComparison()
                 }
                 .controlSize(.small)
-                .disabled(!model.canCompareImportedMixReviewArtifacts)
+                .disabled(!model.reviewActions.canCompareImportedMixReviewArtifacts)
                 .help("Compare two selected imported review artifacts for the selected pair")
             }
 
@@ -645,13 +645,13 @@ extension ContentView {
                 Image(systemName: "magnifyingglass")
                     .foregroundStyle(.secondary)
                 TextField("Search imports", text: Binding(
-                    get: { model.importedMixReviewArtifactSearchText },
-                    set: { model.importedMixReviewArtifactSearchText = $0 }
+                    get: { review.searchText },
+                    set: { review.searchText = $0 }
                 ))
                 .textFieldStyle(.roundedBorder)
-                if !model.importedMixReviewArtifactSearchText.isEmpty {
+                if !review.searchText.isEmpty {
                     Button("", systemImage: "xmark.circle.fill") {
-                        model.importedMixReviewArtifactSearchText = ""
+                        review.searchText = ""
                     }
                     .buttonStyle(.plain)
                     .help("Clear imported artifact search")
@@ -668,12 +668,12 @@ extension ContentView {
             ForEach(artifacts.prefix(4)) { artifact in
                 HStack(spacing: 8) {
                     Toggle("", isOn: Binding(
-                        get: { model.isImportedMixReviewArtifactSelectedForComparison(artifact.id) },
-                        set: { _ in model.toggleImportedMixReviewArtifactComparisonSelection(artifact.id) }
+                        get: { model.reviewActions.isImportedMixReviewArtifactSelectedForComparison(artifact.id) },
+                        set: { _ in model.reviewActions.toggleImportedMixReviewArtifactComparisonSelection(artifact.id) }
                     ))
                     .toggleStyle(.checkbox)
                     .labelsHidden()
-                    .disabled(!model.canSelectImportedMixReviewArtifactForComparison(artifact))
+                    .disabled(!model.reviewActions.canSelectImportedMixReviewArtifactForComparison(artifact))
                     .help("Select imported artifact for side-by-side comparison")
                     .accessibilityLabel("Select \(artifact.fileName) for comparison")
 
@@ -705,10 +705,10 @@ extension ContentView {
     }
 
     var importedArtifactEmptyStateLabel: String {
-        if !model.importedMixReviewArtifactSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        if !review.searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return "No imported artifacts match this search"
         }
-        return model.isImportedMixReviewArtifactPairFilterEnabled ? "No imported artifacts for this pair" : "No imported artifacts"
+        return review.isPairFilterEnabled ? "No imported artifacts for this pair" : "No imported artifacts"
     }
 
     func hasImportedArtifactAnnotation(_ artifact: ImportedMixReviewArtifact) -> Bool {

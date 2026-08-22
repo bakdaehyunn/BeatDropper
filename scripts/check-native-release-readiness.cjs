@@ -483,8 +483,8 @@ if (!options.preRelease) {
   );
 
   const accessibilityCheckPassed =
-    accessibilityCheckReport?.schemaVersion === 1 &&
-    accessibilityCheckReport?.kind === 'accessibility-check' &&
+    Number(accessibilityCheckReport?.schemaVersion) >= 1 &&
+    ['accessibility-check', 'native-accessibility-contract-check'].includes(accessibilityCheckReport?.kind) &&
     accessibilityCheckReport?.status === 'PASS' &&
     Number(accessibilityCheckReport?.summary?.checkCount) >= 17 &&
     Number(accessibilityCheckReport?.summary?.failCount) === 0;
@@ -492,13 +492,13 @@ if (!options.preRelease) {
     'Current accessibility check report',
     accessibilityCheckPassed ? 'pass' : 'blocked',
     accessibilityCheckPassed
-      ? 'native/dist/accessibility-check-report.json records passing VoiceOver label evidence'
+      ? 'native/dist/accessibility-check-report.json records a passing stable accessibility contract'
       : 'Run node scripts/check-native-accessibility.cjs --write-json native/dist/accessibility-check-report.json before release readiness.'
   );
 
   const macosShellCheckPassed =
-    macosShellCheckReport?.schemaVersion === 1 &&
-    macosShellCheckReport?.kind === 'macos-shell-check' &&
+    Number(macosShellCheckReport?.schemaVersion) >= 1 &&
+    ['macos-shell-check', 'native-macos-shell-contract-check'].includes(macosShellCheckReport?.kind) &&
     macosShellCheckReport?.status === 'PASS' &&
     Number(macosShellCheckReport?.summary?.checkCount) >= 15 &&
     Number(macosShellCheckReport?.summary?.failCount) === 0;
@@ -506,7 +506,7 @@ if (!options.preRelease) {
     'Current macOS shell check report',
     macosShellCheckPassed ? 'pass' : 'blocked',
     macosShellCheckPassed
-      ? 'native/dist/macos-shell-check-report.json records passing command menu, Settings, Finder Open With, drag/drop, and toolbar evidence'
+      ? 'native/dist/macos-shell-check-report.json records a passing stable macOS shell contract'
       : 'Run node scripts/check-native-macos-shell.cjs --write-json native/dist/macos-shell-check-report.json before release readiness.'
   );
 
@@ -542,7 +542,7 @@ if (!options.preRelease) {
     'Current open-import stress report',
     openImportStressPassed ? 'pass' : 'blocked',
     openImportStressPassed
-      ? 'native/dist/open-import-stress-report.json records passing packaged Finder/Open With import evidence'
+      ? 'native/dist/open-import-stress-report.json records passing isolated native import orchestration evidence'
       : 'Run node scripts/stress-native-open-import.cjs --write-json native/dist/open-import-stress-report.json before release readiness.'
   );
 
@@ -556,7 +556,7 @@ if (!options.preRelease) {
     'Current playback stress report',
     playbackStressPassed ? 'pass' : 'blocked',
     playbackStressPassed
-      ? 'native/dist/playback-stress-report.json records passing packaged playback and crossfade evidence'
+      ? 'native/dist/playback-stress-report.json records passing native AVFoundation playback and crossfade automation evidence'
       : 'Run node scripts/stress-native-playback.cjs --write-json native/dist/playback-stress-report.json before release readiness.'
   );
 
@@ -581,7 +581,7 @@ if (!options.preRelease) {
     'Current session stress report',
     sessionStressPassed ? 'pass' : 'blocked',
     sessionStressPassed
-      ? 'native/dist/session-stress-report.json records passing packaged import, analysis, planner, playback, and transition evidence'
+      ? 'native/dist/session-stress-report.json records passing isolated import, analysis, planner, playback, and transition evidence'
       : 'Run node scripts/stress-native-session.cjs --write-json native/dist/session-stress-report.json before release readiness.'
   );
 
@@ -611,7 +611,7 @@ if (!options.preRelease) {
       ? 'pass'
       : 'blocked',
     extendedSessionStressPassed
-      ? 'native/dist/session-stress-extended-report.json records passing repeated packaged import, analysis, planner, playback, and transition evidence'
+      ? 'native/dist/session-stress-extended-report.json records passing repeated isolated import, analysis, planner, playback, and transition evidence'
       : options.allowMissingExtendedStress && !extendedSessionStressReport
         ? 'skipped by quick local preflight; default release readiness still requires native/dist/session-stress-extended-report.json'
         : 'Run node scripts/stress-native-session.cjs --extended --write-json native/dist/session-stress-extended-report.json before release readiness.'

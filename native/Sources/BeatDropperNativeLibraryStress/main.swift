@@ -1,4 +1,4 @@
-import BeatDropperCore
+import BeatDropperTestSupport
 import Foundation
 
 do {
@@ -88,7 +88,6 @@ private enum LibraryStressCLIError: LocalizedError {
         }
     }
 }
-
 private func parseOptions(_ arguments: ArraySlice<String>) throws -> LibraryStressOptions {
     var options = LibraryStressOptions()
     var index = arguments.startIndex

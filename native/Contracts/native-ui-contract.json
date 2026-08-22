@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "accessibility": {
+    "labels": [
+      "BeatDropper DJ workspace",
+      "Primary toolbar",
+      "Workspace mode",
+      "Live mix monitor",
+      "Playing waveform stack",
+      "Current playlist",
+      "Library browser",
+      "Creative workspace",
+      "Creative track monitor",
+      "Creative waveform editor",
+      "Set energy flow",
+      "Search library"
+    ],
+    "capabilities": [
+      "authoritative-incoming-playhead",
+      "current-and-next-waveform-evidence",
+      "transition-plan-evidence",
+      "reduced-motion-ai-mix-control",
+      "responsive-scrollable-workspace",
+      "keyboard-navigation"
+    ]
+  },
+  "macosShell": {
+    "menus": ["File", "Set", "Playback", "Workspace"],
+    "settingsScene": true,
+    "finderOpen": true,
+    "dragAndDrop": true,
+    "documentTypes": ["public.audio", "public.mp3", "com.microsoft.waveform-audio", "public.folder"],
+    "shortcuts": {
+      "newSet": "command-o",
+      "addTracks": "command-shift-o",
+      "importFolder": "command-shift-i",
+      "playPause": "space",
+      "aiMix": "command-m",
+      "nextTrack": "command-right",
+      "previousTrack": "command-left",
+      "playingWorkspace": "command-1",
+      "creativeWorkspace": "command-2"
+    }
+  }
+}

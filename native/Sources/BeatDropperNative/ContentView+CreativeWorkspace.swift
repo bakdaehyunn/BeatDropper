@@ -1,4 +1,4 @@
-import BeatDropperCore
+import BeatDropperApplication
 import SwiftUI
 
 extension ContentView {
@@ -36,7 +36,7 @@ extension ContentView {
                 .clipShape(RoundedRectangle(cornerRadius: 8))
                 .layoutPriority(2)
 
-            if model.isLibraryBrowserVisible {
+            if navigation.isLibraryBrowserVisible {
                 libraryPane
                     .frame(minWidth: 270, idealWidth: 340, maxWidth: .infinity, maxHeight: .infinity)
                     .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
@@ -54,7 +54,7 @@ extension ContentView {
 
     var creativeTrackMonitor: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if let track = model.creativePreparationTrack {
+            if let track = creative.preparationTrack(in: library) {
                 HStack(alignment: .top, spacing: 12) {
                     VStack(alignment: .leading, spacing: 6) {
                         Label("Track Prep", systemImage: "waveform.badge.magnifyingglass")
@@ -63,11 +63,11 @@ extension ContentView {
                             .font(.headline)
                             .lineLimit(1)
                         HStack(spacing: 14) {
-                            metric("BPM", model.creativeEffectiveBPM.map { String(Int($0.rounded())) } ?? "--")
+                            metric("BPM", creative.effectiveBPM(in: library).map { String(Int($0.rounded())) } ?? "--")
                             metric("Length", formatDuration(track.track.durationSec))
-                            metric("Quality", model.creativePreparationAnalysis.map { "\(Int(($0.analysisConfidence * 100).rounded()))%" } ?? "--")
-                            metric("Grid", model.creativePreparationAnalysis.map { "\(Int(($0.analysisQuality.beatGrid * 100).rounded()))%" } ?? "--")
-                            metric("Position", formatDuration(model.creativePlaybackPositionSec))
+                            metric("Quality", creative.preparationAnalysis(in: library).map { "\(Int(($0.analysisConfidence * 100).rounded()))%" } ?? "--")
+                            metric("Grid", creative.preparationAnalysis(in: library).map { "\(Int(($0.analysisQuality.beatGrid * 100).rounded()))%" } ?? "--")
+                            metric("Position", formatDuration(creative.playbackPosition(in: library, playing: playing)))
                         }
                     }
 
@@ -91,10 +91,10 @@ extension ContentView {
         .onAppear {
             syncCreativeBPMDraft()
         }
-        .onChange(of: model.creativePreparationTrackID) { _, _ in
+        .onChange(of: creative.preparationTrackID) { _, _ in
             syncCreativeBPMDraft()
         }
-        .onChange(of: model.creativeTrackPreparation.bpmOverride) { _, _ in
+        .onChange(of: creative.trackPreparation(in: library).bpmOverride) { _, _ in
             syncCreativeBPMDraft()
         }
     }
@@ -112,41 +112,41 @@ extension ContentView {
                     help: "Preview five seconds earlier",
                     accessibilityLabel: "Preview five seconds earlier"
                 ) {
-                    model.seekCreativePreview(by: -5)
+                    model.creativeActions.seekCreativePreview(by: -5)
                 }
-                .disabled(!model.canPreviewCreativeTrack)
+                .disabled(!creative.canPreview(in: library))
 
                 centeredIconButton(
-                    systemImage: model.isCreativePreviewPlaying ? "pause.fill" : "play.fill",
-                    help: model.isCreativePreviewPlaying ? "Pause preview" : "Play preview",
-                    accessibilityLabel: model.isCreativePreviewPlaying ? "Pause preview" : "Play preview"
+                    systemImage: creative.isPreviewPlaying(in: library, playing: playing) ? "pause.fill" : "play.fill",
+                    help: creative.isPreviewPlaying(in: library, playing: playing) ? "Pause preview" : "Play preview",
+                    accessibilityLabel: creative.isPreviewPlaying(in: library, playing: playing) ? "Pause preview" : "Play preview"
                 ) {
-                    model.toggleCreativePreviewPlayback()
+                    model.creativeActions.toggleCreativePreviewPlayback()
                 }
                 .keyboardShortcut(.space, modifiers: [])
-                .disabled(!model.canPreviewCreativeTrack)
+                .disabled(!creative.canPreview(in: library))
 
                 centeredIconButton(
                     systemImage: "goforward.5",
                     help: "Preview five seconds later",
                     accessibilityLabel: "Preview five seconds later"
                 ) {
-                    model.seekCreativePreview(by: 5)
+                    model.creativeActions.seekCreativePreview(by: 5)
                 }
-                .disabled(!model.canPreviewCreativeTrack)
+                .disabled(!creative.canPreview(in: library))
 
                 centeredIconButton(
                     systemImage: "stop.fill",
                     help: "Stop preview",
                     accessibilityLabel: "Stop preview"
                 ) {
-                    model.stopCreativePreview()
+                    model.creativeActions.stopCreativePreview()
                 }
-                .disabled(!model.isCreativePreviewTrackLoaded)
+                .disabled(!creative.isPreviewTrackLoaded(in: library, playing: playing))
             }
             .frame(width: 190, alignment: .center)
 
-            Text(formatDuration(model.creativePlaybackPositionSec))
+            Text(formatDuration(creative.playbackPosition(in: library, playing: playing)))
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
@@ -178,7 +178,7 @@ extension ContentView {
 
                 Button("Set", systemImage: "checkmark") {
                     if let bpm = parsedCreativeBPMDraft {
-                        model.setCreativeBPMOverride(bpm)
+                        model.creativeActions.setCreativeBPMOverride(bpm)
                         syncCreativeBPMDraft()
                     }
                 }
@@ -186,41 +186,41 @@ extension ContentView {
                 .help("Set prep BPM")
 
                 Button("Tap", systemImage: "metronome") {
-                    model.tapBPMForCreativeTrack()
+                    model.creativeActions.tapBPMForCreativeTrack()
                 }
                 .help("Tap along to estimate a prep BPM")
 
-                if model.bpmTapEstimate != nil {
+                if creative.bpmTapEstimate != nil {
                     Button("Use Tap", systemImage: "arrow.down.circle") {
-                        model.applyTappedBPMToCreativeTrack()
+                        model.creativeActions.applyTappedBPMToCreativeTrack()
                         syncCreativeBPMDraft()
                     }
                     .help("Use tapped BPM as prep BPM")
                 }
 
-                if model.creativeTrackPreparation.bpmOverride != nil {
+                if creative.trackPreparation(in: library).bpmOverride != nil {
                     centeredIconButton(
                         systemImage: "xmark.circle",
                         help: "Clear prep BPM",
                         accessibilityLabel: "Clear prep BPM"
                     ) {
-                        model.clearCreativeBPMOverride()
+                        model.creativeActions.clearCreativeBPMOverride()
                     }
                 }
             }
             .controlSize(.small)
 
             HStack(spacing: 12) {
-                metric("Tap", model.bpmTapEstimate.map { String(format: "%.1f", $0) } ?? "--")
-                metric("Count", model.bpmTapCount > 0 ? String(model.bpmTapCount) : "--")
-                metric("Prep", model.creativeTrackPreparation.bpmOverride.map { String(format: "%.1f", $0) } ?? "--")
+                metric("Tap", creative.bpmTapEstimate.map { String(format: "%.1f", $0) } ?? "--")
+                metric("Count", creative.bpmTapCount > 0 ? String(creative.bpmTapCount) : "--")
+                metric("Prep", creative.trackPreparation(in: library).bpmOverride.map { String(format: "%.1f", $0) } ?? "--")
             }
         }
     }
 
     func creativeWaveform(track: ImportedTrack) -> some View {
-        let analysis = model.creativePreparationAnalysis
-        let preparation = model.creativeTrackPreparation
+        let analysis = creative.preparationAnalysis(in: library)
+        let preparation = creative.trackPreparation(in: library)
         let points = waveformRenderPoints(for: analysis)
         let durationSec = max(0, track.track.durationSec)
 
@@ -243,7 +243,7 @@ extension ContentView {
 
                 drawPreparationCueMarkers(preparation.hotCues, durationSec: durationSec, in: context, size: size)
                 drawWaveformCursor(
-                    timeSec: model.creativePlaybackPositionSec,
+                    timeSec: creative.playbackPosition(in: library, playing: playing),
                     durationSec: durationSec,
                     label: "PLAY",
                     color: .white,
@@ -266,7 +266,7 @@ extension ContentView {
                             return
                         }
                         let ratio = min(1, max(0, value.location.x / proxy.size.width))
-                        model.previewCreativeTrack(at: Double(ratio) * durationSec)
+                        model.creativeActions.previewCreativeTrack(at: Double(ratio) * durationSec)
                     }
             )
         }
@@ -286,7 +286,7 @@ extension ContentView {
             .frame(width: 120)
 
             Button("Add Cue", systemImage: "mappin.and.ellipse") {
-                model.addCreativeHotCue(kind: creativeCueKind)
+                model.creativeActions.addCreativeHotCue(kind: creativeCueKind)
             }
             .help("Add a prep hot cue at the current preview position")
 
@@ -295,9 +295,9 @@ extension ContentView {
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
-                    ForEach(model.creativeTrackPreparation.hotCues) { cue in
+                    ForEach(creative.trackPreparation(in: library).hotCues) { cue in
                         Button("\(cue.label) \(formatDuration(cue.timeSec))") {
-                            model.previewCreativeTrack(at: cue.timeSec)
+                            model.creativeActions.previewCreativeTrack(at: cue.timeSec)
                         }
                         .controlSize(.small)
                         .help("Preview \(cue.label)")
@@ -307,7 +307,7 @@ extension ContentView {
                             help: "Remove \(cue.label)",
                             accessibilityLabel: "Remove \(cue.label) cue"
                         ) {
-                            model.removeCreativeHotCue(cue)
+                            model.creativeActions.removeCreativeHotCue(cue)
                         }
                     }
                 }
@@ -334,7 +334,7 @@ extension ContentView {
     }
 
     func syncCreativeBPMDraft() {
-        if let bpm = model.creativeTrackPreparation.bpmOverride ?? model.creativeEffectiveBPM {
+        if let bpm = creative.trackPreparation(in: library).bpmOverride ?? creative.effectiveBPM(in: library) {
             creativeBPMDraft = String(format: "%.1f", bpm)
         } else {
             creativeBPMDraft = ""

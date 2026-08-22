@@ -1,4 +1,5 @@
-import BeatDropperCore
+import BeatDropperTestSupport
+import BeatDropperDomain
 import Darwin
 import Foundation
 

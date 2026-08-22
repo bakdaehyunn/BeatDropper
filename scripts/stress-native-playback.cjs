@@ -1,207 +1,67 @@
 #!/usr/bin/env node
+'use strict';
 
-const fs = require('node:fs');
-const path = require('node:path');
-const { spawnSync } = require('node:child_process');
+const {
+  parseArguments,
+  swiftRun,
+  writeJsonReport,
+} = require('./lib/native-tooling.cjs');
 
-const rootDir = path.resolve(__dirname, '..');
-const appPath = path.join(rootDir, 'native', 'dist', 'BeatDropper.app');
-const executablePath = path.join(appPath, 'Contents', 'MacOS', 'BeatDropperNative');
-const playbackTimeoutMs = 30_000;
+const timeoutMs = 60_000;
+const options = parseArguments(process.argv.slice(2), { 'write-json': 'string', help: 'boolean' });
+const reportPath = options['write-json'];
 
-const parseArgs = (argv) => {
-  const options = {
-    writeJson: null,
-    help: false
-  };
-
-  for (let index = 0; index < argv.length; index += 1) {
-    const arg = argv[index];
-    if (arg === '--help' || arg === '-h') {
-      options.help = true;
-      continue;
-    }
-    if (arg === '--write-json') {
-      const next = argv[index + 1];
-      if (!next) {
-        throw new Error('--write-json requires a report path');
-      }
-      options.writeJson = next;
-      index += 1;
-      continue;
-    }
-    if (arg.startsWith('--write-json=')) {
-      options.writeJson = arg.slice('--write-json='.length);
-      if (!options.writeJson) {
-        throw new Error('--write-json requires a report path');
-      }
-      continue;
-    }
-    throw new Error(`Unknown option: ${arg}`);
-  }
-
-  return options;
-};
-
-const fail = (message) => {
-  process.stderr.write(`${message}\n`);
-  process.exitCode = 1;
-};
-
-const assertFile = (filePath, label) => {
-  if (!fs.existsSync(filePath)) {
-    throw new Error(`${label} missing: ${filePath}`);
-  }
-};
-
-const run = (command, args, options = {}) => {
-  const result = spawnSync(command, args, {
-    cwd: rootDir,
-    encoding: 'utf8',
-    ...options
-  });
-  return {
-    ok: result.status === 0,
-    status: result.status,
-    signal: result.signal,
-    output: `${result.stdout || ''}${result.stderr || ''}`.trim()
-  };
-};
-
-const compactOutput = (output) => {
+function compact(output) {
   const lines = String(output || '').split('\n').filter(Boolean);
-  if (lines.length <= 12) {
-    return lines;
-  }
-  return [...lines.slice(0, 6), '...', ...lines.slice(-6)];
-};
+  return lines.length <= 12 ? lines : [...lines.slice(0, 6), '...', ...lines.slice(-6)];
+}
 
-const relative = (targetPath) => path.relative(rootDir, targetPath);
+function base(status) {
+  return {
+    schemaVersion: 1,
+    generatedAt: new Date().toISOString(),
+    kind: 'playback-stress',
+    status,
+    harness: {
+      kind: 'swift-executable',
+      product: 'BeatDropperNativePlaybackStress',
+    },
+    stress: { timeoutMs },
+  };
+}
 
-const resolveReportPath = (reportPath) => (
-  path.isAbsolute(reportPath) ? reportPath : path.join(rootDir, reportPath)
-);
-
-const writeJsonReport = (reportPath, report) => {
-  if (!reportPath) {
-    return;
-  }
-  const resolved = resolveReportPath(reportPath);
-  fs.mkdirSync(path.dirname(resolved), { recursive: true });
-  fs.writeFileSync(resolved, `${JSON.stringify(report, null, 2)}\n`);
-};
-
-const makeBaseReport = (status) => ({
-  schemaVersion: 1,
-  generatedAt: new Date().toISOString(),
-  kind: 'playback-stress',
-  status,
-  app: {
-    path: relative(appPath),
-    executablePath: relative(executablePath)
-  },
-  stress: {
-    timeoutMs: playbackTimeoutMs
-  }
-});
-
-const makeFailureReport = (error) => ({
-  ...makeBaseReport('FAIL'),
-  error: error instanceof Error ? error.message : String(error)
-});
-
-const main = (options) => {
+try {
   if (options.help) {
-    process.stdout.write(
-      [
-        'Usage: node scripts/stress-native-playback.cjs [options]',
-        '',
-        'Runs the packaged native app in playback stress mode.',
-        '',
-        'Options:',
-        '  --write-json <path>  Write durable playback stress evidence.',
-        '  --help               Show this message.',
-        '',
-        'Run npm run native:package first.',
-        ''
-      ].join('\n')
-    );
-    return;
+    process.stdout.write('Usage: node scripts/stress-native-playback.cjs [--write-json <path>]\n');
+    process.exit(0);
   }
-
-  assertFile(appPath, 'BeatDropper.app');
-  assertFile(executablePath, 'BeatDropperNative executable');
-
-  const codesign = run('codesign', ['--verify', '--deep', '--strict', appPath]);
-  if (!codesign.ok) {
-    throw new Error(codesign.output || 'codesign verification failed');
-  }
-
-  const launched = run(executablePath, [], {
-    timeout: playbackTimeoutMs,
-    env: {
-      ...process.env,
-      BEATDROPPER_NATIVE_PLAYBACK_STRESS: '1'
-    }
+  const launched = swiftRun('BeatDropperNativePlaybackStress', [], {
+    capture: true,
+    stdio: 'pipe',
+    timeout: timeoutMs,
   });
-  if (!launched.ok) {
-    throw new Error(
-      launched.output || `native playback stress failed with status ${launched.status ?? launched.signal}`
-    );
+  const output = `${launched.stdout || ''}${launched.stderr || ''}`;
+  if (launched.status !== 0) throw new Error(output.trim() || 'native playback automation test failed');
+  const match = output.match(/BEATDROPPER_NATIVE_PLAYBACK_STRESS_READY state=([^\s]+) transitions=(\d+) incomingPlayhead=(true|false) pauseResume=(true|false) recovery=(true|false)/);
+  if (!match) throw new Error(`playback automation marker missing. Output:\n${output}`);
+  if (match[1] !== 'Idle' || Number(match[2]) < 2 || match[3] !== 'true' || match[4] !== 'true' || match[5] !== 'true') {
+    throw new Error(`playback invariants failed. Output:\n${output}`);
   }
-  if (/BEATDROPPER_NATIVE_PLAYBACK_STRESS_FAILED/.test(launched.output)) {
-    throw new Error(`native playback stress reported failure:\n${launched.output}`);
-  }
-
-  const match = launched.output.match(
-    /BEATDROPPER_NATIVE_PLAYBACK_STRESS_READY state=([^\s]+) transitions=(\d+) incomingPlayhead=(true|false) pauseResume=(true|false) recovery=(true|false)/
-  );
-  if (!match) {
-    throw new Error(`native app did not print playback stress marker. Output:\n${launched.output}`);
-  }
-  if (match[1] !== 'Idle') {
-    throw new Error(`native playback stress finished in unexpected state ${match[1]}. Output:\n${launched.output}`);
-  }
-  if (Number(match[2]) < 2 || match[3] !== 'true' || match[4] !== 'true' || match[5] !== 'true') {
-    throw new Error(`native playback stress did not prove all transition invariants. Output:\n${launched.output}`);
-  }
-
-  writeJsonReport(options.writeJson, {
-    ...makeBaseReport('PASS'),
-    codesign: {
-      ok: codesign.ok,
-      status: codesign.status,
-      signal: codesign.signal,
-      outputPreview: compactOutput(codesign.output)
-    },
-    launch: {
-      ok: launched.ok,
-      status: launched.status,
-      signal: launched.signal,
-      outputPreview: compactOutput(launched.output)
-    },
+  const report = {
+    ...base('PASS'),
+    launch: { ok: true, status: launched.status, signal: launched.signal, outputPreview: compact(output) },
     result: {
       finalState: match[1],
       transitionsCompleted: Number(match[2]),
       incomingPlayheadAdvanced: match[3] === 'true',
       crossfadePauseResumePassed: match[4] === 'true',
-      deviceRecoveryPassed: match[5] === 'true'
-    }
-  });
-
-  process.stdout.write(
-    [
-      'BeatDropper native playback stress passed.',
-      `final state ${match[1]}`
-    ].join('\n') + '\n'
-  );
-};
-
-let options;
-try {
-  options = parseArgs(process.argv.slice(2));
-  main(options);
+      deviceRecoveryPassed: match[5] === 'true',
+    },
+  };
+  if (reportPath) writeJsonReport(reportPath, report);
+  process.stdout.write(`BeatDropper native playback stress passed.\nfinal state ${match[1]}\n`);
 } catch (error) {
-  writeJsonReport(options?.writeJson, makeFailureReport(error));
-  fail(error instanceof Error ? error.message : String(error));
+  if (reportPath) writeJsonReport(reportPath, { ...base('FAIL'), error: error.message });
+  process.stderr.write(`${error.message}\n`);
+  process.exitCode = 1;
 }

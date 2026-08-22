@@ -1,0 +1,3 @@
+import BeatDropperNative
+
+BeatDropperNativeApplication.main()

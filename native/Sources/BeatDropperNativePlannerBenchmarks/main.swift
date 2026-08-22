@@ -1,4 +1,8 @@
-import BeatDropperCore
+import BeatDropperTestSupport
+import BeatDropperDomain
+import BeatDropperDSP
+import BeatDropperPlanning
+import BeatDropperReview
 import Foundation
 
 do {

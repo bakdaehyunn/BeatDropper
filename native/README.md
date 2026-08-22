@@ -1,20 +1,22 @@
 # BeatDropper Native macOS App
 
-BeatDropper is a native macOS desktop app built with SwiftUI, AppKit, AVAudioEngine, and a Swift core. The repository no longer contains a second desktop runtime.
+BeatDropper is a native macOS desktop app built with SwiftUI, AppKit, AVAudioEngine, and explicit Swift modules. The repository no longer contains a second desktop runtime.
 
 ## Current Native State
 
 - Swift Package at `native/`.
-- `BeatDropperCore` contains Codable contract models shared with the planner contract:
-  - `Track`
-  - `MusicLibraryTrack`
-  - `UserPlaylist`
-  - `PlayerSettings`
-  - `TrackAnalysis`
-  - `PlannerRequest`
-  - `PlannerResponse`
-  - `MixPlan`
-  - planner `analysisSummary` and `pairContext`
+- Swift Package product boundaries are enforced by `native:architecture:check`:
+  - `BeatDropperDomain`: stable Codable/value contracts
+  - `BeatDropperDSP`: deterministic analysis and playback math
+  - `BeatDropperLibrary`: library models, reconciliation, migration, indexing, and preparation metadata
+  - `BeatDropperPlanning`: planner contracts, evidence, validation, fallback, acceptance, and scheduling policy
+  - `BeatDropperReview`: review artifacts, diagnostics, comparison, and export
+  - `BeatDropperApplication`: feature state and side-effect protocols
+  - `BeatDropperPlatform`: AVFoundation, AppKit, filesystem, clock, and Node/Process adapters
+  - `BeatDropperTestSupport`: fixtures, benchmarks, and stress helpers; never a production dependency
+  - `BeatDropperNative`: reusable native composition/UI module
+  - `BeatDropperNativeApp`: minimal executable entry point
+- There is no compatibility `BeatDropperCore` umbrella target; tools and tests declare their actual module dependencies.
 - `BeatDropperNative` SwiftUI/AppKit app includes:
   - native macOS window, commands, and standard Settings scene
   - local file/folder import
@@ -39,6 +41,7 @@ BeatDropper is a native macOS desktop app built with SwiftUI, AppKit, AVAudioEng
   - standard macOS Settings scene for fade duration, master gain, and AI mode
   - Finder Open With support for audio files and music folders
   - drag-and-drop import for audio files and music folders
+- The production application delegate contains only normal lifecycle, window restoration, and external file-open handling. Stress/validation orchestration runs from `BeatDropperNativeTests` and release launch liveness is checked externally.
 - `scripts/package-native-app.sh` creates local and release distribution artifacts:
   - `native/dist/BeatDropper.app`
   - `native/dist/BeatDropper.zip`
@@ -335,7 +338,7 @@ Status: implemented foundation.
 - Larger folder imports use a bounded DSP analysis queue so the app can keep analyzing without launching one task per track at once.
 - `native:stress:library` covers 1,200 synthetic library records, saved sets, search indexing, missing-folder marking, and moved-folder relink while preserving taste track ids, and writes durable large-library evidence for preflight/parity.
 - Packaged open-import stress writes durable evidence for Finder/Open With folder and loose-file imports.
-- Packaged playback stress writes durable evidence for play, crossfade, pause, resume, and stop.
+- Dedicated native playback automation writes durable evidence for play, crossfade, incoming-playhead progression, pause/resume, device recovery, deck promotion, and stop.
 - Packaged session stress covers synthetic folder import, bounded analysis completion, planner fallback, playback, and crossfade, and writes durable evidence for the normal preflight session.
 - Extended packaged session stress covers a 12-track synthetic set with six repeated planner/fallback transitions and crossfades.
 - Remaining production work: larger real-library import/analyze stress passes and longer real-library relink tuning.
@@ -348,7 +351,7 @@ Status: implemented foundation.
 - Planner timing can trigger scheduled transitions.
 - Master and per-deck output level metering are connected to the native audio graph and shown in the transport/deck panels.
 - Playback position math clamps invalid long-session elapsed values, crossfade progress is sanitized before timer/gain/published-state updates, and the audio engine attempts to recover active deck/crossfade state after AVAudioEngine configuration changes.
-- The packaged app can run an internal playback stress scenario with synthetic WAV fixtures covering play, crossfade, pause, resume, and stop, using condition-based state waits with failure diagnostics.
+- A dedicated AppKit-aware automation executable runs the real `NativeAudioEngine` against synthetic WAV fixtures. Production application lifecycle code contains no smoke or stress modes.
 - The packaged app can run internal session stress scenarios covering import, bounded analysis, planner fallback, playback, repeated crossfades, and isolated temporary persistence, using condition-based state waits with failure diagnostics.
 - Remaining production work: longer real-session stress testing and richer meter calibration.
 

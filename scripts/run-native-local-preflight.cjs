@@ -161,6 +161,7 @@ const main = () => {
 
   steps.push(
     makeOutcome(run('git whitespace check', 'git', ['diff', '--check'], { timeout: 30_000 })),
+    makeOutcome(run('native module graph check', 'node', ['scripts/check-native-module-graph.cjs'])),
     makeOutcome(
       run('native accessibility check', 'node', [
         'scripts/check-native-accessibility.cjs',
@@ -210,7 +211,7 @@ const main = () => {
       ])
     ),
     makeOutcome(
-      run('packaged playback stress', 'node', [
+      run('native playback automation', 'node', [
         'scripts/stress-native-playback.cjs',
         '--write-json',
         'native/dist/playback-stress-report.json'

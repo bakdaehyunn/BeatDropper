@@ -8,13 +8,17 @@ let package = Package(
         .macOS(.v14)
     ],
     products: [
-        .library(
-            name: "BeatDropperCore",
-            targets: ["BeatDropperCore"]
-        ),
+        .library(name: "BeatDropperDomain", targets: ["BeatDropperDomain"]),
+        .library(name: "BeatDropperDSP", targets: ["BeatDropperDSP"]),
+        .library(name: "BeatDropperLibrary", targets: ["BeatDropperLibrary"]),
+        .library(name: "BeatDropperPlanning", targets: ["BeatDropperPlanning"]),
+        .library(name: "BeatDropperReview", targets: ["BeatDropperReview"]),
+        .library(name: "BeatDropperPlatform", targets: ["BeatDropperPlatform"]),
+        .library(name: "BeatDropperApplication", targets: ["BeatDropperApplication"]),
+        .library(name: "BeatDropperTestSupport", targets: ["BeatDropperTestSupport"]),
         .executable(
             name: "BeatDropperNative",
-            targets: ["BeatDropperNative"]
+            targets: ["BeatDropperNativeApp"]
         ),
         .executable(
             name: "BeatDropperNativeAnalysisBenchmarks",
@@ -29,6 +33,10 @@ let package = Package(
             targets: ["BeatDropperNativeLibraryStress"]
         ),
         .executable(
+            name: "BeatDropperNativePlaybackStress",
+            targets: ["BeatDropperNativePlaybackStress"]
+        ),
+        .executable(
             name: "BeatDropperNativeLoudnessValidation",
             targets: ["BeatDropperNativeLoudnessValidation"]
         ),
@@ -38,12 +46,43 @@ let package = Package(
         )
     ],
     targets: [
+        .target(name: "BeatDropperDomain"),
         .target(
-            name: "BeatDropperCore"
+            name: "BeatDropperDSP",
+            dependencies: ["BeatDropperDomain"]
         ),
-        .executableTarget(
+        .target(
+            name: "BeatDropperLibrary",
+            dependencies: ["BeatDropperDomain"]
+        ),
+        .target(
+            name: "BeatDropperReview",
+            dependencies: ["BeatDropperDomain", "BeatDropperDSP"]
+        ),
+        .target(
+            name: "BeatDropperPlanning",
+            dependencies: ["BeatDropperDomain", "BeatDropperDSP", "BeatDropperLibrary", "BeatDropperReview"]
+        ),
+        .target(
+            name: "BeatDropperTestSupport",
+            dependencies: ["BeatDropperDomain", "BeatDropperDSP", "BeatDropperLibrary", "BeatDropperPlanning", "BeatDropperReview", "BeatDropperPlatform"]
+        ),
+        .target(
+            name: "BeatDropperPlatform",
+            dependencies: ["BeatDropperApplication", "BeatDropperDSP", "BeatDropperLibrary", "BeatDropperPlanning", "BeatDropperReview"],
+            linkerSettings: [
+                .linkedFramework("AppKit"),
+                .linkedFramework("AVFoundation"),
+                .linkedFramework("AudioToolbox")
+            ]
+        ),
+        .target(
+            name: "BeatDropperApplication",
+            dependencies: ["BeatDropperDomain", "BeatDropperDSP", "BeatDropperLibrary", "BeatDropperPlanning", "BeatDropperReview"]
+        ),
+        .target(
             name: "BeatDropperNative",
-            dependencies: ["BeatDropperCore"],
+            dependencies: ["BeatDropperApplication", "BeatDropperPlatform"],
             linkerSettings: [
                 .linkedFramework("AppKit"),
                 .linkedFramework("AVFoundation"),
@@ -52,38 +91,54 @@ let package = Package(
             ]
         ),
         .executableTarget(
+            name: "BeatDropperNativeApp",
+            dependencies: ["BeatDropperNative"]
+        ),
+        .executableTarget(
             name: "BeatDropperNativeAnalysisBenchmarks",
-            dependencies: ["BeatDropperCore"]
+            dependencies: ["BeatDropperDomain", "BeatDropperTestSupport"]
         ),
         .executableTarget(
             name: "BeatDropperNativePlannerBenchmarks",
-            dependencies: ["BeatDropperCore"]
+            dependencies: ["BeatDropperDomain", "BeatDropperDSP", "BeatDropperPlanning", "BeatDropperReview", "BeatDropperTestSupport"]
         ),
         .executableTarget(
             name: "BeatDropperNativeLibraryStress",
-            dependencies: ["BeatDropperCore"]
+            dependencies: ["BeatDropperTestSupport"]
+        ),
+        .executableTarget(
+            name: "BeatDropperNativePlaybackStress",
+            dependencies: ["BeatDropperTestSupport"],
+            linkerSettings: [
+                .linkedFramework("AppKit"),
+                .linkedFramework("AVFoundation")
+            ]
         ),
         .executableTarget(
             name: "BeatDropperNativeLoudnessValidation",
-            dependencies: ["BeatDropperCore"],
+            dependencies: ["BeatDropperDomain", "BeatDropperDSP"],
             linkerSettings: [
                 .linkedFramework("AVFoundation")
             ]
         ),
         .executableTarget(
             name: "BeatDropperNativeAnalysisExtract",
-            dependencies: ["BeatDropperCore"],
+            dependencies: ["BeatDropperDomain", "BeatDropperDSP"],
             linkerSettings: [
                 .linkedFramework("AVFoundation")
             ]
         ),
         .testTarget(
-            name: "BeatDropperCoreTests",
-            dependencies: ["BeatDropperCore"],
+            name: "BeatDropperModuleTests",
+            dependencies: ["BeatDropperDomain", "BeatDropperDSP", "BeatDropperLibrary", "BeatDropperPlanning", "BeatDropperReview", "BeatDropperPlatform", "BeatDropperTestSupport"],
             linkerSettings: [
                 .linkedFramework("AVFoundation"),
                 .linkedFramework("AudioToolbox")
             ]
+        ),
+        .testTarget(
+            name: "BeatDropperNativeTests",
+            dependencies: ["BeatDropperNative", "BeatDropperApplication", "BeatDropperDomain", "BeatDropperDSP", "BeatDropperLibrary", "BeatDropperPlanning", "BeatDropperReview", "BeatDropperPlatform", "BeatDropperTestSupport"]
         )
     ]
 )
