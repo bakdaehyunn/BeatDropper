@@ -5,9 +5,14 @@ import Foundation
 /// engine façade supplies the actual snapshot/restore transaction.
 @MainActor
 final class AudioConfigurationRecoveryCoordinator {
+    private let now: () -> Date
     private var observer: NSObjectProtocol?
     private var isRecovering = false
     private var suppressUntil = Date.distantPast
+
+    init(now: @escaping () -> Date = { Date() }) {
+        self.now = now
+    }
 
     func observe(engine: AVAudioEngine, recover: @escaping @MainActor () -> Void) {
         observer = NotificationCenter.default.addObserver(
@@ -20,9 +25,9 @@ final class AudioConfigurationRecoveryCoordinator {
     }
 
     func beginIfAllowed(isIdle: Bool) -> Bool {
-        guard !isIdle, !isRecovering, Date() >= suppressUntil else { return false }
+        guard !isIdle, !isRecovering, now() >= suppressUntil else { return false }
         isRecovering = true
-        suppressUntil = Date().addingTimeInterval(5)
+        suppressUntil = now().addingTimeInterval(5)
         return true
     }
 

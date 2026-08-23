@@ -6,6 +6,7 @@ import Foundation
 /// remains an explicit callback into the engine façade on the main actor.
 @MainActor
 final class CrossfadeStateMachine {
+    private let now: () -> Date
     private var timer: Timer?
     private var startedAt: Date?
 
@@ -14,6 +15,10 @@ final class CrossfadeStateMachine {
     var completion: (() -> Void)?
     var stateBeforePause: PlaybackSessionMode = .idle
     var pausedProgress: Double?
+
+    init(now: @escaping () -> Date = { Date() }) {
+        self.now = now
+    }
 
     func begin(targetSlot: DeckSlot, durationSec: TimeInterval, completion: @escaping () -> Void) {
         self.durationSec = max(0.1, durationSec)
@@ -25,7 +30,7 @@ final class CrossfadeStateMachine {
     func start(from progress: Double, tick: @escaping @MainActor () -> Void) {
         stopTimer()
         let safeProgress = CrossfadeMath.clampedProgress(progress)
-        startedAt = Date().addingTimeInterval(-safeProgress * max(0.1, durationSec))
+        startedAt = now().addingTimeInterval(-safeProgress * max(0.1, durationSec))
         let timer = Timer(timeInterval: 1.0 / 30.0, repeats: true) { _ in
             Task { @MainActor in tick() }
         }
@@ -35,7 +40,7 @@ final class CrossfadeStateMachine {
 
     func progress() -> Double? {
         guard let startedAt, durationSec > 0 else { return nil }
-        return CrossfadeMath.clampedProgress(Date().timeIntervalSince(startedAt) / durationSec)
+        return CrossfadeMath.clampedProgress(now().timeIntervalSince(startedAt) / durationSec)
     }
 
     func pause(from state: PlaybackSessionMode, progress: Double) {

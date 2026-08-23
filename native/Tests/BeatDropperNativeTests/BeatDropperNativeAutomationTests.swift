@@ -15,9 +15,11 @@ import Testing
 @Suite(.serialized)
 @MainActor
 struct BeatDropperNativeAutomationTests {
-    @Test
+    @Test(.enabled(
+        if: ProcessInfo.processInfo.environment["BEATDROPPER_NATIVE_OPEN_IMPORT_STRESS"] == "1",
+        "Set BEATDROPPER_NATIVE_OPEN_IMPORT_STRESS=1 to run the open/import stress suite"
+    ))
     func openImportStress() async throws {
-        guard ProcessInfo.processInfo.environment["BEATDROPPER_NATIVE_OPEN_IMPORT_STRESS"] == "1" else { return }
         let (model, rootURL) = makeModel(audioPlayback: NativeAudioEngine())
         let result = try await NativeAutomationHarness(model: model, stateRootURL: rootURL).runOpenImportStress()
         print([
@@ -30,9 +32,11 @@ struct BeatDropperNativeAutomationTests {
         ].joined(separator: " "))
     }
 
-    @Test
+    @Test(.enabled(
+        if: ProcessInfo.processInfo.environment["BEATDROPPER_NATIVE_SESSION_STRESS"] == "1",
+        "Set BEATDROPPER_NATIVE_SESSION_STRESS=1 to run the session stress suite"
+    ))
     func sessionStress() async throws {
-        guard ProcessInfo.processInfo.environment["BEATDROPPER_NATIVE_SESSION_STRESS"] == "1" else { return }
         let (model, rootURL) = makeModel(audioPlayback: SessionStressAudioPlayback())
         let result = try await NativeAutomationHarness(model: model, stateRootURL: rootURL).runSessionStress()
         print([
@@ -46,9 +50,11 @@ struct BeatDropperNativeAutomationTests {
         ].joined(separator: " "))
     }
 
-    @Test
+    @Test(.enabled(
+        if: ProcessInfo.processInfo.environment["BEATDROPPER_NATIVE_REAL_FOLDER_VALIDATION"] == "1",
+        "Set BEATDROPPER_NATIVE_REAL_FOLDER_VALIDATION=1 to run real-folder validation"
+    ))
     func realFolderValidation() async throws {
-        guard ProcessInfo.processInfo.environment["BEATDROPPER_NATIVE_REAL_FOLDER_VALIDATION"] == "1" else { return }
         let (model, rootURL) = makeModel(audioPlayback: NativeAudioEngine())
         let result = try await NativeAutomationHarness(model: model, stateRootURL: rootURL).runRealFolderValidation()
         print([
